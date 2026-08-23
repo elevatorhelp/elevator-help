@@ -7,3 +7,194 @@
 .principle{background:var(--ink);color:#fff}.principleInner{min-height:430px;display:grid;grid-template-columns:1fr 1fr;gap:70px;align-items:center}.principle .eyebrow{color:var(--accent)}.principle h2{margin:0;font-size:clamp(44px,5vw,72px);letter-spacing:-.06em;line-height:.98}.principle p{color:#b8c0b6;font-size:19px;line-height:1.7;margin:0}
 .partner{padding:82px 0}.partnerCard{border:1px solid var(--line);border-radius:22px;background:#ffffffb8;padding:42px;display:grid;grid-template-columns:1.3fr .7fr;gap:60px;align-items:end}.partnerCard h2{margin:0 0 14px;font-size:clamp(36px,4vw,58px);line-height:1;letter-spacing:-.055em}.partnerCard p{color:var(--muted);line-height:1.65;margin:0}.partnerAction{display:flex;flex-direction:column;align-items:flex-start;gap:16px}.partnerAction span{color:var(--muted);font-size:13px}.partnerAction a{background:var(--ink);color:white;padding:14px 18px;border-radius:11px;font-weight:800;font-size:14px}.footer{min-height:110px;display:flex;align-items:center;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.footer a{font-weight:700}
 @media(max-width:760px){.shell{width:min(100% - 26px,1160px)}.nav{min-height:74px}.status{display:none}.hero{padding:70px 0 42px}.hero h1{font-size:clamp(50px,16vw,72px)}.assistantCard{margin-top:44px;padding:16px}.assistantTop,.queryBox,.sourceRow{align-items:flex-start;flex-direction:column}.queryBox button{width:100%}.features{grid-template-columns:1fr;padding-bottom:70px}.features article{min-height:auto}.features small{margin-bottom:44px}.principleInner{min-height:520px;grid-template-columns:1fr;gap:20px;align-content:center}.partner{padding:55px 0}.partnerCard{grid-template-columns:1fr;gap:34px;padding:26px}.footer{align-items:flex-start;justify-content:center;flex-direction:column}}
+/* =========================================
+   Elevator Agent — AI Search / Answer UI
+   ========================================= */
+
+.queryBox {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.queryBox input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+}
+
+.queryBox input::placeholder {
+  color: #7d8490;
+}
+
+.queryBox input:disabled {
+  opacity: 0.7;
+}
+
+.queryPrompt {
+  flex: 0 0 auto;
+  opacity: 0.55;
+}
+
+.queryBox button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.searchState {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: 10px;
+  font-size: 14px;
+  opacity: 0.75;
+}
+
+/* ANSWER */
+
+.answerPanel {
+  margin-top: 22px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.answerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 22px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.answerHeader h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+
+.answerEyebrow {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.verifiedBadge {
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 7px 9px;
+  border: 1px solid rgba(128, 128, 128, 0.28);
+  border-radius: 999px;
+}
+
+.answerText {
+  padding: 22px;
+  font-size: 15px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* REFERENCES */
+
+.answerFooter {
+  padding: 18px 22px 20px;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.references h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.references ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.references li {
+  margin: 7px 0;
+  font-size: 13px;
+}
+
+.references a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.references a:hover {
+  opacity: 0.7;
+}
+
+.references p {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.65;
+}
+
+.answerDisclosure {
+  margin: 18px 0 0;
+  padding-top: 15px;
+  border-top: 1px solid rgba(128, 128, 128, 0.16);
+  font-size: 11px;
+  line-height: 1.55;
+  opacity: 0.55;
+}
+
+/* ERROR */
+
+.errorPanel {
+  padding: 18px 20px;
+}
+
+.errorPanel b {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.errorPanel p {
+  margin: 0;
+}
+
+/* MOBILE */
+
+@media (max-width: 700px) {
+  .queryBox {
+    flex-wrap: wrap;
+  }
+
+  .queryBox input {
+    width: calc(100% - 30px);
+  }
+
+  .queryBox button {
+    width: 100%;
+  }
+
+  .answerHeader {
+    padding: 17px;
+  }
+
+  .answerText {
+    padding: 17px;
+  }
+
+  .answerFooter {
+    padding: 17px;
+  }
+
+  .verifiedBadge {
+    font-size: 9px;
+  }
+}
