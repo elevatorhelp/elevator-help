@@ -1,12 +1,11 @@
 {
   "name": "elevator-help",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "cf:build": "opennextjs-cloudflare build",
-    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && wrangler deploy"
   },
   "dependencies": {
