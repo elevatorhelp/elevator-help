@@ -94,17 +94,33 @@ export default function Home() {
   return (
     <main>
       <header className="nav shell">
-        <a className="brand" href="#" aria-label="elevator.help home">
-          <span className="brandMark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
+       <a className="brand" href="#" aria-label="elevator.help home">
+  <svg
+    width="30"
+    height="30"
+    viewBox="0 0 30 30"
+    aria-hidden="true"
+    style={{ flexShrink: 0 }}
+  >
+    <rect
+      x="1"
+      y="1"
+      width="28"
+      height="28"
+      rx="8"
+      fill="none"
+      stroke="#8a8f22"
+      strokeWidth="1.5"
+    />
+    <rect x="7" y="7" width="16" height="3" rx="1.5" fill="#8a8f22" />
+    <rect x="9" y="13.5" width="12" height="3" rx="1.5" fill="#111711" />
+    <rect x="7" y="20" width="16" height="3" rx="1.5" fill="#8a8f22" />
+  </svg>
 
-          <span>
-            elevator<span className="dot">.</span>help
-          </span>
-        </a>
+  <span>
+    elevator<span className="dot">.</span>help
+  </span>
+</a>
 
         <div className="status">
           <i />
@@ -218,18 +234,50 @@ export default function Home() {
             </p>
           )}
 
-          <div className="sourceRow">
-            <small>Development status</small>
+          <div
+  style={{
+    marginTop: "22px",
+    padding: "18px 20px",
+    border: "1px solid #dedfce",
+    borderRadius: "12px",
+    background: "#f7f7ef",
+  }}
+>
+  <div
+    style={{
+      fontSize: "10px",
+      fontWeight: 800,
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+      color: "#85891d",
+      marginBottom: "8px",
+    }}
+  >
+    Under development
+  </div>
 
-            <div>
-              <span>
-                elevator.help is currently in the early stages of development.
-              </span>
-              <span>
-                Features and technical content are currently being prepared.
-              </span>
-            </div>
-          </div>
+  <div
+    style={{
+      fontSize: "14px",
+      fontWeight: 700,
+      color: "#151b16",
+      lineHeight: 1.5,
+    }}
+  >
+    elevator.help is currently in the early stages of development.
+  </div>
+
+  <div
+    style={{
+      marginTop: "3px",
+      fontSize: "12px",
+      color: "#666d65",
+      lineHeight: 1.5,
+    }}
+  >
+    Features and technical content are currently being prepared.
+  </div>
+</div>
         </div>
       </section>
 
