@@ -32,17 +32,6 @@ const features = [
   ],
 ];
 
-const sources = [
-  "Schindler",
-  "KONE",
-  "Otis",
-  "TKE",
-  "Ziehl-Abegg",
-  "NEW Lift",
-  "Weber",
-  "& more",
-];
-
 export default function Home() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
@@ -105,8 +94,13 @@ export default function Home() {
   return (
     <main>
       <header className="nav shell">
-        <a className="brand" href="#">
-          <span className="mark">↕</span>
+        <a className="brand" href="#" aria-label="elevator.help home">
+          <span className="brandMark" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+
           <span>
             elevator<span className="dot">.</span>help
           </span>
@@ -114,7 +108,7 @@ export default function Home() {
 
         <div className="status">
           <i />
-          v0.3 · AI search
+          v0.3 · development
         </div>
       </header>
 
@@ -220,18 +214,20 @@ export default function Home() {
           {!answer && !loading && !error && (
             <p className="note">
               Technical information is gathered from publicly available online
-              sources and technical documentation. Sources will be shown with
-              answers.
+              sources and technical documentation.
             </p>
           )}
 
           <div className="sourceRow">
-            <small>Technical sources</small>
+            <small>Development status</small>
 
             <div>
-              {sources.map((source) => (
-                <span key={source}>{source}</span>
-              ))}
+              <span>
+                elevator.help is currently in the early stages of development.
+              </span>
+              <span>
+                Features and technical content are currently being prepared.
+              </span>
             </div>
           </div>
         </div>
