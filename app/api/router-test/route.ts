@@ -114,11 +114,25 @@ ${question}
       throw new Error("Gemini returned no content");
     }
 
-    return Response.json({
-      ok: true,
-      question,
-      route: JSON.parse(text),
-    });
+   const route = JSON.parse(text);
+
+const questionLanguage =
+  route.questionLanguage ??
+  (/^[\x00-\x7F]*$/.test(question) ? "en" : null);
+
+const preferredSourceLanguage =
+  route.preferredSourceLanguage ??
+  questionLanguage;
+
+return Response.json({
+  ok: true,
+  question,
+  route: {
+    ...route,
+    questionLanguage,
+    preferredSourceLanguage,
+  },
+});
   } catch (error) {
     return Response.json(
       {
