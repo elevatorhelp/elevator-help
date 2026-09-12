@@ -12,6 +12,8 @@ type Chunk = {
     faultName: string;
     page: number;
     document: string;
+    language: string;
+    documentGroup: string;
   };
 };
 
@@ -29,6 +31,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-ANFAHRPROBLEM",
       page: 184,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -44,6 +48,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-LAUFZEITUEBERWCH",
       page: 184,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -59,6 +65,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-GEBERFEHLER",
       page: 184,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -74,6 +82,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-KABIN. KOMMUNIKTN",
       page: 185,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -89,6 +99,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-GESCHW. ENDSCHLTR",
       page: 185,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -104,6 +116,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-ZONE FEHLT",
       page: 185,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -119,6 +133,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-BREMSE FEHLER",
       page: 185,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -134,6 +150,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-MOTOR FEHLER",
       page: 185,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -149,6 +167,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-ZWANGSHALT",
       page: 185,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
   {
@@ -164,6 +184,8 @@ const chunks: Chunk[] = [
       faultName: "LSU-NOTENDSCHALTER",
       page: 185,
       document: "mipa_FST-3_de.pdf",
+      language: "de",
+      documentGroup: "NEWLIFT-FST3",
     },
   },
 ];
