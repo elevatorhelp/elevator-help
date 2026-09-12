@@ -30,6 +30,10 @@ Important rules:
 4. If identification is uncertain, mark it as uncertain.
 5. Distinguish troubleshooting questions from documentation, standards, planning and general technical questions.
 6. Return ONLY valid JSON.
+7. Detect the language of the user's question.
+8. Prefer technical documentation in the same language as the user's question when available.
+9. If matching documentation is unavailable in that language, the retrieval query may later be translated into the available source language.
+10. The final answer must be generated in the user's original question language.
 
 Known knowledge-base example:
 
@@ -54,7 +58,9 @@ LSU-NOTENDSCHALTER
 Required JSON:
 
 {
-  "intent": "troubleshooting" | "documentation" | "standard" | "planning" | "general_technical" | "unknown",
+  "intent": "troubleshooting" | "documentation" | "standard" | "planning" | "general_technical" | "unknown", 
+  "questionLanguage": string,
+  "preferredSourceLanguage": string,
   "manufacturer": string | null,
   "productFamily": string | null,
   "controller": string | null,
