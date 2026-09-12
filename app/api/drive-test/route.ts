@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 type ServiceAccount = {
   client_email: string;
   private_key: string;
