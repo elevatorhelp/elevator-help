@@ -190,7 +190,86 @@ ${question}
       throw new Error("Gemini returned no content");
     }
 
-    const route = JSON.parse(text);
+    let route: any;
+
+    try {
+      route = JSON.parse(text);
+    } catch {
+      console.error("Invalid Gemini router JSON:", text);
+
+      return Response.json(
+        {
+          ok: false,
+          error: "Router returned invalid JSON",
+          raw: text,
+        },
+        { status: 502 }
+      );
+    }
+
+    // Normalize LSU routing semantics
+    if (
+      typeof route.faultFamily === "string" &&
+      route.faultFamily.startsWith("LSU-")
+    ) {
+      route.faultName = route.faultName ?? route.faultFamily;
+      route.faultFamily = "LSU";
+    }
+
+    if (route.faultCode === "LSU") {
+      route.faultCode = null;
+      route.faultFamily = "LSU";
+    }
+
+    // If LSU appears in the fault name but faultFamily is missing
+    if (
+      !route.faultFamily &&
+      typeof route.faultName === "string" &&
+      route.faultName.startsWith("LSU-")
+    ) {
+      route.faultFamily = "LSU";
+    }
+
+    // faultCode must be numeric only
+    if (
+      route.faultCode !== null &&
+      route.faultCode !== undefined &&
+      !/^\d+$/.test(String(route.faultCode))
+    ) {
+      route.faultCode = null;
+    }
+
+    // If the user explicitly wrote a numeric fault code, preserve it
+    const explicitFaultCodeMatch =
+      question.match(/\b(?:fehler|fault|error|code)?\s*(\d{1,4})\b/i);
+
+    if (
+      explicitFaultCodeMatch &&
+      !route.faultCode
+    ) {
+      route.faultCode = explicitFaultCodeMatch[1];
+    }
+
+    // If question is only a generic fault number, do not invent manufacturer/controller
+    const genericFaultNumberOnly =
+      /^\s*(?:fehler|fault|error|code)?\s*\d{1,4}\s*[?.!]*\s*$/i.test(
+        question
+      );
+
+    if (genericFaultNumberOnly) {
+      route.manufacturer = null;
+      route.productFamily = null;
+      route.controller = null;
+      route.faultFamily = null;
+      route.faultName = null;
+      route.needsClarification = true;
+      route.searchStrategy = "clarify_first";
+      route.confidence = "low";
+
+      route.clarificationQuestion =
+        route.clarificationQuestion ??
+        "Which elevator manufacturer or controller is this fault code from?";
+    }
 
     const questionLanguage =
       route.questionLanguage ??
