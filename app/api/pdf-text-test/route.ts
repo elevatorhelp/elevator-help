@@ -156,7 +156,9 @@ export async function GET() {
     });
 
     const fullText =
-      typeof text === "string" ? text : text.join("\n");
+  typeof text === "string"
+    ? text
+    : String(text ?? "");
 
     const lsuIndex = fullText
       .toLowerCase()
