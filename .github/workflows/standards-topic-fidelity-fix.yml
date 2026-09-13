@@ -24,11 +24,12 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('app/lib/standards-engine.ts')
           text = path.read_text(encoding='utf-8')
 
-          old = '''function matchRank(match: any) {
+          marker = '''function matchRank(match: any) {
             const text = String(match?.metadata?.text || "");
             const clauseBonus = /\\b\\d+(?:\\.\\d+){2,6}\\b/.test(text) ? 0.18 : 0;
             const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength)/i.test(
@@ -39,17 +40,7 @@ jobs:
             return Number(match?.score || 0) + clauseBonus + headingBonus;
           }
           '''
-          new = '''function matchRank(match: any) {
-            const text = String(match?.metadata?.text || "");
-            const clauseBonus = /\\b\\d+(?:\\.\\d+){2,6}\\b/.test(text) ? 0.18 : 0;
-            const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength)/i.test(
-              text
-            )
-              ? 0.05
-              : 0;
-            return Number(match?.score || 0) + clauseBonus + headingBonus;
-          }
-
+          helper = marker + '''
           function topicTextRelevant(text: string, topic: StandardTopic) {
             switch (topic) {
               case "structure":
@@ -69,28 +60,12 @@ jobs:
             }
           }
           '''
-          assert old in text, 'matchRank block not found'
-          text = text.replace(old, new, 1)
+          assert marker in text, 'matchRank block not found'
+          text = text.replace(marker, helper, 1)
 
-          old = '''  const preferredLanguage =
-            route.preferredSourceLanguage || route.questionLanguage || "de";
-          const languages = Array.from(
-            new Set([preferredLanguage, "de", "en"].filter(Boolean))
-          );
-
-          for (const sourceLanguage of languages) {
-          '''
-          new = '''  const preferredLanguage =
-            route.preferredSourceLanguage || route.questionLanguage || "de";
-          const languages = Array.from(
-            new Set([preferredLanguage, "de", "en"].filter(Boolean))
-          );
-          const broad = isBroadShaftQuestion(question);
-
-          for (const sourceLanguage of languages) {
-          '''
-          assert old in text, 'preferredLanguage block not found'
-          text = text.replace(old, new, 1)
+          pattern = r'(const languages = Array\.from\(\s*new Set\(\[preferredLanguage, "de", "en"\]\.filter\(Boolean\)\)\s*\);)'
+          text, n = re.subn(pattern, r'\1\n  const broad = isBroadShaftQuestion(question);', text, count=1)
+          assert n == 1, 'languages block not found'
 
           old = '''      const valid = (result.matches || [])
             .filter(
@@ -123,13 +98,8 @@ jobs:
           assert old in text, 'valid retrieval block not found'
           text = text.replace(old, new, 1)
 
-          old = '''    const broad = isBroadShaftQuestion(question);
-            const topicOrder: StandardTopic[] = broad
-          '''
-          new = '''    const topicOrder: StandardTopic[] = broad
-          '''
-          assert old in text, 'duplicate broad block not found'
-          text = text.replace(old, new, 1)
+          text, n = re.subn(r'\n\s*const broad = isBroadShaftQuestion\(question\);\n\s*const topicOrder:', '\n    const topicOrder:', text, count=1)
+          assert n == 1, 'duplicate broad declaration not found'
 
           old = '''    const selected = evidence[evidenceId - 1];
             if (!selected || selected.standardCode !== standard) continue;
