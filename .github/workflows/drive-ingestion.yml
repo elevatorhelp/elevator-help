@@ -1,0 +1,53 @@
+name: Drive ingestion
+
+on:
+  workflow_dispatch:
+    inputs:
+      folder_id:
+        description: Google Drive folder ID to scan
+        required: false
+        default: "1GAuMp6D99K9kqLkUMJZM-iHoIS319Loo"
+      max_files:
+        description: Maximum number of new/changed PDFs to process in this run
+        required: false
+        default: "1"
+
+concurrency:
+  group: elevator-help-drive-ingestion
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore ingestion state
+        uses: actions/cache@v4
+        with:
+          path: .ingestion-state
+          key: drive-ingestion-state-${{ github.run_id }}
+          restore-keys: |
+            drive-ingestion-state-
+
+      - name: Ingest Google Drive PDFs
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
+          DRIVE_FOLDER_ID: ${{ inputs.folder_id }}
+          MAX_FILES: ${{ inputs.max_files }}
+          INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
+        run: node scripts/drive-ingest.mjs
