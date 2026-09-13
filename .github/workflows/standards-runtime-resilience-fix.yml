@@ -79,3 +79,5 @@ jobs:
           git add app/lib/standards-engine.ts
           git commit -m "Contain standards retrieval runtime failures"
           git push
+
+# Triggered after workflow registration.
