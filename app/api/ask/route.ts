@@ -4,6 +4,12 @@ import { routeQuestion } from "../../lib/router";
 
 const SOURCE_LANGUAGE_FALLBACKS = ["de", "en"];
 const MIN_SEMANTIC_SCORE = 0.72;
+const MIN_STANDARD_SCORE = 0.48;
+
+const CORE_STANDARDS = [
+  { code: "EN 81-20", compact: "EN8120" },
+  { code: "EN 81-50", compact: "EN8150" },
+] as const;
 
 function languageName(code: string) {
   const names: Record<string, string> = {
@@ -32,6 +38,25 @@ function isWhyElevatorHelpQuestion(question: string) {
   ];
 
   return patterns.some((pattern) => pattern.test(normalized));
+}
+
+function isStandardsQuestion(question: string, route?: any) {
+  if (route?.intent === "standard") return true;
+
+  return (
+    /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
+    /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) ||
+    /(استاندارد|نورم|نُرم)/i.test(question)
+  );
+}
+
+function explicitlyNamedCoreStandards(question: string) {
+  return CORE_STANDARDS.filter((standard) => {
+    const number = standard.code.endsWith("20") ? "20" : "50";
+    return new RegExp(`(?:EN\\s*81\\s*[-–]?\\s*${number}|81\\s*[-–]\\s*${number})`, "i").test(
+      question
+    );
+  }).map((standard) => standard.code);
 }
 
 async function answerWhyElevatorHelp(question: string, apiKey: string) {
@@ -98,7 +123,7 @@ async function translateRetrievalQuery(
   const prompt = `
 Translate the following elevator technical question into concise technical ${languageName(
     sourceLanguage
-  )} for semantic search in elevator manuals.
+  )} for semantic search in elevator manuals and standards.
 
 Rules:
 - Preserve the exact technical meaning.
@@ -106,6 +131,7 @@ Rules:
 - Preserve controller names exactly.
 - Preserve fault families exactly.
 - Preserve fault codes exactly.
+- Preserve standard identifiers such as EN 81-20 and EN 81-50 exactly.
 - Preserve connector names, parameter names and component names when appropriate.
 - Do not answer the question.
 - Do not explain anything.
@@ -128,14 +154,11 @@ ${question}
   );
 
   if (!response.ok) {
-    throw new Error(
-      `Gemini translation error: ${await response.text()}`
-    );
+    throw new Error(`Gemini translation error: ${await response.text()}`);
   }
 
   const data: any = await response.json();
-  const translated =
-    data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  const translated = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
   if (!translated) {
     throw new Error("Gemini returned no translated retrieval query");
@@ -218,34 +241,23 @@ async function retrieveOwnKnowledge(
     route.preferredSourceLanguage || route.questionLanguage || "en";
 
   const languages = Array.from(
-    new Set(
-      [preferredLanguage, ...SOURCE_LANGUAGE_FALLBACKS].filter(Boolean)
-    )
+    new Set([preferredLanguage, ...SOURCE_LANGUAGE_FALLBACKS].filter(Boolean))
   );
 
   for (const sourceLanguage of languages) {
     const retrievalQuery =
       route.questionLanguage === sourceLanguage
         ? question
-        : await translateRetrievalQuery(
-            question,
-            sourceLanguage,
-            apiKey
-          );
+        : await translateRetrievalQuery(question, sourceLanguage, apiKey);
 
-    const embeddingResult = await ai.run(
-      "@cf/baai/bge-base-en-v1.5",
-      { text: [retrievalQuery] }
-    );
+    const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
+      text: [retrievalQuery],
+    });
 
     const queryVector = (embeddingResult as any).data?.[0];
-
-    if (!queryVector) {
-      throw new Error("No query embedding returned");
-    }
+    if (!queryVector) throw new Error("No query embedding returned");
 
     const filter = buildKnowledgeFilter(route, sourceLanguage);
-
     const result = await vectorize.query(queryVector, {
       topK: 5,
       returnMetadata: "all",
@@ -263,21 +275,237 @@ async function retrieveOwnKnowledge(
     const topSemanticScore = Number(rawMatches[0]?.score || 0);
     const exactFaultCode = Boolean(route.faultCode);
 
-    if (!exactFaultCode && topSemanticScore < MIN_SEMANTIC_SCORE) {
-      continue;
-    }
-
-    const matches = rerankMatches(rawMatches, route);
+    if (!exactFaultCode && topSemanticScore < MIN_SEMANTIC_SCORE) continue;
 
     return {
       sourceLanguage,
       retrievalQuery,
       filter,
-      matches,
+      matches: rerankMatches(rawMatches, route),
     };
   }
 
   return null;
+}
+
+function compactStandardMetadata(metadata: any) {
+  return `${metadata?.fileName || ""} ${metadata?.sourcePath || ""} ${
+    metadata?.documentGroup || ""
+  }`
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function matchBelongsToStandard(match: any, compactCode: string) {
+  return compactStandardMetadata(match?.metadata).includes(compactCode);
+}
+
+async function queryOneCoreStandard(
+  question: string,
+  route: any,
+  standard: (typeof CORE_STANDARDS)[number],
+  apiKey: string,
+  ai: any,
+  vectorize: any
+) {
+  const preferredLanguage =
+    route.preferredSourceLanguage || route.questionLanguage || "de";
+  const languages = Array.from(
+    new Set([preferredLanguage, "de", ...SOURCE_LANGUAGE_FALLBACKS].filter(Boolean))
+  );
+
+  for (const sourceLanguage of languages) {
+    const translated =
+      route.questionLanguage === sourceLanguage
+        ? question
+        : await translateRetrievalQuery(question, sourceLanguage, apiKey);
+    const retrievalQuery = `${translated}\nStandard: ${standard.code}`;
+
+    const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
+      text: [retrievalQuery],
+    });
+    const queryVector = (embeddingResult as any).data?.[0];
+    if (!queryVector) throw new Error("No standards query embedding returned");
+
+    const result = await vectorize.query(queryVector, {
+      topK: 25,
+      returnMetadata: "all",
+      filter: {
+        language: sourceLanguage,
+        contentType: "standard",
+      },
+    });
+
+    const matches = (result.matches || [])
+      .filter(
+        (match: any) =>
+          typeof match?.metadata?.text === "string" &&
+          match.metadata.text.trim().length > 0 &&
+          matchBelongsToStandard(match, standard.compact)
+      )
+      .filter((match: any) => Number(match?.score || 0) >= MIN_STANDARD_SCORE)
+      .slice(0, 6);
+
+    if (matches.length) {
+      return { standard: standard.code, sourceLanguage, retrievalQuery, matches };
+    }
+  }
+
+  return { standard: standard.code, sourceLanguage: null, retrievalQuery: null, matches: [] };
+}
+
+async function retrieveCoreStandards(
+  question: string,
+  route: any,
+  apiKey: string,
+  ai: any,
+  vectorize: any
+) {
+  // v1 policy: every elevator standards question checks both EN 81-20 and EN 81-50.
+  const checked = [];
+  for (const standard of CORE_STANDARDS) {
+    checked.push(
+      await queryOneCoreStandard(
+        question,
+        route,
+        standard,
+        apiKey,
+        ai,
+        vectorize
+      )
+    );
+  }
+
+  return {
+    checkedStandards: CORE_STANDARDS.map((standard) => standard.code),
+    explicitlyNamed: explicitlyNamedCoreStandards(question),
+    results: checked,
+    matches: checked.flatMap((entry) =>
+      entry.matches.map((match: any) => ({ ...match, standardCode: entry.standard }))
+    ),
+  };
+}
+
+function parseModelJson(text: string) {
+  const trimmed = text.trim();
+  const attempts = [
+    trimmed,
+    trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(),
+  ];
+
+  for (const candidate of attempts) {
+    try {
+      return JSON.parse(candidate);
+    } catch {}
+  }
+
+  const cleaned = attempts[attempts.length - 1];
+  const first = cleaned.indexOf("{");
+  const last = cleaned.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    try {
+      return JSON.parse(cleaned.slice(first, last + 1));
+    } catch {}
+  }
+
+  return null;
+}
+
+async function answerFromStandards(
+  question: string,
+  route: any,
+  retrieval: any,
+  apiKey: string
+) {
+  if (!retrieval.matches.length) {
+    return { sufficient: false, answer: "" };
+  }
+
+  const excerpts = retrieval.matches
+    .sort((a: any, b: any) => Number(b.score || 0) - Number(a.score || 0))
+    .slice(0, 10)
+    .map((match: any, index: number) => {
+      const metadata = match.metadata || {};
+      return `EVIDENCE ${index + 1}\nSTANDARD: ${match.standardCode}\nINTERNAL PAGE: ${
+        metadata.page || "unknown"
+      }\nEXCERPT:\n${metadata.text}`;
+    })
+    .join("\n\n");
+
+  const prompt = `
+You are the standards evidence layer of elevator.help.
+
+The user asked an elevator standards question. For this v1 engine, both EN 81-20 and EN 81-50 have been checked. Answer ONLY from the supplied excerpts.
+
+STRICT EVIDENCE GATE:
+- Do not use outside knowledge.
+- Do not invent or reconstruct requirements from memory.
+- Any exact clause/section number you mention MUST appear verbatim in the supplied excerpt supporting that claim.
+- Any numeric value, dimension, distance, force, time, tolerance, illumination value, unit or limit you mention MUST appear verbatim in the supplied excerpt supporting that claim.
+- Never transfer a clause number or value from one standard to the other.
+- If a statement is only an engineering inference and not directly supported, omit it.
+- Do not expose file names, page numbers, storage locations, source lists or internal evidence labels.
+- You MAY name EN 81-20 / EN 81-50 and an exact clause inline when directly supported.
+- If one standard has no relevant evidence, do not force it into the answer merely because it was checked.
+- If the evidence is not sufficient to answer reliably, set sufficient=false instead of guessing.
+- If the user explicitly named one of the two standards, focus the answer on it, while using the other only if it directly adds relevant requirements.
+
+ANSWER STYLE:
+- Use the same language as the user's question.
+- Be concise, technical and practical.
+- Separate requirements from interpretation when useful.
+- Do not add a references/sources section.
+
+Return ONLY valid JSON:
+{
+  "sufficient": true | false,
+  "answer": "final user-facing answer, or empty string if insufficient"
+}
+
+User question:
+${question}
+
+Router context:
+${JSON.stringify(route)}
+
+Explicitly named core standards:
+${JSON.stringify(retrieval.explicitlyNamed)}
+
+Evidence:
+${excerpts}
+`;
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0,
+          maxOutputTokens: 1600,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    return { sufficient: false, answer: "" };
+  }
+
+  const data: any = await response.json();
+  const raw = data?.candidates?.[0]?.content?.parts
+    ?.map((part: { text?: string }) => part.text || "")
+    .join("")
+    .trim();
+  const parsed = raw ? parseModelJson(raw) : null;
+
+  return {
+    sufficient: parsed?.sufficient === true && typeof parsed?.answer === "string",
+    answer: typeof parsed?.answer === "string" ? parsed.answer.trim() : "",
+  };
 }
 
 function manufacturerServiceInstruction(manufacturer?: string | null) {
@@ -319,16 +547,15 @@ async function answerFromKnowledge(
     .slice(0, 5)
     .map((match: any, index: number) => {
       const metadata = match.metadata || {};
-
-      return `SOURCE ${index + 1}
-Manufacturer: ${metadata.manufacturer || "unknown"}
-Controller: ${metadata.controller || "unknown"}
-Fault family: ${metadata.faultFamily || "unknown"}
-Fault code: ${metadata.faultCode || "unknown"}
-Fault name: ${metadata.faultName || "unknown"}
-Page: ${metadata.page || "unknown"}
-Semantic score: ${match.score}
-Excerpt: ${metadata.text}`;
+      return `SOURCE ${index + 1}\nManufacturer: ${
+        metadata.manufacturer || "unknown"
+      }\nController: ${metadata.controller || "unknown"}\nFault family: ${
+        metadata.faultFamily || "unknown"
+      }\nFault code: ${metadata.faultCode || "unknown"}\nFault name: ${
+        metadata.faultName || "unknown"
+      }\nPage: ${metadata.page || "unknown"}\nSemantic score: ${
+        match.score
+      }\nExcerpt: ${metadata.text}`;
     })
     .join("\n\n");
 
@@ -381,9 +608,7 @@ ${excerpts}
   );
 
   if (!response.ok) {
-    throw new Error(
-      `Gemini grounded-answer error: ${await response.text()}`
-    );
+    throw new Error(`Gemini grounded-answer error: ${await response.text()}`);
   }
 
   const data: any = await response.json();
@@ -392,18 +617,15 @@ ${excerpts}
     .join("")
     .trim();
 
-  if (!answer) {
-    throw new Error("Gemini returned no grounded answer");
-  }
-
+  if (!answer) throw new Error("Gemini returned no grounded answer");
   return answer;
 }
 
-async function answerFromWeb(
-  question: string,
-  route: any,
-  apiKey: string
-) {
+async function answerFromWeb(question: string, route: any, apiKey: string) {
+  const standardsRules = isStandardsQuestion(question, route)
+    ? `\nSTANDARDS VERIFICATION RULES:\n- For EN 81-20 / EN 81-50 claims, use authoritative or official technical evidence when available.\n- Do not state an exact clause number, numeric requirement or limit unless it is directly verified by the search evidence.\n- If an exact standards requirement cannot be verified, say so rather than guessing.\n`
+    : "";
+
   const prompt = `
 You are Elevator Agent, a technical research and troubleshooting assistant for elevator technicians, engineers, inspectors and architects.
 
@@ -423,6 +645,7 @@ RULES:
 - Be concise but technically useful.
 - For troubleshooting, prefer actionable verified checks over generic explanations.
 ${ANSWER_VISIBILITY_RULES}
+${standardsRules}
 ${manufacturerServiceInstruction(route.manufacturer)}
 
 Router context:
@@ -456,15 +679,12 @@ ${question}
   }
 
   const data: any = await response.json();
-
   const answer = data?.candidates?.[0]?.content?.parts
     ?.map((part: { text?: string }) => part.text || "")
     .join("")
     .trim();
 
-  return {
-    answer: answer || "No verified answer was returned.",
-  };
+  return { answer: answer || "No verified answer was returned." };
 }
 
 export async function POST(request: NextRequest) {
@@ -473,14 +693,10 @@ export async function POST(request: NextRequest) {
     const question = body?.question;
 
     if (!question || typeof question !== "string") {
-      return NextResponse.json(
-        { error: "Please enter a question." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Please enter a question." }, { status: 400 });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
-
     if (!apiKey) {
       return NextResponse.json(
         { error: "Gemini API is not configured." },
@@ -490,20 +706,48 @@ export async function POST(request: NextRequest) {
 
     if (isWhyElevatorHelpQuestion(question)) {
       const answer = await answerWhyElevatorHelp(question, apiKey);
-
-      return NextResponse.json({
-        answer,
-        sources: [],
-        mode: "about_elevator_help",
-      });
+      return NextResponse.json({ answer, sources: [], mode: "about_elevator_help" });
     }
 
     const route = await routeQuestion(question);
+    const { env } = getCloudflareContext();
+    const ai = (env as any).AI;
+    const vectorize = (env as any).VECTORIZE;
 
-    if (
-      route.needsClarification ||
-      route.searchStrategy === "clarify_first"
-    ) {
+    if (isStandardsQuestion(question, route)) {
+      const standardsRetrieval = await retrieveCoreStandards(
+        question,
+        route,
+        apiKey,
+        ai,
+        vectorize
+      );
+      const standardsAnswer = await answerFromStandards(
+        question,
+        route,
+        standardsRetrieval,
+        apiKey
+      );
+
+      if (standardsAnswer.sufficient && standardsAnswer.answer) {
+        return NextResponse.json({
+          answer: standardsAnswer.answer,
+          sources: [],
+          mode: "standards_knowledge_base",
+          standardsChecked: standardsRetrieval.checkedStandards,
+        });
+      }
+
+      const webResult = await answerFromWeb(question, route, apiKey);
+      return NextResponse.json({
+        answer: webResult.answer,
+        sources: [],
+        mode: "standards_web_fallback",
+        standardsChecked: standardsRetrieval.checkedStandards,
+      });
+    }
+
+    if (route.needsClarification || route.searchStrategy === "clarify_first") {
       return NextResponse.json({
         answer:
           route.clarificationQuestion ||
@@ -512,10 +756,6 @@ export async function POST(request: NextRequest) {
         mode: "clarification",
       });
     }
-
-    const { env } = getCloudflareContext();
-    const ai = (env as any).AI;
-    const vectorize = (env as any).VECTORIZE;
 
     const retrieval = await retrieveOwnKnowledge(
       question,
@@ -526,22 +766,11 @@ export async function POST(request: NextRequest) {
     );
 
     if (retrieval) {
-      const answer = await answerFromKnowledge(
-        question,
-        route,
-        retrieval,
-        apiKey
-      );
-
-      return NextResponse.json({
-        answer,
-        sources: [],
-        mode: "knowledge_base",
-      });
+      const answer = await answerFromKnowledge(question, route, retrieval, apiKey);
+      return NextResponse.json({ answer, sources: [], mode: "knowledge_base" });
     }
 
     const webResult = await answerFromWeb(question, route, apiKey);
-
     return NextResponse.json({
       answer: webResult.answer,
       sources: [],
@@ -549,7 +778,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Ask API error:", error);
-
     return NextResponse.json(
       {
         error:
