@@ -33,7 +33,7 @@ Important rules:
 
 1. Never invent a manufacturer, controller, component, fault code or fault name.
 2. A fault number alone is NOT enough to identify a manufacturer or controller.
-3. A technical term may suggest a manufacturer/controller only if there is strong evidence.
+3. A technical term or a distinctive symptom combination may suggest a manufacturer/controller only if there is strong evidence.
 4. If identification is uncertain, mark it as uncertain.
 5. Distinguish troubleshooting questions from documentation, standards, planning and general technical questions.
 6. Return ONLY valid JSON.
@@ -73,6 +73,20 @@ Known LSU mappings:
 22 = LSU-ZWANGSHALT
 23 = LSU-NOTENDSCHALTER
 
+Distinctive symptom signature:
+If the user says that pre-control / Vorsteuerung is active but the car/cabin does not start or starts with extremely low speed, this is strong evidence for the known NEW LIFT FST-3 LSU-ANFAHRPROBLEM context, even if the user does not explicitly write "LSU".
+Route that symptom combination as:
+manufacturer = "NEW LIFT"
+productFamily = "FST"
+controller = "FST-3"
+faultFamily = "LSU"
+faultCode = null
+faultName = "LSU-ANFAHRPROBLEM"
+confidence = "high"
+needsClarification = false
+searchStrategy = "filtered"
+Do NOT apply this mapping if the user explicitly identifies a conflicting manufacturer/controller.
+
 Example:
 User: "LSU fault. The elevator does not start moving even though pre-control is active."
 Routing:
@@ -82,6 +96,19 @@ controller = "FST-3"
 faultFamily = "LSU"
 faultCode = null
 faultName = "LSU-ANFAHRPROBLEM"
+
+Example without LSU keyword:
+User: "The pre-control is active but the elevator car does not start. What should I check?"
+Routing:
+manufacturer = "NEW LIFT"
+productFamily = "FST"
+controller = "FST-3"
+faultFamily = "LSU"
+faultCode = null
+faultName = "LSU-ANFAHRPROBLEM"
+confidence = "high"
+needsClarification = false
+searchStrategy = "filtered"
 
 The faultCode remains null because the user did NOT explicitly provide "14".
 
@@ -191,6 +218,55 @@ async function callRouterModel(question: string, apiKey: string) {
   return text as string;
 }
 
+function hasKnownAnfahrproblemSignature(question: string) {
+  const normalized = question.toLowerCase();
+
+  const english =
+    /pre[-\s]?control/.test(normalized) &&
+    /(active|activated|on)/.test(normalized) &&
+    /(car|cabin|elevator|lift)/.test(normalized) &&
+    /(does\s+not|doesn't|won't|will\s+not|fails?\s+to|not)\s+(start|move|run)/.test(normalized);
+
+  const german =
+    /vorsteuer/.test(normalized) &&
+    /aktiv/.test(normalized) &&
+    /(fahrkorb|kabine|aufzug)/.test(normalized) &&
+    /(fährt\s+nicht\s+an|faehrt\s+nicht\s+an|startet\s+nicht|läuft\s+nicht\s+an|laeuft\s+nicht\s+an)/.test(normalized);
+
+  const persian =
+    /(پیش[‌\s-]?کنترل|پری[‌\s-]?کنترل|vorsteuerung)/i.test(question) &&
+    /فعال/.test(question) &&
+    /(کابین|آسانسور)/.test(question) &&
+    /(راه\s*نمی|حرکت\s*نمی|شروع\s*نمی)/.test(question);
+
+  return english || german || persian;
+}
+
+function applyKnownSymptomMappings(route: any, question: string) {
+  if (!hasKnownAnfahrproblemSignature(question)) return;
+
+  const manufacturer = String(route.manufacturer || "").toLowerCase();
+  const controller = String(route.controller || "").toLowerCase();
+
+  const conflictingManufacturer =
+    manufacturer && !manufacturer.includes("new lift");
+  const conflictingController =
+    controller && !controller.includes("fst");
+
+  if (conflictingManufacturer || conflictingController) return;
+
+  route.intent = "troubleshooting";
+  route.manufacturer = "NEW LIFT";
+  route.productFamily = "FST";
+  route.controller = "FST-3";
+  route.faultFamily = "LSU";
+  route.faultName = "LSU-ANFAHRPROBLEM";
+  route.confidence = "high";
+  route.needsClarification = false;
+  route.clarificationQuestion = null;
+  route.searchStrategy = "filtered";
+}
+
 function normalizeRoute(route: any, question: string): RouterResult {
   if (
     typeof route.faultFamily === "string" &&
@@ -246,6 +322,8 @@ function normalizeRoute(route: any, question: string): RouterResult {
     route.clarificationQuestion =
       route.clarificationQuestion ??
       "Which elevator manufacturer or controller is this fault code from?";
+  } else {
+    applyKnownSymptomMappings(route, question);
   }
 
   const questionLanguage =
