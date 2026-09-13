@@ -53,9 +53,10 @@ function isStandardsQuestion(question: string, route?: any) {
 function explicitlyNamedCoreStandards(question: string) {
   return CORE_STANDARDS.filter((standard) => {
     const number = standard.code.endsWith("20") ? "20" : "50";
-    return new RegExp(`(?:EN\\s*81\\s*[-–]?\\s*${number}|81\\s*[-–]\\s*${number})`, "i").test(
-      question
-    );
+    return new RegExp(
+      `(?:EN\\s*81\\s*[-–]?\\s*${number}|81\\s*[-–]\\s*${number})`,
+      "i"
+    ).test(question);
   }).map((standard) => standard.code);
 }
 
@@ -351,7 +352,12 @@ async function queryOneCoreStandard(
     }
   }
 
-  return { standard: standard.code, sourceLanguage: null, retrievalQuery: null, matches: [] };
+  return {
+    standard: standard.code,
+    sourceLanguage: null,
+    retrievalQuery: null,
+    matches: [],
+  };
 }
 
 async function retrieveCoreStandards(
@@ -381,7 +387,10 @@ async function retrieveCoreStandards(
     explicitlyNamed: explicitlyNamedCoreStandards(question),
     results: checked,
     matches: checked.flatMap((entry) =>
-      entry.matches.map((match: any) => ({ ...match, standardCode: entry.standard }))
+      entry.matches.map((match: any) => ({
+        ...match,
+        standardCode: entry.standard,
+      }))
     ),
   };
 }
@@ -390,7 +399,10 @@ function parseModelJson(text: string) {
   const trimmed = text.trim();
   const attempts = [
     trimmed,
-    trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(),
+    trimmed
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim(),
   ];
 
   for (const candidate of attempts) {
@@ -409,6 +421,134 @@ function parseModelJson(text: string) {
   }
 
   return null;
+}
+
+function normalizeStandardCode(value: unknown) {
+  const compact = String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+  if (compact === "EN8120") return "EN 81-20";
+  if (compact === "EN8150") return "EN 81-50";
+  return null;
+}
+
+function normalizeClause(value: unknown) {
+  const clause = String(value || "").trim();
+  return /^\d+(?:\.\d+){1,5}$/.test(clause) ? clause : null;
+}
+
+function normalizeEvidenceText(value: unknown) {
+  return String(value || "")
+    .replace(/\u00ad/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function excerptContainsClause(excerpt: string, clause: string) {
+  const pattern = new RegExp(
+    `(?:^|[^0-9.])${escapeRegExp(clause)}(?:[^0-9.]|$)`
+  );
+  return pattern.test(excerpt);
+}
+
+function normalizedNumberTokens(value: string) {
+  const withoutStandardNames = value.replace(
+    /EN\s*81\s*[-–]\s*(?:20|50)/gi,
+    ""
+  );
+  const tokens = withoutStandardNames.match(/\d+(?:[.,]\d+)?/g) || [];
+  return tokens.map((token) => token.replace(",", "."));
+}
+
+function evidenceContainsAllClaimNumbers(claimText: string, evidenceText: string) {
+  const claimNumbers = normalizedNumberTokens(claimText);
+  if (!claimNumbers.length) return true;
+
+  const evidenceNumbers = new Set(normalizedNumberTokens(evidenceText));
+  return claimNumbers.every((number) => evidenceNumbers.has(number));
+}
+
+type VerifiedStandardClaim = {
+  standard: "EN 81-20" | "EN 81-50";
+  clause: string;
+  text: string;
+};
+
+function verifyStandardClaims(parsed: any, retrieval: any): VerifiedStandardClaim[] {
+  const claims = Array.isArray(parsed?.claims) ? parsed.claims : [];
+  const verified: VerifiedStandardClaim[] = [];
+
+  for (const claim of claims.slice(0, 12)) {
+    const standard = normalizeStandardCode(claim?.standard);
+    const clause = normalizeClause(claim?.clause);
+    const text = typeof claim?.text === "string" ? claim.text.trim() : "";
+    const evidenceQuote =
+      typeof claim?.evidenceQuote === "string" ? claim.evidenceQuote.trim() : "";
+
+    if (!standard || !clause || !text || evidenceQuote.length < 12) continue;
+
+    const candidates = (retrieval.matches || []).filter((match: any) => {
+      if (match?.standardCode !== standard) return false;
+      const excerpt = normalizeEvidenceText(match?.metadata?.text);
+      return excerpt.length > 0 && excerptContainsClause(excerpt, clause);
+    });
+
+    const normalizedQuote = normalizeEvidenceText(evidenceQuote).toLowerCase();
+
+    const supportingMatch = candidates.find((match: any) => {
+      const excerpt = normalizeEvidenceText(match?.metadata?.text);
+      const quoteIsVerbatim = excerpt.toLowerCase().includes(normalizedQuote);
+      const numbersAreGrounded = evidenceContainsAllClaimNumbers(text, excerpt);
+      return quoteIsVerbatim && numbersAreGrounded;
+    });
+
+    if (!supportingMatch) continue;
+
+    verified.push({
+      standard,
+      clause,
+      text,
+    });
+  }
+
+  return verified;
+}
+
+function clauseLabel(language?: string | null) {
+  switch (language) {
+    case "de":
+      return "Abschnitt";
+    case "fa":
+      return "بند";
+    case "tr":
+      return "Madde";
+    case "ru":
+      return "пункт";
+    case "ar":
+      return "البند";
+    case "hr":
+      return "odjeljak";
+    default:
+      return "Clause";
+  }
+}
+
+function formatVerifiedStandardClaims(
+  claims: VerifiedStandardClaim[],
+  language?: string | null
+) {
+  const label = clauseLabel(language);
+  return claims
+    .map(
+      (claim) =>
+        `- **${claim.standard}, ${label} ${claim.clause}:** ${claim.text}`
+    )
+    .join("\n");
 }
 
 async function answerFromStandards(
@@ -435,33 +575,38 @@ async function answerFromStandards(
   const prompt = `
 You are the standards evidence layer of elevator.help.
 
-The user asked an elevator standards question. For this v1 engine, both EN 81-20 and EN 81-50 have been checked. Answer ONLY from the supplied excerpts.
+The user asked an elevator standards question. For this v1 engine, both EN 81-20 and EN 81-50 have been checked. Work ONLY from the supplied excerpts.
 
-STRICT EVIDENCE GATE:
+STRICT CLAIM-LEVEL EVIDENCE RULES:
 - Do not use outside knowledge.
 - Do not invent or reconstruct requirements from memory.
-- Every normative requirement in the final answer MUST identify BOTH the exact standard and the exact clause/section number that supports it, for example: "EN 81-20, Abschnitt 5.2.1.4: ...".
-- Any exact clause/section number you mention MUST appear verbatim in the supplied excerpt supporting that claim.
-- If you cannot verify an exact clause/section number for a requirement from the supplied excerpts, OMIT that requirement.
-- If no useful requirement remains with a verified exact clause/section number, set sufficient=false instead of giving a general summary.
-- Any numeric value, dimension, distance, force, time, tolerance, illumination value, unit or limit you mention MUST appear verbatim in the supplied excerpt supporting that claim.
-- Never transfer a clause number or value from one standard to the other.
-- If a statement is only an engineering inference and not directly supported, omit it.
-- Do not expose file names, page numbers, storage locations, source lists or internal evidence labels.
-- If one standard has no relevant evidence, do not force it into the answer merely because it was checked.
-- If the user explicitly named one of the two standards, focus the answer on it, while using the other only if it directly adds relevant requirements.
+- Produce separate atomic claims. One claim = one normative requirement.
+- Every claim MUST identify the exact standard and exact clause/section number supporting that claim.
+- The exact clause/section number MUST appear verbatim in the same supplied excerpt that supports the claim.
+- For every claim, include a short evidenceQuote copied VERBATIM from that same excerpt. The evidenceQuote is internal validation data and will never be shown to the user.
+- Any numeric value, dimension, distance, force, time, tolerance, illumination value, unit or limit stated in claim.text MUST appear in that supporting excerpt.
+- claim.text must contain only the user-facing requirement. Do NOT repeat the standard name, clause number, page number, source name or evidenceQuote inside claim.text.
+- Never transfer a clause number, value or requirement from one standard to the other.
+- If a point is only an engineering inference and not directly supported, omit it.
+- If one standard has no relevant evidence, do not force a claim from it merely because it was checked.
+- If the user explicitly named one of the two standards, focus on it; use the other only if it directly adds a relevant verified requirement.
+- If you cannot produce at least one fully verified atomic claim, set sufficient=false and return an empty claims array.
 
-ANSWER STYLE:
-- Use the same language as the user's question.
-- Be concise, technical and practical.
-- Prefer one bullet per verified requirement, starting with "EN 81-20, Abschnitt ..." or "EN 81-50, Abschnitt ...".
-- Separate requirements from interpretation when useful.
-- Do not add a references/sources section.
+LANGUAGE:
+- claim.text must be in the same language as the user's question.
+- evidenceQuote must remain verbatim in the original source language.
 
 Return ONLY valid JSON:
 {
   "sufficient": true | false,
-  "answer": "final user-facing answer, or empty string if insufficient"
+  "claims": [
+    {
+      "standard": "EN 81-20" | "EN 81-50",
+      "clause": "exact clause number such as 5.2.1.4",
+      "text": "one user-facing atomic requirement",
+      "evidenceQuote": "short verbatim quote copied from the supporting excerpt"
+    }
+  ]
 }
 
 User question:
@@ -487,7 +632,7 @@ ${excerpts}
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0,
-          maxOutputTokens: 1600,
+          maxOutputTokens: 2200,
         },
       }),
     }
@@ -503,16 +648,18 @@ ${excerpts}
     .join("")
     .trim();
   const parsed = raw ? parseModelJson(raw) : null;
-  const answer = typeof parsed?.answer === "string" ? parsed.answer.trim() : "";
-  const hasStandardClauseCitation =
-    /EN\s*81\s*[-–]\s*(?:20|50)[^\n]{0,100}\b\d+(?:\.\d+){1,5}\b/i.test(answer);
+  const verifiedClaims = verifyStandardClaims(parsed, retrieval);
+
+  if (!verifiedClaims.length) {
+    return { sufficient: false, answer: "" };
+  }
 
   return {
-    sufficient:
-      parsed?.sufficient === true &&
-      answer.length > 0 &&
-      hasStandardClauseCitation,
-    answer: hasStandardClauseCitation ? answer : "",
+    sufficient: true,
+    answer: formatVerifiedStandardClaims(
+      verifiedClaims,
+      route.questionLanguage
+    ),
   };
 }
 
@@ -631,7 +778,7 @@ ${excerpts}
 
 async function answerFromWeb(question: string, route: any, apiKey: string) {
   const standardsRules = isStandardsQuestion(question, route)
-    ? `\nSTANDARDS VERIFICATION RULES:\n- For EN 81-20 / EN 81-50 claims, use authoritative or official technical evidence when available.\n- Every normative requirement you state must identify the exact standard AND exact clause/section number that supports it.\n- Do not state an exact clause number, numeric requirement or limit unless it is directly verified by the search evidence.\n- If you cannot verify the exact clause/section for a standards requirement, do not present that requirement as normative. Say that the exact clause could not be verified rather than guessing.\n`
+    ? `\nSTANDARDS VERIFICATION RULES:\n- For EN 81-20 / EN 81-50 claims, use authoritative or official technical evidence when available.\n- Every normative requirement you state must identify the exact standard AND exact clause/section number that supports it.\n- Do not state an exact clause number, numeric requirement or limit unless it is directly verified by the search evidence.\n- Do not provide uncited general normative bullet points. Every normative bullet or paragraph must carry its own standard + exact clause.\n- If you cannot verify the exact clause/section for a standards requirement, do not present that requirement as normative. Say that the exact clause could not be verified rather than guessing.\n`
     : "";
 
   const prompt = `
@@ -701,7 +848,10 @@ export async function POST(request: NextRequest) {
     const question = body?.question;
 
     if (!question || typeof question !== "string") {
-      return NextResponse.json({ error: "Please enter a question." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Please enter a question." },
+        { status: 400 }
+      );
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -714,7 +864,11 @@ export async function POST(request: NextRequest) {
 
     if (isWhyElevatorHelpQuestion(question)) {
       const answer = await answerWhyElevatorHelp(question, apiKey);
-      return NextResponse.json({ answer, sources: [], mode: "about_elevator_help" });
+      return NextResponse.json({
+        answer,
+        sources: [],
+        mode: "about_elevator_help",
+      });
     }
 
     const route = await routeQuestion(question);
@@ -774,8 +928,17 @@ export async function POST(request: NextRequest) {
     );
 
     if (retrieval) {
-      const answer = await answerFromKnowledge(question, route, retrieval, apiKey);
-      return NextResponse.json({ answer, sources: [], mode: "knowledge_base" });
+      const answer = await answerFromKnowledge(
+        question,
+        route,
+        retrieval,
+        apiKey
+      );
+      return NextResponse.json({
+        answer,
+        sources: [],
+        mode: "knowledge_base",
+      });
     }
 
     const webResult = await answerFromWeb(question, route, apiKey);
