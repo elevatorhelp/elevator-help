@@ -352,7 +352,43 @@ function normalizeRoute(route: any, question: string): RouterResult {
   };
 }
 
+function deterministicStandardsRoute(question: string): RouterResult | null {
+  const isStandard =
+    /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
+    /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) ||
+    /(استاندارد|نورم|نُرم)/i.test(question);
+
+  if (!isStandard) return null;
+
+  const questionLanguage = /[؀-ۿ]/.test(question)
+    ? "fa"
+    : /\b(wer|was|warum|wie|aufzug|schacht|norm|normen)\b/i.test(question)
+      ? "de"
+      : "en";
+
+  return {
+    intent: "standard",
+    questionLanguage,
+    preferredSourceLanguage: questionLanguage,
+    manufacturer: null,
+    productFamily: null,
+    controller: null,
+    faultCode: null,
+    faultFamily: null,
+    faultName: null,
+    topics: [],
+    components: [],
+    confidence: "high",
+    needsClarification: false,
+    clarificationQuestion: null,
+    searchStrategy: "semantic_broad",
+  };
+}
+
 export async function routeQuestion(question: string): Promise<RouterResult> {
+  const deterministicStandard = deterministicStandardsRoute(question);
+  if (deterministicStandard) return deterministicStandard;
+
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
