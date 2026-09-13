@@ -1,0 +1,99 @@
+name: Apply Standards Coverage Patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-standards-coverage.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Patch broad-shaft standards coverage
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('app/lib/standards-engine.ts')
+          s = p.read_text()
+
+          old_query = '''        {
+          topic: "structure",
+          query: "Schachtwand mechanische Festigkeit Verformung Kraft Glas Verbundsicherheitsglas",
+        },'''
+          new_query = '''        {
+          topic: "structure",
+          query: "Schachtwand mechanische Festigkeit Verformung Kraft Glas Verbundsicherheitsglas",
+        },
+        {
+          topic: "structure",
+          query: "5.2.1.8.2 Schachtwände mechanische Festigkeit 300 N 5 cm2 Verformung",
+        },'''
+          if old_query in s and '5.2.1.8.2 Schachtwände mechanische Festigkeit' not in s:
+              s = s.replace(old_query, new_query, 1)
+
+          old_en_query = '''        {
+          topic: "structure",
+          query: "shaft wall mechanical strength deformation force laminated safety glass",
+        },'''
+          new_en_query = '''        {
+          topic: "structure",
+          query: "shaft wall mechanical strength deformation force laminated safety glass",
+        },
+        {
+          topic: "structure",
+          query: "5.2.1.8.2 shaft walls mechanical strength 300 N 5 cm2 deformation",
+        },'''
+          if old_en_query in s and '5.2.1.8.2 shaft walls mechanical strength' not in s:
+              s = s.replace(old_en_query, new_en_query, 1)
+
+          old_gate = '''  const selected = selectClaimsForAnswer(verified, retrieval.broad);
+
+  if (!selected.length) {'''
+          new_gate = '''  const selected = selectClaimsForAnswer(verified, retrieval.broad);
+
+  // A broad shaft question must not degrade into a technically correct but
+  // misleading single-subtopic answer (for example only the pit). Require
+  // diversified verified coverage before presenting a broad overview.
+  if (retrieval.broad) {
+    const coveredTopics = new Set(
+      selected.map((claim) => claim.topic).filter((topic) => topic !== "general")
+    );
+    const hasStructure = selected.some((claim) => claim.topic === "structure");
+
+    if (!hasStructure || coveredTopics.size < 3) {
+      return {
+        sufficient: false,
+        answer: unverifiedMessage(route.questionLanguage),
+        checkedStandards,
+      };
+    }
+  }
+
+  if (!selected.length) {'''
+          if old_gate in s and 'coveredTopics.size < 3' not in s:
+              s = s.replace(old_gate, new_gate, 1)
+
+          p.write_text(s)
+
+      - name: Build
+        run: npm ci && npm run build
+
+      - name: Commit patch
+        run: |
+          if git diff --quiet; then
+            echo 'No patch needed.'
+            exit 0
+          fi
+          git config user.name 'elevatorhelp-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add app/lib/standards-engine.ts
+          git commit -m 'Require diversified coverage for broad standards answers'
+          git push
