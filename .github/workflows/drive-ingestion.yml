@@ -7,10 +7,14 @@ on:
         description: Google Drive root folder ID to scan recursively
         required: false
         default: "1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5"
-      max_files:
-        description: Maximum number of new/changed PDFs to process in this run
+      target_text_files:
+        description: Stop after this many PDFs with extractable text are indexed
         required: false
-        default: "10"
+        default: "2"
+      max_scan_files:
+        description: Maximum PDFs to inspect in one run while looking for text-bearing files
+        required: false
+        default: "20"
 
 concurrency:
   group: elevator-help-drive-ingestion
@@ -48,6 +52,7 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
           DRIVE_FOLDER_ID: ${{ inputs.folder_id }}
-          MAX_FILES: ${{ inputs.max_files }}
+          TARGET_TEXT_FILES: ${{ inputs.target_text_files }}
+          MAX_SCAN_FILES: ${{ inputs.max_scan_files }}
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
-        run: node scripts/drive-ingest.mjs
+        run: node scripts/drive-ingest-until-text.mjs
