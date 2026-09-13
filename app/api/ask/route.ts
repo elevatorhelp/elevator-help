@@ -776,6 +776,128 @@ ${excerpts}
   return answer;
 }
 
+function normalizeWebStandardClaims(parsed: any): VerifiedStandardClaim[] {
+  const claims = Array.isArray(parsed?.claims) ? parsed.claims : [];
+  const normalized: VerifiedStandardClaim[] = [];
+
+  for (const claim of claims.slice(0, 12)) {
+    const standard = normalizeStandardCode(claim?.standard);
+    const clause = normalizeClause(claim?.clause);
+    const text = typeof claim?.text === "string" ? claim.text.trim() : "";
+    const evidenceQuote =
+      typeof claim?.evidenceQuote === "string" ? claim.evidenceQuote.trim() : "";
+
+    if (!standard || !clause || !text || evidenceQuote.length < 12) continue;
+    normalized.push({ standard, clause, text });
+  }
+
+  return normalized;
+}
+
+function standardsUnverifiedMessage(language?: string | null) {
+  switch (language) {
+    case "de":
+      return "Ich konnte für diese Frage keine Aussage aus EN 81-20 / EN 81-50 mit zuverlässig verifizierter exakter Abschnittsnummer bestätigen. Bitte konkretisiere den Punkt (z. B. Schachtbeleuchtung, Schachtgrube, Schutzraum oder Schachtwand), damit ich gezielter prüfen kann.";
+    case "fa":
+      return "برای این سؤال نتوانستم مطلبی از EN 81-20 / EN 81-50 را با شماره بند دقیق و قابل‌اعتماد تأیید کنم. لطفاً موضوع را دقیق‌تر کن (مثلاً روشنایی چاه، چاهک، فضای حفاظتی یا دیواره چاه) تا هدفمندتر بررسی کنم.";
+    default:
+      return "I could not verify an exact EN 81-20 / EN 81-50 clause reliably for this question. Please narrow the topic (for example shaft lighting, pit, refuge space, or shaft wall) so I can check it more precisely.";
+  }
+}
+
+async function answerStandardsFromWeb(
+  question: string,
+  route: any,
+  apiKey: string
+) {
+  const prompt = `
+You are the standards web-verification fallback of elevator.help.
+
+The internal indexed excerpts were not sufficient. Use Google Search to verify the answer from authoritative standards-related or official technical sources.
+
+STRICT RULES:
+- This request concerns EN 81-20 / EN 81-50.
+- Produce separate atomic normative claims only. One claim = one requirement.
+- EVERY claim must contain the exact standard (EN 81-20 or EN 81-50) AND the exact clause/section number that directly supports that claim.
+- Do not provide any general normative sentence, bullet or summary without its own exact standard + exact clause.
+- Do not guess clause numbers.
+- Do not infer a clause from a nearby topic.
+- Any numeric value, dimension, distance, force, time, tolerance, illumination value, unit or limit in claim.text must be directly verified in the search evidence for that same clause.
+- For every claim, include a short evidenceQuote copied from the evidence you used. This is internal validation data and will not be shown to the user.
+- If you cannot verify the exact clause for a point, omit that point entirely.
+- If no exact-clause claims can be verified, return an empty claims array.
+- claim.text must be in the same language as the user's question.
+- evidenceQuote should stay in the language of the evidence.
+- Do not include source URLs, document names, page numbers or a references section in claim.text.
+
+Return ONLY valid JSON:
+{
+  "claims": [
+    {
+      "standard": "EN 81-20" | "EN 81-50",
+      "clause": "exact clause number such as 5.2.5.5.2.1",
+      "text": "one user-facing atomic requirement",
+      "evidenceQuote": "short quote from the search evidence supporting this exact claim"
+    }
+  ]
+}
+
+Router context:
+${JSON.stringify(route)}
+
+User question:
+${question}
+`;
+
+  const response = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 2200,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    return {
+      sufficient: false,
+      answer: standardsUnverifiedMessage(route.questionLanguage),
+    };
+  }
+
+  const data: any = await response.json();
+  const candidate = data?.candidates?.[0];
+  const raw = candidate?.content?.parts
+    ?.map((part: { text?: string }) => part.text || "")
+    .join("")
+    .trim();
+  const parsed = raw ? parseModelJson(raw) : null;
+  const grounded = Boolean(candidate?.groundingMetadata?.groundingChunks?.length);
+  const claims = grounded ? normalizeWebStandardClaims(parsed) : [];
+
+  if (!claims.length) {
+    return {
+      sufficient: false,
+      answer: standardsUnverifiedMessage(route.questionLanguage),
+    };
+  }
+
+  return {
+    sufficient: true,
+    answer: formatVerifiedStandardClaims(claims, route.questionLanguage),
+  };
+}
+
 async function answerFromWeb(question: string, route: any, apiKey: string) {
   const standardsRules = isStandardsQuestion(question, route)
     ? `\nSTANDARDS VERIFICATION RULES:\n- For EN 81-20 / EN 81-50 claims, use authoritative or official technical evidence when available.\n- Every normative requirement you state must identify the exact standard AND exact clause/section number that supports it.\n- Do not state an exact clause number, numeric requirement or limit unless it is directly verified by the search evidence.\n- Do not provide uncited general normative bullet points. Every normative bullet or paragraph must carry its own standard + exact clause.\n- If you cannot verify the exact clause/section for a standards requirement, do not present that requirement as normative. Say that the exact clause could not be verified rather than guessing.\n`
@@ -900,11 +1022,13 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const webResult = await answerFromWeb(question, route, apiKey);
+      const webResult = await answerStandardsFromWeb(question, route, apiKey);
       return NextResponse.json({
         answer: webResult.answer,
         sources: [],
-        mode: "standards_web_fallback",
+        mode: webResult.sufficient
+          ? "standards_web_fallback"
+          : "standards_unverified",
         standardsChecked: standardsRetrieval.checkedStandards,
       });
     }
