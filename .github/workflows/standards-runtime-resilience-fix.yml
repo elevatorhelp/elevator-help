@@ -1,0 +1,81 @@
+name: Standards Runtime Resilience Fix
+
+on:
+  push:
+    paths:
+      - .github/workflows/standards-runtime-resilience-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Make standards retrieval failures non-fatal
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('app/lib/standards-engine.ts')
+          text = path.read_text()
+          old = '''  const checked = await Promise.all(
+    CORE_STANDARDS.map((standard) =>
+      queryOneStandard(question, route, standard, apiKey, ai, vectorize)
+    )
+  );'''
+          new = '''  const checked = await Promise.all(
+    CORE_STANDARDS.map(async (standard) => {
+      try {
+        return await queryOneStandard(
+          question,
+          route,
+          standard,
+          apiKey,
+          ai,
+          vectorize
+        );
+      } catch (error) {
+        console.error("Standards retrieval error:", {
+          standard: standard.code,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          standard: standard.code,
+          sourceLanguage: null,
+          broad: isBroadShaftQuestion(question),
+          matches: [],
+        };
+      }
+    })
+  );'''
+          if old not in text:
+              raise SystemExit('Target block not found; refusing unsafe patch')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit fix
+        run: |
+          if git diff --quiet; then
+            echo "No change needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/lib/standards-engine.ts
+          git commit -m "Contain standards retrieval runtime failures"
+          git push
