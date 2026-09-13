@@ -440,19 +440,21 @@ The user asked an elevator standards question. For this v1 engine, both EN 81-20
 STRICT EVIDENCE GATE:
 - Do not use outside knowledge.
 - Do not invent or reconstruct requirements from memory.
+- Every normative requirement in the final answer MUST identify BOTH the exact standard and the exact clause/section number that supports it, for example: "EN 81-20, Abschnitt 5.2.1.4: ...".
 - Any exact clause/section number you mention MUST appear verbatim in the supplied excerpt supporting that claim.
+- If you cannot verify an exact clause/section number for a requirement from the supplied excerpts, OMIT that requirement.
+- If no useful requirement remains with a verified exact clause/section number, set sufficient=false instead of giving a general summary.
 - Any numeric value, dimension, distance, force, time, tolerance, illumination value, unit or limit you mention MUST appear verbatim in the supplied excerpt supporting that claim.
 - Never transfer a clause number or value from one standard to the other.
 - If a statement is only an engineering inference and not directly supported, omit it.
 - Do not expose file names, page numbers, storage locations, source lists or internal evidence labels.
-- You MAY name EN 81-20 / EN 81-50 and an exact clause inline when directly supported.
 - If one standard has no relevant evidence, do not force it into the answer merely because it was checked.
-- If the evidence is not sufficient to answer reliably, set sufficient=false instead of guessing.
 - If the user explicitly named one of the two standards, focus the answer on it, while using the other only if it directly adds relevant requirements.
 
 ANSWER STYLE:
 - Use the same language as the user's question.
 - Be concise, technical and practical.
+- Prefer one bullet per verified requirement, starting with "EN 81-20, Abschnitt ..." or "EN 81-50, Abschnitt ...".
 - Separate requirements from interpretation when useful.
 - Do not add a references/sources section.
 
@@ -501,10 +503,16 @@ ${excerpts}
     .join("")
     .trim();
   const parsed = raw ? parseModelJson(raw) : null;
+  const answer = typeof parsed?.answer === "string" ? parsed.answer.trim() : "";
+  const hasStandardClauseCitation =
+    /EN\s*81\s*[-–]\s*(?:20|50)[^\n]{0,100}\b\d+(?:\.\d+){1,5}\b/i.test(answer);
 
   return {
-    sufficient: parsed?.sufficient === true && typeof parsed?.answer === "string",
-    answer: typeof parsed?.answer === "string" ? parsed.answer.trim() : "",
+    sufficient:
+      parsed?.sufficient === true &&
+      answer.length > 0 &&
+      hasStandardClauseCitation,
+    answer: hasStandardClauseCitation ? answer : "",
   };
 }
 
@@ -623,7 +631,7 @@ ${excerpts}
 
 async function answerFromWeb(question: string, route: any, apiKey: string) {
   const standardsRules = isStandardsQuestion(question, route)
-    ? `\nSTANDARDS VERIFICATION RULES:\n- For EN 81-20 / EN 81-50 claims, use authoritative or official technical evidence when available.\n- Do not state an exact clause number, numeric requirement or limit unless it is directly verified by the search evidence.\n- If an exact standards requirement cannot be verified, say so rather than guessing.\n`
+    ? `\nSTANDARDS VERIFICATION RULES:\n- For EN 81-20 / EN 81-50 claims, use authoritative or official technical evidence when available.\n- Every normative requirement you state must identify the exact standard AND exact clause/section number that supports it.\n- Do not state an exact clause number, numeric requirement or limit unless it is directly verified by the search evidence.\n- If you cannot verify the exact clause/section for a standards requirement, do not present that requirement as normative. Say that the exact clause could not be verified rather than guessing.\n`
     : "";
 
   const prompt = `
