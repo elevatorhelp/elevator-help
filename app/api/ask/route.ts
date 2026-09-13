@@ -48,18 +48,10 @@ ${question}
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0,
-        },
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0 },
       }),
     }
   );
@@ -82,25 +74,12 @@ ${question}
 }
 
 function buildKnowledgeFilter(route: any, language: string) {
-  const filter: Record<string, string> = {
-    language,
-  };
+  const filter: Record<string, string> = { language };
 
-  if (route.manufacturer) {
-    filter.manufacturer = route.manufacturer;
-  }
-
-  if (route.controller) {
-    filter.controller = route.controller;
-  }
-
-  if (route.faultFamily) {
-    filter.faultFamily = route.faultFamily;
-  }
-
-  if (route.faultCode) {
-    filter.faultCode = String(route.faultCode);
-  }
+  if (route.manufacturer) filter.manufacturer = route.manufacturer;
+  if (route.controller) filter.controller = route.controller;
+  if (route.faultFamily) filter.faultFamily = route.faultFamily;
+  if (route.faultCode) filter.faultCode = String(route.faultCode);
 
   if (route.faultFamily || route.faultCode || route.faultName) {
     filter.contentType = "fault";
@@ -118,6 +97,45 @@ function hasEnoughRoutingContext(route: any) {
   );
 }
 
+function rerankMatches(matches: any[], route: any) {
+  return [...matches].sort((a: any, b: any) => {
+    const score = (match: any) => {
+      const metadata = match?.metadata || {};
+      let value = Number(match?.score || 0);
+
+      // Exact identifiers are stronger than tiny semantic-score differences.
+      // We still never invent a numeric faultCode from symptoms.
+      if (
+        route.faultCode &&
+        String(metadata.faultCode || "") === String(route.faultCode)
+      ) {
+        value += 10;
+      }
+
+      if (
+        route.faultName &&
+        (route.confidence === "high" || route.confidence === "medium") &&
+        String(metadata.faultName || "").toUpperCase() ===
+          String(route.faultName).toUpperCase()
+      ) {
+        value += 5;
+      }
+
+      if (
+        route.faultFamily &&
+        String(metadata.faultFamily || "").toUpperCase() ===
+          String(route.faultFamily).toUpperCase()
+      ) {
+        value += 1;
+      }
+
+      return value;
+    };
+
+    return score(b) - score(a);
+  });
+}
+
 async function retrieveOwnKnowledge(
   question: string,
   route: any,
@@ -125,18 +143,15 @@ async function retrieveOwnKnowledge(
   ai: any,
   vectorize: any
 ) {
-  if (!hasEnoughRoutingContext(route)) {
-    return null;
-  }
+  if (!hasEnoughRoutingContext(route)) return null;
 
   const preferredLanguage =
     route.preferredSourceLanguage || route.questionLanguage || "en";
 
   const languages = Array.from(
-    new Set([
-      preferredLanguage,
-      ...SOURCE_LANGUAGE_FALLBACKS,
-    ].filter(Boolean))
+    new Set(
+      [preferredLanguage, ...SOURCE_LANGUAGE_FALLBACKS].filter(Boolean)
+    )
   );
 
   for (const sourceLanguage of languages) {
@@ -151,9 +166,7 @@ async function retrieveOwnKnowledge(
 
     const embeddingResult = await ai.run(
       "@cf/baai/bge-base-en-v1.5",
-      {
-        text: [retrievalQuery],
-      }
+      { text: [retrievalQuery] }
     );
 
     const queryVector = (embeddingResult as any).data?.[0];
@@ -170,22 +183,22 @@ async function retrieveOwnKnowledge(
       filter,
     });
 
-    const matches = (result.matches || []).filter(
+    const rawMatches = (result.matches || []).filter(
       (match: any) =>
         typeof match?.metadata?.text === "string" &&
         match.metadata.text.trim().length > 0
     );
 
-    if (!matches.length) {
-      continue;
-    }
+    if (!rawMatches.length) continue;
 
-    const topScore = Number(matches[0]?.score || 0);
+    const topSemanticScore = Number(rawMatches[0]?.score || 0);
     const exactFaultCode = Boolean(route.faultCode);
 
-    if (!exactFaultCode && topScore < MIN_SEMANTIC_SCORE) {
+    if (!exactFaultCode && topSemanticScore < MIN_SEMANTIC_SCORE) {
       continue;
     }
+
+    const matches = rerankMatches(rawMatches, route);
 
     return {
       sourceLanguage,
@@ -209,9 +222,7 @@ function buildInternalReferences(matches: any[]) {
       metadata.page ? `p. ${metadata.page}` : null,
     ].filter(Boolean);
 
-    return {
-      title: pieces.join(" · "),
-    };
+    return { title: pieces.join(" · ") };
   });
 
   return references.filter(
@@ -272,10 +283,10 @@ GROUNDING RULES:
 - Do not use outside knowledge.
 - Do not invent fault meanings, parameters, connector numbers, test values or procedures.
 - If the excerpts do not support a claim, do not make it.
-- Prefer the highest-ranked source when sources overlap.
-- Distinguish the documented fault meaning from possible checks.
+- SOURCE 1 has been deterministically reranked using Router evidence when available; prefer it when sources overlap.
+- Distinguish documented fault meaning from possible checks.
 - Do not expose internal file names, storage locations or internal document identifiers.
-- You may identify the manufacturer, controller, fault name and page when useful.
+- You may identify manufacturer, controller, fault name and page when useful.
 - Do not create a References section; the application displays sources separately.
 
 ANSWER STYLE:
@@ -300,16 +311,9 @@ ${excerpts}
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.1,
           maxOutputTokens: 1400,
@@ -345,7 +349,7 @@ async function answerFromWeb(
   const prompt = `
 You are Elevator Agent, a technical research and troubleshooting assistant for elevator technicians, engineers, inspectors and architects.
 
-The system could not find sufficiently strong evidence in its indexed technical knowledge base, so use Google Search to research the user's question.
+The indexed technical knowledge base did not provide sufficiently strong evidence, so use Google Search.
 
 SEARCH PRIORITY:
 1. Manufacturer official technical documentation
@@ -379,17 +383,8 @@ ${question}
         "x-goog-api-key": apiKey,
       },
       body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
-        tools: [
-          {
-            google_search: {},
-          },
-        ],
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }],
         generationConfig: {
           temperature: 0.15,
           maxOutputTokens: 1800,
@@ -497,11 +492,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const webResult = await answerFromWeb(
-      question,
-      route,
-      apiKey
-    );
+    const webResult = await answerFromWeb(question, route, apiKey);
 
     return NextResponse.json({
       answer: webResult.answer,
