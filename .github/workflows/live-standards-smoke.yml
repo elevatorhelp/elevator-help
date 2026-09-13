@@ -1,0 +1,52 @@
+name: Live Standards Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  live-standards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for deployment and test broad shaft answer
+        shell: bash
+        run: |
+          set -u
+          QUESTION='Was sagt die Norm über den Aufzugsschacht?'
+          LAST_ANSWER=''
+
+          for attempt in $(seq 1 16); do
+            echo "Live test attempt ${attempt}/16"
+
+            RESPONSE=$(curl -sS --max-time 45 \
+              -H 'content-type: application/json' \
+              --data "$(jq -nc --arg q "$QUESTION" '{question:$q}')" \
+              https://elevator.help/api/ask || true)
+
+            ANSWER=$(printf '%s' "$RESPONSE" | jq -r '.answer // empty' 2>/dev/null || true)
+            MODE=$(printf '%s' "$RESPONSE" | jq -r '.mode // empty' 2>/dev/null || true)
+            LAST_ANSWER="$ANSWER"
+
+            echo "mode=$MODE"
+            printf '%s\n' "$ANSWER"
+
+            CLAUSE_COUNT=$(printf '%s' "$ANSWER" | grep -o 'Abschnitt [0-9][0-9.]*' | sort -u | wc -l | tr -d ' ')
+
+            if [[ "$MODE" == "standards_knowledge_base" ]] \
+              && grep -q 'Kurz gesagt:' <<<"$ANSWER" \
+              && grep -q 'Was die Norm konkret sagt:' <<<"$ANSWER" \
+              && grep -q 'EN 81-20, Abschnitt 5\.2\.1\.8\.2' <<<"$ANSWER" \
+              && [[ "$CLAUSE_COUNT" -ge 3 ]]; then
+              echo "PASS: broad shaft answer is grounded, diversified and includes the verified shaft-wall clause."
+              exit 0
+            fi
+
+            sleep 30
+          done
+
+          echo 'FAIL: live broad-shaft answer did not reach the required quality gate.'
+          echo 'Last answer:'
+          printf '%s\n' "$LAST_ANSWER"
+          exit 1
