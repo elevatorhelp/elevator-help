@@ -6,17 +6,12 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -24,39 +19,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Apply standards runtime resilience patch
-        if: github.event_name == 'push'
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('app/lib/standards-engine.ts')
-          text = path.read_text()
-          old = "  const checked = await Promise.all(\n    CORE_STANDARDS.map((standard) =>\n      queryOneStandard(question, route, standard, apiKey, ai, vectorize)\n    )\n  );"
-          new = "  const checked = await Promise.all(\n    CORE_STANDARDS.map(async (standard) => {\n      try {\n        return await queryOneStandard(\n          question,\n          route,\n          standard,\n          apiKey,\n          ai,\n          vectorize\n        );\n      } catch (error) {\n        console.error(\"Standards retrieval error:\", {\n          standard: standard.code,\n          message: error instanceof Error ? error.message : String(error),\n        });\n        return {\n          standard: standard.code,\n          sourceLanguage: null,\n          broad: isBroadShaftQuestion(question),\n          matches: [],\n        };\n      }\n    })\n  );"
-          if old in text:
-              path.write_text(text.replace(old, new, 1))
-              print('Applied standards runtime resilience patch.')
-          elif new in text:
-              print('Standards runtime resilience patch already present.')
-          else:
-              raise SystemExit('Expected standards retrieval block not found; refusing unsafe patch')
-          PY
-
       - name: Install dependencies
         run: npm ci
 
       - name: Build
         run: npm run build
-
-      - name: Commit standards runtime resilience patch
-        if: github.event_name == 'push'
-        run: |
-          if git diff --quiet app/lib/standards-engine.ts; then
-            echo "No source patch to commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/lib/standards-engine.ts
-          git commit -m "Contain standards retrieval runtime failures"
-          git push
