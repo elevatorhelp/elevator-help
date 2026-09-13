@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { routeQuestion } from "../../lib/router";
 
 export async function POST(request: Request) {
   try {
@@ -22,41 +23,10 @@ export async function POST(request: Request) {
       throw new Error("GEMINI_API_KEY is missing");
     }
 
-    /*
-     * STEP 1
-     * Let our existing Router understand the question first.
-     */
-    const routerUrl = new URL("/api/router-test", request.url);
+    // Route the question directly through shared server logic.
+    // No internal HTTP self-call.
+    const route = await routeQuestion(question);
 
-    const routerResponse = await fetch(routerUrl.toString(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        question,
-      }),
-    });
-
-    const routerData: any = await routerResponse.json();
-
-    if (!routerResponse.ok || !routerData?.ok) {
-      throw new Error(
-        routerData?.error || "Router request failed"
-      );
-    }
-
-    const route = routerData.route;
-
-    if (!route) {
-      throw new Error("Router returned no route");
-    }
-
-    /*
-     * STEP 2
-     * If the router says the question is ambiguous,
-     * do NOT guess and do NOT search blindly.
-     */
     if (
       route.needsClarification === true ||
       route.searchStrategy === "clarify_first"
@@ -73,21 +43,11 @@ export async function POST(request: Request) {
       });
     }
 
-    /*
-     * STEP 3
-     * For the CURRENT knowledge base test our indexed FST-3
-     * source material is German.
-     *
-     * Therefore:
-     * user language != German
-     * → translate only the retrieval query into technical German.
-     *
-     * The final production system will choose the source language
-     * from available document languages automatically.
-     */
     let retrievalQuery = question;
     let retrievalLanguage = route.questionLanguage || "unknown";
 
+    // Temporary source-language behavior for the current FST-3 test corpus.
+    // Later this will be selected from available document languages.
     if (route.questionLanguage !== "de") {
       const translationPrompt = `
 Translate the following elevator technical question into concise technical German for semantic search in elevator manuals.
@@ -133,9 +93,7 @@ ${question}
         );
       }
 
-      const translationData: any =
-        await translationResponse.json();
-
+      const translationData: any = await translationResponse.json();
       const translatedText =
         translationData?.candidates?.[0]?.content?.parts?.[0]?.text;
 
@@ -149,10 +107,6 @@ ${question}
       retrievalLanguage = "de";
     }
 
-    /*
-     * STEP 4
-     * Generate embedding from the language-normalized query.
-     */
     const embeddingResult = await ai.run(
       "@cf/baai/bge-base-en-v1.5",
       {
@@ -166,15 +120,6 @@ ${question}
       throw new Error("No query embedding returned");
     }
 
-    /*
-     * STEP 5
-     * Build Vectorize filters dynamically from Router output.
-     *
-     * No hardcoded NEW LIFT.
-     * No hardcoded FST-3.
-     * No hardcoded LSU.
-     * No hardcoded fault code.
-     */
     const filter: Record<string, string> = {};
 
     if (route.manufacturer) {
@@ -193,10 +138,6 @@ ${question}
       filter.faultCode = String(route.faultCode);
     }
 
-    /*
-     * If Router clearly identified a fault,
-     * narrow the search to fault content.
-     */
     if (
       route.faultFamily ||
       route.faultCode ||
@@ -205,11 +146,7 @@ ${question}
       filter.contentType = "fault";
     }
 
-    /*
-     * Current indexed test material is German.
-     * This is the ONLY remaining temporary language restriction.
-     * We remove this when the document-language registry is connected.
-     */
+    // Current indexed test material is German.
     filter.language = "de";
 
     const queryOptions: any = {
@@ -221,10 +158,6 @@ ${question}
       queryOptions.filter = filter;
     }
 
-    /*
-     * STEP 6
-     * Semantic search inside the Router-selected knowledge area.
-     */
     const result = await vectorize.query(
       queryVector,
       queryOptions
@@ -234,17 +167,11 @@ ${question}
       ok: true,
       mode: "retrieval",
       question,
-
       route,
-
-      questionLanguage:
-        route.questionLanguage || null,
-
+      questionLanguage: route.questionLanguage || null,
       retrievalLanguage,
       retrievalQuery,
-
       appliedFilter: filter,
-
       matches: result.matches.map((match: any) => ({
         id: match.id,
         score: match.score,
