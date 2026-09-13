@@ -16,13 +16,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
 
       - name: Patch broad-shaft standards coverage
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
+
           p = Path('app/lib/standards-engine.ts')
-          s = p.read_text()
+          s = p.read_text(encoding='utf-8')
 
           old_query = '''        {
           topic: "structure",
@@ -34,9 +40,10 @@ jobs:
         },
         {
           topic: "structure",
-          query: "5.2.1.8.2 Schachtwände mechanische Festigkeit 300 N 5 cm2 Verformung",
+          query: "EN 81-20 5.2.1.8.2 Schachtwände mechanische Festigkeit Verformung",
         },'''
-          if old_query in s and '5.2.1.8.2 Schachtwände mechanische Festigkeit' not in s:
+          assert old_query in s or 'EN 81-20 5.2.1.8.2 Schachtwände' in s
+          if 'EN 81-20 5.2.1.8.2 Schachtwände' not in s:
               s = s.replace(old_query, new_query, 1)
 
           old_en_query = '''        {
@@ -49,19 +56,26 @@ jobs:
         },
         {
           topic: "structure",
-          query: "5.2.1.8.2 shaft walls mechanical strength 300 N 5 cm2 deformation",
+          query: "EN 81-20 5.2.1.8.2 shaft walls mechanical strength deformation",
         },'''
-          if old_en_query in s and '5.2.1.8.2 shaft walls mechanical strength' not in s:
+          assert old_en_query in s or 'EN 81-20 5.2.1.8.2 shaft walls' in s
+          if 'EN 81-20 5.2.1.8.2 shaft walls' not in s:
               s = s.replace(old_en_query, new_en_query, 1)
+
+          verify_anchor = '    if (!selected || selected.standardCode !== standard) continue;'
+          assert verify_anchor in s
+          if 'normalizeTopic(selected.standardSearchTopic) !== topic' not in s:
+              s = s.replace(
+                  verify_anchor,
+                  verify_anchor + '\n    if (normalizeTopic(selected.standardSearchTopic) !== topic) continue;',
+                  1,
+              )
 
           old_gate = '''  const selected = selectClaimsForAnswer(verified, retrieval.broad);
 
   if (!selected.length) {'''
           new_gate = '''  const selected = selectClaimsForAnswer(verified, retrieval.broad);
 
-  // A broad shaft question must not degrade into a technically correct but
-  // misleading single-subtopic answer (for example only the pit). Require
-  // diversified verified coverage before presenting a broad overview.
   if (retrieval.broad) {
     const coveredTopics = new Set(
       selected.map((claim) => claim.topic).filter((topic) => topic !== "general")
@@ -78,15 +92,18 @@ jobs:
   }
 
   if (!selected.length) {'''
-          if old_gate in s and 'coveredTopics.size < 3' not in s:
+          assert old_gate in s or 'coveredTopics.size < 3' in s
+          if 'coveredTopics.size < 3' not in s:
               s = s.replace(old_gate, new_gate, 1)
 
-          p.write_text(s)
+          p.write_text(s, encoding='utf-8')
+          PY
 
       - name: Build
         run: npm ci && npm run build
 
       - name: Commit patch
+        shell: bash
         run: |
           if git diff --quiet; then
             echo 'No patch needed.'
