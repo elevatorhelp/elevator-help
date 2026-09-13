@@ -1,6 +1,9 @@
 name: Cloudflare Diagnostics
 
 on:
+  push:
+    paths:
+      - .github/workflows/cloudflare-diagnostics.yml
   workflow_dispatch:
 
 permissions:
@@ -61,6 +64,7 @@ jobs:
             -H "Content-Type: application/json" \
             --data '{"question":"Was sagt die Norm über den Aufzugsschacht?"}')
           echo "Live API HTTP status: $status"
+          cat /tmp/live.json
           test "$status" = "200"
           jq -e '.answer and (.answer | length > 0)' /tmp/live.json >/dev/null
           echo "Live elevator.help API returned an answer."
