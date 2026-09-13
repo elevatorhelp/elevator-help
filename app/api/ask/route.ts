@@ -509,11 +509,7 @@ function verifyStandardClaims(parsed: any, retrieval: any): VerifiedStandardClai
 
     if (!supportingMatch) continue;
 
-    verified.push({
-      standard,
-      clause,
-      text,
-    });
+    verified.push({ standard, clause, text });
   }
 
   return verified;
@@ -538,6 +534,19 @@ function clauseLabel(language?: string | null) {
   }
 }
 
+function presentationLabels(language?: string | null) {
+  switch (language) {
+    case "de":
+      return { summary: "Kurz gesagt", details: "Was die Norm konkret sagt" };
+    case "fa":
+      return { summary: "خلاصهٔ فنی", details: "آنچه Norm دقیقاً می‌گوید" };
+    case "tr":
+      return { summary: "Kısaca", details: "Standardın tam olarak söylediği" };
+    default:
+      return { summary: "In practical terms", details: "What the standard says exactly" };
+  }
+}
+
 function formatVerifiedStandardClaims(
   claims: VerifiedStandardClaim[],
   language?: string | null
@@ -549,6 +558,90 @@ function formatVerifiedStandardClaims(
         `- **${claim.standard}, ${label} ${claim.clause}:** ${claim.text}`
     )
     .join("\n");
+}
+
+async function buildHumanStandardsSummary(
+  question: string,
+  claims: VerifiedStandardClaim[],
+  language: string | null | undefined,
+  apiKey: string
+) {
+  const verifiedFacts = claims
+    .map(
+      (claim, index) =>
+        `${index + 1}. ${claim.standard} ${claim.clause}: ${claim.text}`
+    )
+    .join("\n");
+
+  const prompt = `
+You are an experienced elevator engineer explaining a standards answer to a colleague in a natural, human way.
+
+Write a short direct answer to the user's question BEFORE the formal clause details are shown.
+
+STRICT RULES:
+- Use ONLY the verified facts below.
+- Do not add any new requirement, exception, number, dimension, value, interpretation or safety claim that is not already present in those verified facts.
+- Do not cite clause numbers in this short explanation; the exact clauses will be shown immediately afterwards.
+- Explain what the verified facts mean in practice, like a competent human colleague, not like a legal document or a generic AI disclaimer.
+- Keep it to 1-3 short sentences.
+- Answer in ${languageName(language || "en")}.
+- Do not use a heading, bullets, references or source names.
+
+User question:
+${question}
+
+Verified facts:
+${verifiedFacts}
+`;
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.15,
+            maxOutputTokens: 420,
+          },
+        }),
+      }
+    );
+
+    if (response.ok) {
+      const data: any = await response.json();
+      const summary = data?.candidates?.[0]?.content?.parts
+        ?.map((part: { text?: string }) => part.text || "")
+        .join("")
+        .trim();
+
+      if (summary) return summary;
+    }
+  } catch (error) {
+    console.error("Standards summary error:", error);
+  }
+
+  return claims[0]?.text || "";
+}
+
+async function formatStandardsAnswer(
+  question: string,
+  claims: VerifiedStandardClaim[],
+  language: string | null | undefined,
+  apiKey: string
+) {
+  const labels = presentationLabels(language);
+  const summary = await buildHumanStandardsSummary(
+    question,
+    claims,
+    language,
+    apiKey
+  );
+  const details = formatVerifiedStandardClaims(claims, language);
+
+  return `**${labels.summary}:** ${summary}\n\n**${labels.details}:**\n${details}`;
 }
 
 async function answerFromStandards(
@@ -656,9 +749,11 @@ ${excerpts}
 
   return {
     sufficient: true,
-    answer: formatVerifiedStandardClaims(
+    answer: await formatStandardsAnswer(
+      question,
       verifiedClaims,
-      route.questionLanguage
+      route.questionLanguage,
+      apiKey
     ),
   };
 }
@@ -894,7 +989,12 @@ ${question}
 
   return {
     sufficient: true,
-    answer: formatVerifiedStandardClaims(claims, route.questionLanguage),
+    answer: await formatStandardsAnswer(
+      question,
+      claims,
+      route.questionLanguage,
+      apiKey
+    ),
   };
 }
 
