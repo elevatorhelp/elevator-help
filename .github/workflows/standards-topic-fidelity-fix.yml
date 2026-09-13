@@ -1,0 +1,174 @@
+name: One-shot standards topic fidelity fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/standards-topic-fidelity-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Patch standards topic fidelity
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/lib/standards-engine.ts')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''function matchRank(match: any) {
+            const text = String(match?.metadata?.text || "");
+            const clauseBonus = /\\b\\d+(?:\\.\\d+){2,6}\\b/.test(text) ? 0.18 : 0;
+            const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength)/i.test(
+              text
+            )
+              ? 0.05
+              : 0;
+            return Number(match?.score || 0) + clauseBonus + headingBonus;
+          }
+          '''
+          new = '''function matchRank(match: any) {
+            const text = String(match?.metadata?.text || "");
+            const clauseBonus = /\\b\\d+(?:\\.\\d+){2,6}\\b/.test(text) ? 0.18 : 0;
+            const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength)/i.test(
+              text
+            )
+              ? 0.05
+              : 0;
+            return Number(match?.score || 0) + clauseBonus + headingBonus;
+          }
+
+          function topicTextRelevant(text: string, topic: StandardTopic) {
+            switch (topic) {
+              case "structure":
+                return /(schachtw(?:a|ä)nd|shaft wall|mechanische festigkeit|mechanical strength|festigkeit der w(?:a|ä)nde|verformung|deformation)/i.test(text);
+              case "pit":
+                return /(schachtgrube|grubenboden|pit|refuge space|schutzraum)/i.test(text);
+              case "headroom":
+                return /(schachtkopf|headroom|fahrkorbdach|car roof|schutzraum|refuge space)/i.test(text);
+              case "lighting":
+                return /(schachtbeleuchtung|beleuchtungsst(?:a|ä)rke|lighting|illumination)/i.test(text);
+              case "access":
+                return /(zugang|zugangst(?:u|ü)r|nott(?:u|ü)r|wartungst(?:u|ü)r|access|emergency door|inspection door)/i.test(text);
+              case "separation":
+                return /(trennwand|trennung|gemeinsamer schacht|separation|partition|counterweight|gegengewicht)/i.test(text);
+              default:
+                return true;
+            }
+          }
+          '''
+          assert old in text, 'matchRank block not found'
+          text = text.replace(old, new, 1)
+
+          old = '''  const preferredLanguage =
+            route.preferredSourceLanguage || route.questionLanguage || "de";
+          const languages = Array.from(
+            new Set([preferredLanguage, "de", "en"].filter(Boolean))
+          );
+
+          for (const sourceLanguage of languages) {
+          '''
+          new = '''  const preferredLanguage =
+            route.preferredSourceLanguage || route.questionLanguage || "de";
+          const languages = Array.from(
+            new Set([preferredLanguage, "de", "en"].filter(Boolean))
+          );
+          const broad = isBroadShaftQuestion(question);
+
+          for (const sourceLanguage of languages) {
+          '''
+          assert old in text, 'preferredLanguage block not found'
+          text = text.replace(old, new, 1)
+
+          old = '''      const valid = (result.matches || [])
+            .filter(
+              (match: any) =>
+                typeof match?.metadata?.text === "string" &&
+                match.metadata.text.trim().length > 0 &&
+                matchBelongsToStandard(match, standard.compact) &&
+                Number(match?.score || 0) >= MIN_STANDARD_SCORE
+            )
+            .sort((a: any, b: any) => matchRank(b) - matchRank(a))
+            .slice(0, 4)
+          '''
+          new = '''      const valid = (result.matches || [])
+            .filter(
+              (match: any) =>
+                typeof match?.metadata?.text === "string" &&
+                match.metadata.text.trim().length > 0 &&
+                matchBelongsToStandard(match, standard.compact) &&
+                Number(match?.score || 0) >= MIN_STANDARD_SCORE
+            )
+            .filter(
+              (match: any) =>
+                !broad ||
+                item.topic !== "structure" ||
+                topicTextRelevant(String(match?.metadata?.text || ""), "structure")
+            )
+            .sort((a: any, b: any) => matchRank(b) - matchRank(a))
+            .slice(0, 4)
+          '''
+          assert old in text, 'valid retrieval block not found'
+          text = text.replace(old, new, 1)
+
+          old = '''    const broad = isBroadShaftQuestion(question);
+            const topicOrder: StandardTopic[] = broad
+          '''
+          new = '''    const topicOrder: StandardTopic[] = broad
+          '''
+          assert old in text, 'duplicate broad block not found'
+          text = text.replace(old, new, 1)
+
+          old = '''    const selected = evidence[evidenceId - 1];
+            if (!selected || selected.standardCode !== standard) continue;
+
+            const excerpt = normalizeEvidenceText(selected?.metadata?.text);
+          '''
+          new = '''    const selected = evidence[evidenceId - 1];
+            if (!selected || selected.standardCode !== standard) continue;
+            if (normalizeTopic(selected.standardSearchTopic) !== topic) continue;
+
+            const excerpt = normalizeEvidenceText(selected?.metadata?.text);
+          '''
+          assert old in text, 'verify selected block not found'
+          text = text.replace(old, new, 1)
+
+          old = '''  const selected = selectClaimsForAnswer(verified, retrieval.broad);
+
+          if (!selected.length) {
+          '''
+          new = '''  const selected = selectClaimsForAnswer(verified, retrieval.broad);
+          const broadTopics = new Set(selected.map((claim) => claim.topic));
+          const broadCoverageOk =
+            !retrieval.broad || (broadTopics.has("structure") && broadTopics.size >= 3);
+
+          if (!selected.length || !broadCoverageOk) {
+          '''
+          assert old in text, 'selected coverage block not found'
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+      - run: npm ci
+      - run: npm run build
+      - name: Commit patch and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name 'elevatorhelp'
+          git config user.email 'baharmand@hotmail.com'
+          git rm .github/workflows/standards-topic-fidelity-fix.yml
+          git add app/lib/standards-engine.ts
+          git commit -m 'Enforce broad standards topic fidelity'
+          git push
