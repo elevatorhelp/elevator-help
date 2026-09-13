@@ -14,9 +14,9 @@ jobs:
         shell: bash
         run: |
           set -u
-          # Retest after the targeted shaft-wall retrieval improvement.
           QUESTION='Was sagt die Norm über den Aufzugsschacht?'
           LAST_ANSWER=''
+          LAST_RESPONSE=''
 
           for attempt in $(seq 1 16); do
             echo "Live test attempt ${attempt}/16"
@@ -26,14 +26,20 @@ jobs:
               --data "$(jq -nc --arg q "$QUESTION" '{question:$q}')" \
               https://elevator.help/api/ask || true)
 
+            LAST_RESPONSE="$RESPONSE"
             ANSWER=$(printf '%s' "$RESPONSE" | jq -r '.answer // empty' 2>/dev/null || true)
             MODE=$(printf '%s' "$RESPONSE" | jq -r '.mode // empty' 2>/dev/null || true)
             LAST_ANSWER="$ANSWER"
 
             echo "mode=$MODE"
-            printf '%s\n' "$ANSWER"
+            if [[ -n "$ANSWER" ]]; then
+              printf '%s\n' "$ANSWER"
+            else
+              echo 'No answer field returned; raw response follows:'
+              printf '%s\n' "$RESPONSE"
+            fi
 
-            CLAUSE_COUNT=$(printf '%s' "$ANSWER" | grep -o 'Abschnitt [0-9][0-9.]*' | sort -u | wc -l | tr -d ' ')
+            CLAUSE_COUNT=$(printf '%s' "$ANSWER" | (grep -o 'Abschnitt [0-9][0-9.]*' || true) | sort -u | wc -l | tr -d ' ')
 
             if [[ "$MODE" == "standards_knowledge_base" ]] \
               && grep -q 'Kurz gesagt:' <<<"$ANSWER" \
@@ -48,6 +54,8 @@ jobs:
           done
 
           echo 'FAIL: live broad-shaft answer did not reach the required quality gate.'
+          echo 'Last raw response:'
+          printf '%s\n' "$LAST_RESPONSE"
           echo 'Last answer:'
           printf '%s\n' "$LAST_ANSWER"
           exit 1
