@@ -216,7 +216,10 @@ export async function GET() {
       vectors.push({
         id: chunk.id,
         values: embedding,
-        metadata: chunk.metadata,
+        metadata: {
+          ...chunk.metadata,
+          text: chunk.text,
+        },
       });
     }
 
@@ -226,6 +229,7 @@ export async function GET() {
       ok: true,
       inserted: vectors.length,
       ids: vectors.map((v) => v.id),
+      metadataIncludesText: true,
     });
   } catch (error) {
     return Response.json(
