@@ -14,6 +14,7 @@ jobs:
         shell: bash
         run: |
           set -u
+          # Retest after the targeted shaft-wall retrieval improvement.
           QUESTION='Was sagt die Norm über den Aufzugsschacht?'
           LAST_ANSWER=''
 
