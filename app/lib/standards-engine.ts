@@ -502,9 +502,29 @@ async function retrieveStandards(
   vectorize: any
 ) {
   const checked = await Promise.all(
-    CORE_STANDARDS.map((standard) =>
-      queryOneStandard(question, route, standard, apiKey, ai, vectorize)
-    )
+    CORE_STANDARDS.map(async (standard) => {
+      try {
+        return await queryOneStandard(
+          question,
+          route,
+          standard,
+          apiKey,
+          ai,
+          vectorize
+        );
+      } catch (error) {
+        console.error("Standards retrieval error:", {
+          standard: standard.code,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          standard: standard.code,
+          sourceLanguage: null,
+          broad: isBroadShaftQuestion(question),
+          matches: [],
+        };
+      }
+    })
   );
 
   return {
