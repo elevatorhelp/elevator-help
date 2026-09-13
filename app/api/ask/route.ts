@@ -19,6 +19,77 @@ function languageName(code: string) {
   return names[code] || `language code ${code}`;
 }
 
+function isWhyElevatorHelpQuestion(question: string) {
+  const normalized = question.toLowerCase();
+
+  const patterns = [
+    /why\s+(should\s+i\s+)?(use|choose).*(elevator\.help|you|this)/i,
+    /(difference|different|better).*(chatgpt|gemini|other ai|general ai)/i,
+    /warum.*(elevator\.help|euch|dich|benutzen|nutzen)/i,
+    /unterschied.*(chatgpt|gemini|ki|andere ki)/i,
+    /چرا.*(شما|elevator\.help|الویتور|استفاده)/i,
+    /فرق.*(هوش مصنوعی|چت.?جی.?پی.?تی|جمینای|gemini|chatgpt)/i,
+  ];
+
+  return patterns.some((pattern) => pattern.test(normalized));
+}
+
+async function answerWhyElevatorHelp(question: string, apiKey: string) {
+  const prompt = `
+Answer the user's question about why they should use elevator.help instead of a general-purpose AI assistant.
+
+FACTS YOU MAY STATE:
+- elevator.help has a specialized elevator-domain routing and knowledge engine around the AI layer.
+- It can route questions by manufacturer, controller, fault family, fault code, component and standards context when that information is available.
+- It is designed to search its own indexed elevator technical knowledge first and use public web research only when the internal evidence is insufficient.
+- Its workflows are designed and continuously refined with input from elevator-industry specialists and real elevator troubleshooting/planning needs.
+- Its goal is practical, step-by-step elevator troubleshooting and technical guidance rather than generic conversation.
+- It supports multilingual questions while preserving technical identifiers and terminology.
+- It does not replace current manufacturer instructions, binding standards or on-site safety assessment.
+
+IMPORTANT POSITIONING:
+- Do not claim that elevator.help trained its own foundation model from scratch.
+- The differentiator is the specialized elevator engine, indexed knowledge, routing, retrieval and workflow layer around the AI.
+- Do not mention internal file names, source lists, storage systems or implementation details.
+- Keep it confident and concise, not exaggerated.
+- Answer in the same language as the user.
+
+User question:
+${question}
+`;
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 700,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Gemini product-answer error: ${await response.text()}`);
+  }
+
+  const data: any = await response.json();
+  const answer = data?.candidates?.[0]?.content?.parts
+    ?.map((part: { text?: string }) => part.text || "")
+    .join("")
+    .trim();
+
+  if (!answer) {
+    throw new Error("Gemini returned no product-positioning answer");
+  }
+
+  return answer;
+}
+
 async function translateRetrievalQuery(
   question: string,
   sourceLanguage: string,
@@ -103,8 +174,6 @@ function rerankMatches(matches: any[], route: any) {
       const metadata = match?.metadata || {};
       let value = Number(match?.score || 0);
 
-      // Exact identifiers are stronger than tiny semantic-score differences.
-      // We still never invent a numeric faultCode from symptoms.
       if (
         route.faultCode &&
         String(metadata.faultCode || "") === String(route.faultCode)
@@ -211,26 +280,6 @@ async function retrieveOwnKnowledge(
   return null;
 }
 
-function buildInternalReferences(matches: any[]) {
-  const references = matches.slice(0, 4).map((match: any) => {
-    const metadata = match.metadata || {};
-    const pieces = [
-      "Technical documentation",
-      metadata.manufacturer,
-      metadata.controller,
-      metadata.faultName,
-      metadata.page ? `p. ${metadata.page}` : null,
-    ].filter(Boolean);
-
-    return { title: pieces.join(" · ") };
-  });
-
-  return references.filter(
-    (reference: any, index: number, array: any[]) =>
-      array.findIndex((item) => item.title === reference.title) === index
-  );
-}
-
 function manufacturerServiceInstruction(manufacturer?: string | null) {
   if (!manufacturer) return "";
 
@@ -250,6 +299,15 @@ SERVICE NOTICE REQUIREMENT:
 At the end, add one brief service notice in the user's language. It must say that authorized service technicians should verify the procedure against their company's current technical documentation. Independent service providers should contact the original manufacturer for manufacturer-specific procedures, software or restricted technical information.
 `;
 }
+
+const ANSWER_VISIBILITY_RULES = `
+SOURCE VISIBILITY RULES:
+- Use sources internally for grounding, but do not expose or list them to the user.
+- Do not say "according to the manual", "according to the documentation", "according to this website", "source says", or similar source-attribution phrases.
+- Do not name a website, manual, document, file, source title, page number, storage location or internal identifier merely to prove the answer.
+- Exception for standards: when the evidence supports it, you may cite the exact standard designation and an exact clause/section number inline, e.g. "EN 81-20, clause ...". Never invent a clause number.
+- Exception for parts purchasing: a direct seller/product URL may be shown only when a user-provided part image has been confidently identified and a matching seller/product page has been verified. Do not show general research-source links.
+`;
 
 async function answerFromKnowledge(
   question: string,
@@ -286,8 +344,8 @@ GROUNDING RULES:
 - SOURCE 1 has been deterministically reranked using Router evidence when available; prefer it when sources overlap.
 - Distinguish documented fault meaning from possible checks.
 - Do not expose internal file names, storage locations or internal document identifiers.
-- You may identify manufacturer, controller, fault name and page when useful.
-- Do not create a References section; the application displays sources separately.
+- You may identify manufacturer, controller and fault name when useful.
+${ANSWER_VISIBILITY_RULES}
 
 ANSWER STYLE:
 - Answer in the same language as the user's question.
@@ -364,7 +422,7 @@ RULES:
 - Answer in the same language as the user's question.
 - Be concise but technically useful.
 - For troubleshooting, prefer actionable verified checks over generic explanations.
-- Do not create a References section inside the answer; the application displays sources separately.
+${ANSWER_VISIBILITY_RULES}
 ${manufacturerServiceInstruction(route.manufacturer)}
 
 Router context:
@@ -404,24 +462,8 @@ ${question}
     .join("")
     .trim();
 
-  const grounding =
-    data?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-
-  const sources = grounding
-    .filter((chunk: any) => chunk?.web?.uri && chunk?.web?.title)
-    .map((chunk: any) => ({
-      title: chunk.web.title,
-      url: chunk.web.uri,
-    }))
-    .filter(
-      (source: any, index: number, array: any[]) =>
-        array.findIndex((item) => item.url === source.url) === index
-    )
-    .slice(0, 8);
-
   return {
     answer: answer || "No verified answer was returned.",
-    sources,
   };
 }
 
@@ -446,6 +488,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (isWhyElevatorHelpQuestion(question)) {
+      const answer = await answerWhyElevatorHelp(question, apiKey);
+
+      return NextResponse.json({
+        answer,
+        sources: [],
+        mode: "about_elevator_help",
+      });
+    }
+
     const route = await routeQuestion(question);
 
     if (
@@ -457,8 +509,6 @@ export async function POST(request: NextRequest) {
           route.clarificationQuestion ||
           "I need one more detail before I can give you a reliable answer.",
         sources: [],
-        disclosure:
-          "No technical source was searched because the question needs clarification first.",
         mode: "clarification",
       });
     }
@@ -485,9 +535,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         answer,
-        sources: buildInternalReferences(retrieval.matches),
-        disclosure:
-          "Technical information is based on indexed technical documentation. Verify safety-critical procedures against the current applicable documentation and site conditions.",
+        sources: [],
         mode: "knowledge_base",
       });
     }
@@ -496,9 +544,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       answer: webResult.answer,
-      sources: webResult.sources,
-      disclosure:
-        "Technical information is gathered from publicly available online sources and technical documentation.",
+      sources: [],
       mode: "web_fallback",
     });
   } catch (error) {
