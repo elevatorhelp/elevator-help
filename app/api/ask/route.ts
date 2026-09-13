@@ -1,23 +1,13 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
 import { routeQuestion } from "../../lib/router";
+import {
+  answerStandardsQuestion,
+  isStandardsQuestion,
+} from "../../lib/standards-engine";
 
 const SOURCE_LANGUAGE_FALLBACKS = ["de", "en"];
 const MIN_SEMANTIC_SCORE = 0.72;
-const MIN_STANDARD_SCORE = 0.34;
-
-const CORE_STANDARDS = [
-  { code: "EN 81-20", compact: "EN8120" },
-  { code: "EN 81-50", compact: "EN8150" },
-] as const;
-
-type CoreStandardCode = (typeof CORE_STANDARDS)[number]["code"];
-
-type VerifiedStandardClaim = {
-  standard: CoreStandardCode;
-  clause: string;
-  text: string;
-};
 
 function languageName(code: string) {
   const names: Record<string, string> = {
@@ -45,79 +35,77 @@ function isWhyElevatorHelpQuestion(question: string) {
   return patterns.some((pattern) => pattern.test(normalized));
 }
 
+function isIdentityQuestion(question: string) {
+  return (
+    /\b(who are you|what are you|what is elevator\.help)\b/i.test(question) ||
+    /\b(wer bist du|was bist du|was ist elevator\.help)\b/i.test(question) ||
+    /(تو کی هستی|شما کی هستید|elevator\.help چیست|الویتور هلپ چیست)/i.test(question)
+  );
+}
+
 function isContactQuestion(question: string) {
-  return /(contact|email|e-mail|kontakt|erreichen|تماس|ایمیل)/i.test(question) &&
-    /(elevator\.help|you|euch|dich|شما|سایت)/i.test(question);
+  return (
+    /(contact|email|e-mail|kontakt|erreichen|تماس|ایمیل)/i.test(question) &&
+    /(elevator\.help|you|euch|dich|شما|سایت)/i.test(question)
+  );
 }
 
 function isAdvertisingQuestion(question: string) {
   return /(advertis|werbung|anzeige|تبلیغ|آگهی)/i.test(question);
 }
 
-function isStandardsQuestion(question: string, route?: any) {
-  if (route?.intent === "standard") return true;
-  return (
-    /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
-    /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) ||
-    /(استاندارد|نورم|نُرم)/i.test(question)
-  );
-}
-
-function explicitlyNamedCoreStandards(question: string) {
-  return CORE_STANDARDS.filter((standard) => {
-    const number = standard.code.endsWith("20") ? "20" : "50";
-    return new RegExp(
-      `(?:EN\\s*81\\s*[-–]?\\s*${number}|81\\s*[-–]\\s*${number})`,
-      "i"
-    ).test(question);
-  }).map((standard) => standard.code);
-}
-
-function parseModelJson(text: string) {
-  const trimmed = text.trim();
-  const attempts = [
-    trimmed,
-    trimmed
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim(),
-  ];
-
-  for (const candidate of attempts) {
-    try {
-      return JSON.parse(candidate);
-    } catch {}
+function languageFromText(question: string) {
+  if (/[؀-ۿ]/.test(question)) return "fa";
+  if (/\b(wer|was|warum|wie|kontakt|werbung|aufzug|schacht|fehler)\b/i.test(question)) {
+    return "de";
   }
-
-  const cleaned = attempts[attempts.length - 1];
-  const first = cleaned.indexOf("{");
-  const last = cleaned.lastIndexOf("}");
-  if (first >= 0 && last > first) {
-    try {
-      return JSON.parse(cleaned.slice(first, last + 1));
-    } catch {}
-  }
-  return null;
+  return "en";
 }
 
-async function answerWhyElevatorHelp(question: string, apiKey: string) {
+function contactAnswer(language: string, advertising = false) {
+  if (language === "de") {
+    return advertising
+      ? "Für Werbeanfragen erreichst du elevator.help unter info@elevator.help."
+      : "Du erreichst elevator.help unter info@elevator.help.";
+  }
+  if (language === "fa") {
+    return advertising
+      ? "برای هماهنگی تبلیغات با info@elevator.help تماس بگیر."
+      : "برای تماس با elevator.help می‌توانی به info@elevator.help ایمیل بزنی.";
+  }
+  return advertising
+    ? "For advertising inquiries, please contact info@elevator.help."
+    : "You can contact elevator.help at info@elevator.help.";
+}
+
+async function answerProductQuestion(
+  question: string,
+  apiKey: string,
+  mode: "why" | "identity"
+) {
+  const task =
+    mode === "identity"
+      ? "Answer who/what elevator.help is."
+      : "Answer why someone should use elevator.help instead of a general-purpose AI assistant.";
+
   const prompt = `
-Answer the user's question about why they should use elevator.help instead of a general-purpose AI assistant.
+${task}
 
 FACTS YOU MAY STATE:
-- elevator.help has a specialized elevator-domain routing and knowledge engine around the AI layer.
-- It can route questions by manufacturer, controller, fault family, fault code, component and standards context when that information is available.
-- It is designed to search its own indexed elevator technical knowledge first and use public web research only when the internal evidence is insufficient.
-- Its workflows are designed and continuously refined with input from elevator-industry specialists and real elevator troubleshooting/planning needs.
-- Its goal is practical, step-by-step elevator troubleshooting and technical guidance rather than generic conversation.
+- elevator.help is a specialized AI assistant for elevator engineering and technical work.
+- It has an elevator-domain routing and knowledge layer around the AI model.
+- It can route questions by manufacturer, controller, fault family, fault code, component and standards context when the evidence supports it.
+- It is designed to search its own indexed elevator technical knowledge first and use public web research only for non-standards questions when internal evidence is insufficient.
+- Its workflows are designed and refined with input from independent elevator-industry specialists and practical troubleshooting/planning needs.
+- It is intended for troubleshooting, technical documentation, standards, components, planning and engineering support.
 - It supports multilingual questions while preserving technical identifiers and terminology.
 - It does not replace current manufacturer instructions, binding standards or on-site safety assessment.
 
-IMPORTANT POSITIONING:
-- Do not claim that elevator.help trained its own foundation model from scratch.
+POSITIONING RULES:
+- Do not claim elevator.help trained its own foundation model from scratch.
 - The differentiator is the specialized elevator engine, indexed knowledge, routing, retrieval and workflow layer around the AI.
-- Do not mention internal file names, source lists, storage systems or implementation details.
-- Keep it confident and concise, not exaggerated.
+- Do not mention internal file names, storage systems or implementation details.
+- Sound natural and confident, not like canned marketing copy.
 - Answer in the same language as the user.
 
 User question:
@@ -154,12 +142,11 @@ async function translateRetrievalQuery(
   const prompt = `
 Translate the following elevator technical question into concise technical ${languageName(
     sourceLanguage
-  )} for semantic search in elevator manuals and standards.
+  )} for semantic search in elevator manuals and technical documentation.
 
 Rules:
 - Preserve the exact technical meaning.
 - Preserve manufacturer names, controller names, fault families and fault codes exactly.
-- Preserve standard identifiers such as EN 81-20 and EN 81-50 exactly.
 - Preserve connector names, parameter names and component names when appropriate.
 - Do not answer the question.
 - Return only the translated technical search query.
@@ -210,23 +197,34 @@ function rerankMatches(matches: any[], route: any) {
     const score = (match: any) => {
       const metadata = match?.metadata || {};
       let value = Number(match?.score || 0);
+
       if (
         route.faultCode &&
         String(metadata.faultCode || "") === String(route.faultCode)
-      ) value += 10;
+      ) {
+        value += 10;
+      }
+
       if (
         route.faultName &&
         (route.confidence === "high" || route.confidence === "medium") &&
         String(metadata.faultName || "").toUpperCase() ===
           String(route.faultName).toUpperCase()
-      ) value += 5;
+      ) {
+        value += 5;
+      }
+
       if (
         route.faultFamily &&
         String(metadata.faultFamily || "").toUpperCase() ===
           String(route.faultFamily).toUpperCase()
-      ) value += 1;
+      ) {
+        value += 1;
+      }
+
       return value;
     };
+
     return score(b) - score(a);
   });
 }
@@ -280,589 +278,8 @@ async function retrieveOwnKnowledge(
       matches: rerankMatches(rawMatches, route),
     };
   }
+
   return null;
-}
-
-function compactStandardMetadata(metadata: any) {
-  return `${metadata?.fileName || ""} ${metadata?.sourcePath || ""} ${
-    metadata?.documentGroup || ""
-  }`
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-}
-
-function matchBelongsToStandard(match: any, compactCode: string) {
-  return compactStandardMetadata(match?.metadata).includes(compactCode);
-}
-
-function deterministicStandardQueries(question: string, sourceLanguage: string) {
-  const normalized = question.toLowerCase();
-  const queries: string[] = [question];
-  const shaftQuestion =
-    /\b(schacht|schachtwand|schachtwände|shaft|well)\b/i.test(question) ||
-    /(چاه|چاهک|دیواره.*چاه)/i.test(question);
-
-  if (shaftQuestion) {
-    if (sourceLanguage === "de") {
-      queries.push(
-        "Aufzugsschacht Schachtwände Festigkeit Wände Böden Decken",
-        "Schachtwand mechanische Festigkeit Verformung Kraft",
-        "Schachtgrube Boden Festigkeit Führungsschienen",
-        "Schachtkopf Schutzraum Freiraum",
-        "Schachtbeleuchtung elektrische Beleuchtung",
-        "Zugang Schacht Wartungstüren Nottüren"
-      );
-    } else {
-      queries.push(
-        "elevator shaft walls floors ceilings mechanical strength",
-        "shaft wall mechanical strength deformation force",
-        "pit floor guide rails strength",
-        "headroom refuge space clearances",
-        "shaft electrical lighting",
-        "shaft access inspection emergency doors"
-      );
-    }
-  }
-
-  if (/beleuchtung|lighting|نور|روشنایی/i.test(normalized)) {
-    queries.push(
-      sourceLanguage === "de"
-        ? "Schachtbeleuchtung Beleuchtungsstärke elektrische Beleuchtung"
-        : "shaft lighting illumination electrical lighting"
-    );
-  }
-
-  if (/grube|pit|چاهک/i.test(normalized)) {
-    queries.push(
-      sourceLanguage === "de"
-        ? "Schachtgrube Grubenboden Schutzraum Zugang"
-        : "elevator pit floor refuge space access"
-    );
-  }
-
-  return queries;
-}
-
-async function expandStandardQueries(
-  question: string,
-  route: any,
-  sourceLanguage: string,
-  apiKey: string
-) {
-  const translated =
-    route.questionLanguage === sourceLanguage
-      ? question
-      : await translateRetrievalQuery(question, sourceLanguage, apiKey);
-
-  const base = deterministicStandardQueries(translated, sourceLanguage);
-  const topicHints = [...(route.topics || []), ...(route.components || [])]
-    .filter(Boolean)
-    .slice(0, 8);
-
-  const prompt = `
-Create semantic-search query expansions for an elevator standards archive.
-
-User question:
-${translated}
-
-Router topic hints:
-${JSON.stringify(topicHints)}
-
-Rules:
-- Write all queries in ${languageName(sourceLanguage)}.
-- Keep the user's exact subject and intent.
-- Generate 4 to 6 concise technical search queries using likely terminology and synonyms found in EN 81-20 / EN 81-50.
-- For broad topics, split into useful subtopics. Example: a broad shaft question may need terms for shaft walls, pit, headroom/refuge space, lighting and access.
-- Do NOT answer the question.
-- Do NOT invent clause numbers.
-- Do NOT invent numeric requirements.
-- Return only valid JSON: {"queries":["...","..."]}
-`;
-
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0,
-            maxOutputTokens: 500,
-          },
-        }),
-      }
-    );
-
-    if (response.ok) {
-      const data: any = await response.json();
-      const raw = data?.candidates?.[0]?.content?.parts
-        ?.map((part: { text?: string }) => part.text || "")
-        .join("")
-        .trim();
-      const parsed = raw ? parseModelJson(raw) : null;
-      if (Array.isArray(parsed?.queries)) {
-        base.push(
-          ...parsed.queries.filter(
-            (query: unknown) => typeof query === "string" && query.trim().length > 3
-          )
-        );
-      }
-    }
-  } catch (error) {
-    console.error("Standards query expansion error:", error);
-  }
-
-  return Array.from(
-    new Set(base.map((query) => String(query).trim()).filter(Boolean))
-  ).slice(0, 8);
-}
-
-function standardMatchKey(match: any) {
-  const metadata = match?.metadata || {};
-  return String(
-    match?.id ||
-      `${metadata.sourceFileId || metadata.fileName || "file"}:${
-        metadata.page || "p"
-      }:${metadata.chunkIndex || "c"}`
-  );
-}
-
-function standardMatchRank(match: any) {
-  const text = String(match?.metadata?.text || "");
-  const clauseBonus = /\b\d+(?:\.\d+){2,6}\b/.test(text) ? 0.16 : 0;
-  return Number(match?.score || 0) + clauseBonus;
-}
-
-async function queryOneCoreStandard(
-  question: string,
-  route: any,
-  standard: (typeof CORE_STANDARDS)[number],
-  apiKey: string,
-  ai: any,
-  vectorize: any
-) {
-  const preferredLanguage =
-    route.preferredSourceLanguage || route.questionLanguage || "de";
-  const languages = Array.from(
-    new Set([preferredLanguage, "de", ...SOURCE_LANGUAGE_FALLBACKS].filter(Boolean))
-  );
-
-  for (const sourceLanguage of languages) {
-    const queries = await expandStandardQueries(
-      question,
-      route,
-      sourceLanguage,
-      apiKey
-    );
-    const collected = new Map<string, any>();
-
-    for (const searchQuery of queries) {
-      const retrievalQuery = `${searchQuery}\n${standard.code}`;
-      const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
-        text: [retrievalQuery],
-      });
-      const queryVector = (embeddingResult as any).data?.[0];
-      if (!queryVector) continue;
-
-      const result = await vectorize.query(queryVector, {
-        topK: 40,
-        returnMetadata: "all",
-        // Do not require contentType="standard" here. Some already-indexed
-        // standards chunks may have been classified differently during enrichment.
-        filter: { language: sourceLanguage },
-      });
-
-      for (const match of result.matches || []) {
-        if (
-          typeof match?.metadata?.text !== "string" ||
-          !match.metadata.text.trim() ||
-          !matchBelongsToStandard(match, standard.compact) ||
-          Number(match?.score || 0) < MIN_STANDARD_SCORE
-        ) {
-          continue;
-        }
-
-        const key = standardMatchKey(match);
-        const existing = collected.get(key);
-        if (!existing || standardMatchRank(match) > standardMatchRank(existing)) {
-          collected.set(key, match);
-        }
-      }
-    }
-
-    const matches = [...collected.values()]
-      .sort((a, b) => standardMatchRank(b) - standardMatchRank(a))
-      .slice(0, 12);
-
-    if (matches.length) {
-      return {
-        standard: standard.code,
-        sourceLanguage,
-        queries,
-        matches,
-      };
-    }
-  }
-
-  return {
-    standard: standard.code,
-    sourceLanguage: null,
-    queries: [],
-    matches: [],
-  };
-}
-
-async function retrieveCoreStandards(
-  question: string,
-  route: any,
-  apiKey: string,
-  ai: any,
-  vectorize: any
-) {
-  const checked = await Promise.all(
-    CORE_STANDARDS.map((standard) =>
-      queryOneCoreStandard(question, route, standard, apiKey, ai, vectorize)
-    )
-  );
-
-  return {
-    checkedStandards: CORE_STANDARDS.map((standard) => standard.code),
-    explicitlyNamed: explicitlyNamedCoreStandards(question),
-    results: checked,
-    matches: checked.flatMap((entry) =>
-      entry.matches.map((match: any) => ({
-        ...match,
-        standardCode: entry.standard,
-      }))
-    ),
-  };
-}
-
-function normalizeStandardCode(value: unknown): CoreStandardCode | null {
-  const compact = String(value || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-  if (compact === "EN8120") return "EN 81-20";
-  if (compact === "EN8150") return "EN 81-50";
-  return null;
-}
-
-function normalizeClause(value: unknown) {
-  const clause = String(value || "").trim();
-  return /^\d+(?:\.\d+){1,6}$/.test(clause) ? clause : null;
-}
-
-function normalizeEvidenceText(value: unknown) {
-  return String(value || "")
-    .replace(/\u00ad/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function excerptContainsClause(excerpt: string, clause: string) {
-  return new RegExp(
-    `(?:^|[^0-9.])${escapeRegExp(clause)}(?:[^0-9.]|$)`
-  ).test(excerpt);
-}
-
-function normalizedNumberTokens(value: string) {
-  const withoutStandardNames = value.replace(
-    /EN\s*81\s*[-–]\s*(?:20|50)/gi,
-    ""
-  );
-  const tokens = withoutStandardNames.match(/\d+(?:[.,]\d+)?/g) || [];
-  return tokens.map((token) => token.replace(",", "."));
-}
-
-function evidenceContainsAllClaimNumbers(claimText: string, evidenceText: string) {
-  const claimNumbers = normalizedNumberTokens(claimText);
-  if (!claimNumbers.length) return true;
-  const evidenceNumbers = new Set(normalizedNumberTokens(evidenceText));
-  return claimNumbers.every((number) => evidenceNumbers.has(number));
-}
-
-function verifyStandardClaims(parsed: any, retrieval: any): VerifiedStandardClaim[] {
-  const claims = Array.isArray(parsed?.claims) ? parsed.claims : [];
-  const verified: VerifiedStandardClaim[] = [];
-
-  for (const claim of claims.slice(0, 16)) {
-    const standard = normalizeStandardCode(claim?.standard);
-    const clause = normalizeClause(claim?.clause);
-    const text = typeof claim?.text === "string" ? claim.text.trim() : "";
-    const evidenceQuote =
-      typeof claim?.evidenceQuote === "string" ? claim.evidenceQuote.trim() : "";
-    const evidenceId = Number(claim?.evidenceId);
-
-    if (
-      !standard ||
-      !clause ||
-      !text ||
-      evidenceQuote.length < 10 ||
-      !Number.isInteger(evidenceId) ||
-      evidenceId < 1
-    ) continue;
-
-    const selected = retrieval.matches?.[evidenceId - 1];
-    if (!selected || selected.standardCode !== standard) continue;
-
-    const excerpt = normalizeEvidenceText(selected?.metadata?.text);
-    if (!excerpt || !excerptContainsClause(excerpt, clause)) continue;
-
-    const normalizedQuote = normalizeEvidenceText(evidenceQuote).toLowerCase();
-    if (!excerpt.toLowerCase().includes(normalizedQuote)) continue;
-    if (!evidenceContainsAllClaimNumbers(text, excerpt)) continue;
-
-    verified.push({ standard, clause, text });
-  }
-
-  return verified;
-}
-
-function clauseLabel(language?: string | null) {
-  switch (language) {
-    case "de":
-      return "Abschnitt";
-    case "fa":
-      return "بند";
-    case "tr":
-      return "Madde";
-    case "ru":
-      return "пункт";
-    case "ar":
-      return "البند";
-    case "hr":
-      return "odjeljak";
-    default:
-      return "Clause";
-  }
-}
-
-function presentationLabels(language?: string | null) {
-  switch (language) {
-    case "de":
-      return { summary: "Kurz gesagt", details: "Was die Norm konkret sagt" };
-    case "fa":
-      return { summary: "خلاصهٔ فنی", details: "آنچه Norm دقیقاً می‌گوید" };
-    case "tr":
-      return { summary: "Kısaca", details: "Standardın tam olarak söylediği" };
-    default:
-      return { summary: "In practical terms", details: "What the standard says exactly" };
-  }
-}
-
-function formatVerifiedStandardClaims(
-  claims: VerifiedStandardClaim[],
-  language?: string | null
-) {
-  const label = clauseLabel(language);
-  return claims
-    .map(
-      (claim) =>
-        `• ${claim.standard}, ${label} ${claim.clause} — ${claim.text}`
-    )
-    .join("\n");
-}
-
-async function buildHumanStandardsSummary(
-  question: string,
-  claims: VerifiedStandardClaim[],
-  language: string | null | undefined,
-  apiKey: string
-) {
-  const verifiedFacts = claims
-    .map(
-      (claim, index) =>
-        `${index + 1}. ${claim.standard} ${claim.clause}: ${claim.text}`
-    )
-    .join("\n");
-
-  const prompt = `
-You are an experienced elevator engineer explaining a standards answer to a colleague in a natural, human way.
-
-Write a short direct answer to the user's question BEFORE the formal clause details.
-
-STRICT RULES:
-- Use ONLY the verified facts below.
-- Do not add any new requirement, exception, number, dimension, value or safety claim.
-- Do not cite clause numbers in this short explanation; the exact clauses are shown afterwards.
-- Explain what the verified facts mean in practice, like a competent human colleague.
-- Keep it to 1-3 short sentences.
-- Answer in ${languageName(language || "en")}.
-- Do not use a heading, bullets, references or source names.
-
-User question:
-${question}
-
-Verified facts:
-${verifiedFacts}
-`;
-
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.15, maxOutputTokens: 420 },
-        }),
-      }
-    );
-    if (response.ok) {
-      const data: any = await response.json();
-      const summary = data?.candidates?.[0]?.content?.parts
-        ?.map((part: { text?: string }) => part.text || "")
-        .join("")
-        .trim();
-      if (summary) return summary;
-    }
-  } catch (error) {
-    console.error("Standards summary error:", error);
-  }
-
-  return claims[0]?.text || "";
-}
-
-async function formatStandardsAnswer(
-  question: string,
-  claims: VerifiedStandardClaim[],
-  language: string | null | undefined,
-  apiKey: string
-) {
-  const labels = presentationLabels(language);
-  const summary = await buildHumanStandardsSummary(
-    question,
-    claims,
-    language,
-    apiKey
-  );
-  const details = formatVerifiedStandardClaims(claims, language);
-  return `${labels.summary}:\n${summary}\n\n${labels.details}:\n${details}`;
-}
-
-function standardsUnverifiedMessage(language?: string | null) {
-  switch (language) {
-    case "de":
-      return "Ich habe EN 81-20 und EN 81-50 in der internen technischen Bibliothek geprüft, konnte für diese Formulierung aber noch keinen ausreichend sicheren Abschnittstreffer verifizieren. Formuliere den Punkt gern etwas konkreter, z. B. Schachtwand, Schachtgrube, Schachtkopf oder Beleuchtung.";
-    case "fa":
-      return "EN 81-20 و EN 81-50 را در کتابخانهٔ فنی داخلی بررسی کردم، اما برای این عبارت هنوز نتوانستم بند دقیقی را با اطمینان کافی تأیید کنم. موضوع را کمی دقیق‌تر بگو؛ مثلاً دیوارهٔ چاه، چاهک، بالاسری یا روشنایی چاه.";
-    default:
-      return "I checked EN 81-20 and EN 81-50 in the internal technical library, but I could not yet verify a sufficiently reliable exact clause for this wording. Please narrow the point slightly, for example shaft wall, pit, headroom or shaft lighting.";
-  }
-}
-
-async function answerFromStandards(
-  question: string,
-  route: any,
-  retrieval: any,
-  apiKey: string
-) {
-  if (!retrieval.matches.length) return { sufficient: false, answer: "" };
-
-  const rankedEvidence = retrieval.matches
-    .sort((a: any, b: any) => standardMatchRank(b) - standardMatchRank(a))
-    .slice(0, 20);
-
-  const excerpts = rankedEvidence
-    .map((match: any, index: number) => {
-      const metadata = match.metadata || {};
-      return `EVIDENCE ${index + 1}\nSTANDARD: ${match.standardCode}\nEXCERPT:\n${metadata.text}`;
-    })
-    .join("\n\n");
-
-  // Keep the exact evidence order used by the model so evidenceId can be validated.
-  const validationRetrieval = { ...retrieval, matches: rankedEvidence };
-
-  const prompt = `
-You are the standards evidence layer of elevator.help.
-Both EN 81-20 and EN 81-50 were searched in the internal indexed standards library.
-Work ONLY from the supplied excerpts.
-
-STRICT CLAIM-LEVEL RULES:
-- Do not use outside knowledge or web knowledge.
-- Do not invent or reconstruct requirements from memory.
-- Produce separate atomic claims. One claim = one normative requirement.
-- Every claim MUST identify the exact standard and exact clause/section number supporting that claim.
-- The exact clause number MUST appear verbatim in the same evidence excerpt.
-- Every claim MUST include evidenceId pointing to the exact EVIDENCE number used.
-- Every claim MUST include a short evidenceQuote copied VERBATIM from that same evidence excerpt.
-- Any numeric value, dimension, distance, force, time, tolerance, illumination value, unit or limit in claim.text MUST appear in that evidence excerpt.
-- claim.text must contain only the user-facing requirement; do not repeat standard, clause, source or evidence labels inside it.
-- Never transfer a clause number, value or requirement from one standard to the other.
-- Omit anything that is only an inference.
-- If one standard has no relevant evidence, do not force it into the answer.
-- If no fully verified atomic claim can be produced, return an empty claims array.
-
-LANGUAGE:
-- claim.text must be in the same language as the user's question.
-- evidenceQuote must remain verbatim in the source language.
-
-Return ONLY valid JSON:
-{
-  "claims": [
-    {
-      "standard": "EN 81-20" | "EN 81-50",
-      "clause": "exact clause number",
-      "text": "one user-facing atomic requirement",
-      "evidenceId": 1,
-      "evidenceQuote": "short verbatim quote"
-    }
-  ]
-}
-
-User question:
-${question}
-
-Router context:
-${JSON.stringify(route)}
-
-Evidence:
-${excerpts}
-`;
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0,
-          maxOutputTokens: 2600,
-        },
-      }),
-    }
-  );
-
-  if (!response.ok) return { sufficient: false, answer: "" };
-  const data: any = await response.json();
-  const raw = data?.candidates?.[0]?.content?.parts
-    ?.map((part: { text?: string }) => part.text || "")
-    .join("")
-    .trim();
-  const parsed = raw ? parseModelJson(raw) : null;
-  const verifiedClaims = verifyStandardClaims(parsed, validationRetrieval);
-  if (!verifiedClaims.length) return { sufficient: false, answer: "" };
-
-  return {
-    sufficient: true,
-    answer: await formatStandardsAnswer(
-      question,
-      verifiedClaims,
-      route.questionLanguage,
-      apiKey
-    ),
-  };
 }
 
 function manufacturerServiceInstruction(manufacturer?: string | null) {
@@ -875,6 +292,7 @@ function manufacturerServiceInstruction(manufacturer?: string | null) {
     normalized.includes("tk elevator") ||
     normalized === "tke" ||
     normalized.includes("thyssenkrupp");
+
   if (!needsNotice) return "";
 
   return `
@@ -888,7 +306,6 @@ SOURCE VISIBILITY RULES:
 - Use sources internally for grounding, but do not expose or list them to the user.
 - Do not name websites, manuals, files, page numbers, storage locations or internal identifiers merely to prove the answer.
 - Do not add a Sources or References section.
-- For standards, an exact standard designation and exact clause number may be shown inline only when verified.
 - For parts purchasing, a direct seller/product URL may be shown only when a user-provided part image has been confidently identified and a matching seller/product page has been verified.
 `;
 
@@ -902,7 +319,13 @@ async function answerFromKnowledge(
     .slice(0, 5)
     .map((match: any, index: number) => {
       const metadata = match.metadata || {};
-      return `SOURCE ${index + 1}\nManufacturer: ${metadata.manufacturer || "unknown"}\nController: ${metadata.controller || "unknown"}\nFault family: ${metadata.faultFamily || "unknown"}\nFault code: ${metadata.faultCode || "unknown"}\nFault name: ${metadata.faultName || "unknown"}\nExcerpt: ${metadata.text}`;
+      return `SOURCE ${index + 1}\nManufacturer: ${
+        metadata.manufacturer || "unknown"
+      }\nController: ${metadata.controller || "unknown"}\nFault family: ${
+        metadata.faultFamily || "unknown"
+      }\nFault code: ${metadata.faultCode || "unknown"}\nFault name: ${
+        metadata.faultName || "unknown"
+      }\nExcerpt: ${metadata.text}`;
     })
     .join("\n\n");
 
@@ -1010,8 +433,12 @@ ${question}
 }
 
 function safeErrorMessage(language?: string | null) {
-  if (language === "de") return "Die Anfrage konnte gerade nicht zuverlässig verarbeitet werden. Bitte versuche es noch einmal.";
-  if (language === "fa") return "در حال حاضر نتوانستم درخواست را با اطمینان پردازش کنم. لطفاً دوباره امتحان کن.";
+  if (language === "de") {
+    return "Die Anfrage konnte gerade nicht zuverlässig verarbeitet werden. Bitte versuche es noch einmal.";
+  }
+  if (language === "fa") {
+    return "در حال حاضر نتوانستم درخواست را با اطمینان پردازش کنم. لطفاً دوباره امتحان کن.";
+  }
   return "I could not process the request reliably just now. Please try again.";
 }
 
@@ -1023,7 +450,10 @@ export async function POST(request: NextRequest) {
     const question = body?.question;
 
     if (!question || typeof question !== "string") {
-      return NextResponse.json({ error: "Please enter a question." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Please enter a question." },
+        { status: 400 }
+      );
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -1031,9 +461,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "AI is not configured." }, { status: 500 });
     }
 
+    const obviousLanguage = languageFromText(question);
+
     if (isAdvertisingQuestion(question)) {
       return NextResponse.json({
-        answer: "For advertising inquiries, please contact info@elevator.help.",
+        answer: contactAnswer(obviousLanguage, true),
         sources: [],
         mode: "contact",
       });
@@ -1041,54 +473,53 @@ export async function POST(request: NextRequest) {
 
     if (isContactQuestion(question)) {
       return NextResponse.json({
-        answer: "You can contact elevator.help at info@elevator.help.",
+        answer: contactAnswer(obviousLanguage, false),
         sources: [],
         mode: "contact",
       });
     }
 
+    if (isIdentityQuestion(question)) {
+      const answer = await answerProductQuestion(question, apiKey, "identity");
+      return NextResponse.json({
+        answer,
+        sources: [],
+        mode: "about_elevator_help",
+      });
+    }
+
     if (isWhyElevatorHelpQuestion(question)) {
-      const answer = await answerWhyElevatorHelp(question, apiKey);
-      return NextResponse.json({ answer, sources: [], mode: "about_elevator_help" });
+      const answer = await answerProductQuestion(question, apiKey, "why");
+      return NextResponse.json({
+        answer,
+        sources: [],
+        mode: "about_elevator_help",
+      });
     }
 
     const route = await routeQuestion(question);
     detectedLanguage = route.questionLanguage;
+
     const { env } = getCloudflareContext();
     const ai = (env as any).AI;
     const vectorize = (env as any).VECTORIZE;
 
     if (isStandardsQuestion(question, route)) {
-      const standardsRetrieval = await retrieveCoreStandards(
+      const standardsResult = await answerStandardsQuestion(
         question,
         route,
         apiKey,
         ai,
         vectorize
       );
-      const standardsAnswer = await answerFromStandards(
-        question,
-        route,
-        standardsRetrieval,
-        apiKey
-      );
 
-      if (standardsAnswer.sufficient && standardsAnswer.answer) {
-        return NextResponse.json({
-          answer: standardsAnswer.answer,
-          sources: [],
-          mode: "standards_knowledge_base",
-          standardsChecked: standardsRetrieval.checkedStandards,
-        });
-      }
-
-      // Standards are intentionally internal-library-first and internal-only in v1.
-      // Do not silently switch to public web search for EN 81-20 / EN 81-50.
       return NextResponse.json({
-        answer: standardsUnverifiedMessage(route.questionLanguage),
+        answer: standardsResult.answer,
         sources: [],
-        mode: "standards_unverified",
-        standardsChecked: standardsRetrieval.checkedStandards,
+        mode: standardsResult.sufficient
+          ? "standards_knowledge_base"
+          : "standards_unverified",
+        standardsChecked: standardsResult.checkedStandards,
       });
     }
 
@@ -1112,11 +543,19 @@ export async function POST(request: NextRequest) {
 
     if (retrieval) {
       const answer = await answerFromKnowledge(question, route, retrieval, apiKey);
-      return NextResponse.json({ answer, sources: [], mode: "knowledge_base" });
+      return NextResponse.json({
+        answer,
+        sources: [],
+        mode: "knowledge_base",
+      });
     }
 
     const answer = await answerFromWeb(question, route, apiKey);
-    return NextResponse.json({ answer, sources: [], mode: "web_fallback" });
+    return NextResponse.json({
+      answer,
+      sources: [],
+      mode: "web_fallback",
+    });
   } catch (error) {
     console.error("Ask API error:", error);
     return NextResponse.json(
