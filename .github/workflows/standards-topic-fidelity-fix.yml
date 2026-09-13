@@ -26,110 +26,71 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path('app/lib/standards-engine.ts')
-          text = path.read_text(encoding='utf-8')
+          p = Path('app/lib/standards-engine.ts')
+          text = p.read_text(encoding='utf-8')
 
-          marker = '''function matchRank(match: any) {
-            const text = String(match?.metadata?.text || "");
-            const clauseBonus = /\\b\\d+(?:\\.\\d+){2,6}\\b/.test(text) ? 0.18 : 0;
-            const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength)/i.test(
-              text
-            )
-              ? 0.05
-              : 0;
-            return Number(match?.score || 0) + clauseBonus + headingBonus;
-          }
-          '''
-          helper = marker + '''
-          function topicTextRelevant(text: string, topic: StandardTopic) {
+          # 1) Add a strict lexical relevance helper for broad shaft structure evidence.
+          insert_before = 'async function queryOneStandard('
+          assert insert_before in text
+          helper = '''function topicTextRelevant(text: string, topic: StandardTopic) {
             switch (topic) {
               case "structure":
                 return /(schachtw(?:a|ä)nd|shaft wall|mechanische festigkeit|mechanical strength|festigkeit der w(?:a|ä)nde|verformung|deformation)/i.test(text);
-              case "pit":
-                return /(schachtgrube|grubenboden|pit|refuge space|schutzraum)/i.test(text);
-              case "headroom":
-                return /(schachtkopf|headroom|fahrkorbdach|car roof|schutzraum|refuge space)/i.test(text);
-              case "lighting":
-                return /(schachtbeleuchtung|beleuchtungsst(?:a|ä)rke|lighting|illumination)/i.test(text);
-              case "access":
-                return /(zugang|zugangst(?:u|ü)r|nott(?:u|ü)r|wartungst(?:u|ü)r|access|emergency door|inspection door)/i.test(text);
-              case "separation":
-                return /(trennwand|trennung|gemeinsamer schacht|separation|partition|counterweight|gegengewicht)/i.test(text);
               default:
                 return true;
             }
           }
+
           '''
-          assert marker in text, 'matchRank block not found'
-          text = text.replace(marker, helper, 1)
+          text = text.replace(insert_before, helper + insert_before, 1)
 
-          pattern = r'(const languages = Array\.from\(\s*new Set\(\[preferredLanguage, "de", "en"\]\.filter\(Boolean\)\)\s*\);)'
-          text, n = re.subn(pattern, r'\1\n  const broad = isBroadShaftQuestion(question);', text, count=1)
-          assert n == 1, 'languages block not found'
+          # 2) Compute broadness before retrieval and keep structure results on-topic.
+          language_anchor = '  for (const sourceLanguage of languages) {'
+          assert language_anchor in text
+          text = text.replace(language_anchor, '  const broad = isBroadShaftQuestion(question);\n\n' + language_anchor, 1)
 
-          old = '''      const valid = (result.matches || [])
-            .filter(
-              (match: any) =>
-                typeof match?.metadata?.text === "string" &&
-                match.metadata.text.trim().length > 0 &&
-                matchBelongsToStandard(match, standard.compact) &&
-                Number(match?.score || 0) >= MIN_STANDARD_SCORE
-            )
-            .sort((a: any, b: any) => matchRank(b) - matchRank(a))
-            .slice(0, 4)
-          '''
-          new = '''      const valid = (result.matches || [])
-            .filter(
-              (match: any) =>
-                typeof match?.metadata?.text === "string" &&
-                match.metadata.text.trim().length > 0 &&
-                matchBelongsToStandard(match, standard.compact) &&
-                Number(match?.score || 0) >= MIN_STANDARD_SCORE
-            )
-            .filter(
-              (match: any) =>
-                !broad ||
-                item.topic !== "structure" ||
-                topicTextRelevant(String(match?.metadata?.text || ""), "structure")
-            )
-            .sort((a: any, b: any) => matchRank(b) - matchRank(a))
-            .slice(0, 4)
-          '''
-          assert old in text, 'valid retrieval block not found'
-          text = text.replace(old, new, 1)
+          valid_start = text.index('      const valid = (result.matches || [])')
+          sort_anchor = '        .sort((a: any, b: any) => matchRank(b) - matchRank(a))'
+          sort_pos = text.index(sort_anchor, valid_start)
+          structure_filter = '''        .filter(
+            (match: any) =>
+              !broad ||
+              item.topic !== "structure" ||
+              topicTextRelevant(String(match?.metadata?.text || ""), "structure")
+          )
+'''
+          text = text[:sort_pos] + structure_filter + text[sort_pos:]
 
-          text, n = re.subn(r'\n\s*const broad = isBroadShaftQuestion\(question\);\n\s*const topicOrder:', '\n    const topicOrder:', text, count=1)
-          assert n == 1, 'duplicate broad declaration not found'
+          # Remove the later duplicate broad declaration.
+          dup = '    const broad = isBroadShaftQuestion(question);\n    const topicOrder:'
+          assert dup in text
+          text = text.replace(dup, '    const topicOrder:', 1)
 
-          old = '''    const selected = evidence[evidenceId - 1];
-            if (!selected || selected.standardCode !== standard) continue;
+          # 3) Programmatically require the model claim topic to match its evidence topic.
+          verify_anchor = '    if (!selected || selected.standardCode !== standard) continue;'
+          assert verify_anchor in text
+          text = text.replace(
+            verify_anchor,
+            verify_anchor + '\n    if (normalizeTopic(selected.standardSearchTopic) !== topic) continue;',
+            1,
+          )
 
-            const excerpt = normalizeEvidenceText(selected?.metadata?.text);
-          '''
-          new = '''    const selected = evidence[evidenceId - 1];
-            if (!selected || selected.standardCode !== standard) continue;
-            if (normalizeTopic(selected.standardSearchTopic) !== topic) continue;
+          # 4) Never call a broad shaft answer sufficient unless structure + >=3 topics survived verification.
+          selected_anchor = '  const selected = selectClaimsForAnswer(verified, retrieval.broad);'
+          assert selected_anchor in text
+          text = text.replace(
+            selected_anchor,
+            selected_anchor + '''
+  const broadTopics = new Set(selected.map((claim) => claim.topic));
+  const broadCoverageOk =
+    !retrieval.broad || (broadTopics.has("structure") && broadTopics.size >= 3);''',
+            1,
+          )
+          fail_anchor = '  if (!selected.length) {'
+          assert fail_anchor in text
+          text = text.replace(fail_anchor, '  if (!selected.length || !broadCoverageOk) {', 1)
 
-            const excerpt = normalizeEvidenceText(selected?.metadata?.text);
-          '''
-          assert old in text, 'verify selected block not found'
-          text = text.replace(old, new, 1)
-
-          old = '''  const selected = selectClaimsForAnswer(verified, retrieval.broad);
-
-          if (!selected.length) {
-          '''
-          new = '''  const selected = selectClaimsForAnswer(verified, retrieval.broad);
-          const broadTopics = new Set(selected.map((claim) => claim.topic));
-          const broadCoverageOk =
-            !retrieval.broad || (broadTopics.has("structure") && broadTopics.size >= 3);
-
-          if (!selected.length || !broadCoverageOk) {
-          '''
-          assert old in text, 'selected coverage block not found'
-          text = text.replace(old, new, 1)
-
-          path.write_text(text, encoding='utf-8')
+          p.write_text(text, encoding='utf-8')
           PY
       - run: npm ci
       - run: npm run build
