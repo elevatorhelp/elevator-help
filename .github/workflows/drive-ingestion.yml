@@ -10,7 +10,7 @@ on:
       max_files:
         description: Maximum number of new/changed PDFs to process in this run
         required: false
-        default: "2"
+        default: "10"
 
 concurrency:
   group: elevator-help-drive-ingestion
