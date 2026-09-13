@@ -157,6 +157,10 @@ function deterministicQueryPlan(question: string, sourceLanguage: string) {
           query: "Schachtwand mechanische Festigkeit Verformung Kraft Glas Verbundsicherheitsglas",
         },
         {
+          topic: "structure",
+          query: "EN 81-20 5.2.1.8.2 Schachtwände mechanische Festigkeit Verformung",
+        },
+        {
           topic: "pit",
           query: "Schachtgrube Grubenboden Festigkeit Schutzraum freier Bereich",
         },
