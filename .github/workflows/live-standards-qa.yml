@@ -1,0 +1,25 @@
+name: Live Standards QA
+
+on:
+  push:
+    paths:
+      - .github/workflows/live-standards-qa.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe live standards answer
+        run: |
+          status=$(curl --silent --show-error --output /tmp/live.json --write-out "%{http_code}" \
+            -X POST "https://elevator.help/api/ask" \
+            -H "Content-Type: application/json" \
+            --data '{"question":"Was sagt die Norm über den Aufzugsschacht?"}')
+          echo "HTTP_STATUS=$status"
+          cat /tmp/live.json
+          test "$status" = "200"
+          jq -e '.answer and (.answer | length > 0)' /tmp/live.json >/dev/null
