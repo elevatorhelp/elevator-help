@@ -5,6 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Re-run after standards raw-evidence recall patch.
 jobs:
   live-standards:
     runs-on: ubuntu-latest
