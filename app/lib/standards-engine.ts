@@ -1,4 +1,5 @@
 const MIN_STANDARD_SCORE = 0.20;
+const ACTIVE_DOCUMENT_MAP_VERSION = 3;
 
 const CORE_STANDARDS = [
   { code: "EN 81-20", compact: "EN8120" },
@@ -434,6 +435,9 @@ function inferTopicFromMapMetadata(metadata: any): StandardTopic {
 function mapMatchToQuery(match: any, standard: (typeof CORE_STANDARDS)[number]): PlannedQuery | null {
   const metadata = match?.metadata || {};
   if (metadata.contentType !== "document-map") return null;
+  // New map nodes are schema-versioned. Keep legacy unversioned nodes readable
+  // during backfill, but never let an explicitly stale schema guide retrieval.
+  if (metadata.mapVersion && Number(metadata.mapVersion) !== ACTIVE_DOCUMENT_MAP_VERSION) return null;
   if (!matchBelongsToStandard(match, standard.compact)) return null;
 
   const parts = [

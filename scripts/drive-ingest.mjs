@@ -261,6 +261,7 @@ async function buildDocumentMap(
   const mapIds = Array.isArray(initialIds) ? [...initialIds] : [];
   const document = {
     sourceFileId: file.id,
+    mapVersion: DOCUMENT_MAP_VERSION,
     fileName: file.name,
     sourcePath: file.sourcePath,
     modifiedTime: file.modifiedTime || undefined,

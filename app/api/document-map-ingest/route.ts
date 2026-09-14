@@ -10,6 +10,7 @@ type DocumentInput = {
   sourceFileId: string;
   fileName: string;
   sourcePath: string;
+  mapVersion?: number;
   modifiedTime?: string;
   languageHint?: string | null;
   documentGroupHint?: string | null;
@@ -259,6 +260,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Invalid document payload" }, { status: 400 });
     }
 
+    const mapVersion = Number.isInteger(document.mapVersion) && Number(document.mapVersion) > 0
+      ? Number(document.mapVersion)
+      : 1;
+
     if (!pages.length || pages.length > MAX_PAGES) {
       return NextResponse.json(
         { ok: false, error: `pages must contain 1-${MAX_PAGES} items` },
@@ -311,6 +316,7 @@ export async function POST(request: NextRequest) {
       nodes.map(async (node, index) => {
         const id = await stableId([
           document.sourceFileId,
+          String(mapVersion),
           document.modifiedTime || "",
           String(node.pageStart),
           String(node.pageEnd),
@@ -329,6 +335,7 @@ export async function POST(request: NextRequest) {
           pageEnd: node.pageEnd,
           chunkIndex: -1,
           contentType: "document-map",
+          mapVersion,
           mapNodeType: node.nodeType,
         };
         if (document.modifiedTime) metadata.modifiedTime = document.modifiedTime;
@@ -347,6 +354,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      mapVersion,
       upserted: vectors.length,
       ids: vectors.map((vector) => vector.id),
       nodes,
