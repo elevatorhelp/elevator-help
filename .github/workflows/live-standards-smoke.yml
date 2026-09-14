@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Re-run after correcting Vectorize topK for metadata-returning standards queries.
+# Regression gate after multilingual-safe document-map query discovery.
 jobs:
   live-standards:
     runs-on: ubuntu-latest
