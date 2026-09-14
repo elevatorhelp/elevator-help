@@ -448,7 +448,7 @@ async function discoverMapQueries(
         message: error instanceof Error ? error.message : String(error),
       });
       const unfiltered = await vectorize.query(queryVector, {
-        topK: 80,
+        topK: 50,
         returnMetadata: "all",
       });
       matches = (unfiltered.matches || []).filter(
@@ -497,7 +497,7 @@ async function rawMatchesForQuery(
   const queryWithFilter = async (filter?: Record<string, string>) => {
     try {
       const result = await vectorize.query(queryVector, {
-        topK: 80,
+        topK: 50,
         returnMetadata: "all",
         ...(filter ? { filter } : {}),
       });
