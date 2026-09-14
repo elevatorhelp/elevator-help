@@ -44,7 +44,7 @@ async function getGoogleAccessToken(serviceAccount) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth-grant-type:jwt-bearer",
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
       assertion: jwt,
     }),
   });
@@ -118,6 +118,26 @@ function documentGroupHint(fileName) {
     .replace(/^-+|-+$/g, "")
     .toUpperCase()
     .slice(0, 120) || null;
+}
+
+function coreStandardPriority(file) {
+  const compact = `${file?.name || ""} ${file?.sourcePath || ""}`
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  if (compact.includes("EN8120")) return 0;
+  if (compact.includes("EN8150")) return 1;
+  return 2;
+}
+
+function prioritizeChangedFiles(files) {
+  return [...files].sort((a, b) => {
+    const priorityDelta = coreStandardPriority(a) - coreStandardPriority(b);
+    if (priorityDelta !== 0) return priorityDelta;
+    return String(a.sourcePath || a.name || "").localeCompare(
+      String(b.sourcePath || b.name || ""),
+      "en"
+    );
+  });
 }
 
 function normalizeText(text) {
@@ -331,14 +351,14 @@ async function main() {
     }
   }
 
-  const changed = files.filter((file) => {
+  const changed = prioritizeChangedFiles(files.filter((file) => {
     const previous = scope.files[file.id];
     return (
       previous?.fingerprint !== fingerprint(file) ||
       previous?.mapVersion !== DOCUMENT_MAP_VERSION ||
       !Array.isArray(previous?.mapIds)
     );
-  });
+  }));
   console.log(`${changed.length} PDF files are new, changed, or need document-map backfill`);
 
   const selected = changed.slice(0, Math.max(0, MAX_FILES));
