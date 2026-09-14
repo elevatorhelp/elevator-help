@@ -51,6 +51,10 @@ Important rules:
 18. If the user only mentions "LSU", set faultFamily to "LSU" and faultCode to null.
 19. If the user provides a number such as "14" without enough manufacturer/controller context, preserve faultCode as "14" but ask for clarification instead of assuming the controller.
 20. topics and components should describe useful retrieval concepts from the user's question. Do not invent unrelated components.
+21. This product is exclusively for elevator/lift engineering. Do NOT require the user to repeat words such as elevator, lift or Aufzug when the technical terms already make the elevator context clear.
+22. Treat domain terms such as Kabine/Kabin, Fahrkorb, Schacht, Schachtwand, Schachttür, Schwelle, Schachtgrube, Schachtkopf, Führungsschiene, Gegengewicht, Puffer, car, cabin, shaft, shaft wall, landing door, sill and guide rail as elevator context.
+23. A question asking for a minimum, maximum, permissible value, distance, clearance or dimension between elevator components is standards-related unless the user clearly asks only for a project preference. Route such questions as intent = standard even if the user does not write Norm, EN 81, elevator, lift or Aufzug.
+24. Do not ask the user to add the word elevator/Aufzug when the component vocabulary is already unambiguous. Ask clarification only for the actually ambiguous technical detail, such as which side or which component interface is meant.
 
 Known knowledge-base example:
 Manufacturer: NEW LIFT
@@ -353,16 +357,26 @@ function normalizeRoute(route: any, question: string): RouterResult {
 }
 
 function deterministicStandardsRoute(question: string): RouterResult | null {
-  const isStandard =
+  const explicitStandard =
     /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
     /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) ||
     /(استاندارد|نورم|نُرم)/i.test(question);
 
+  // elevator.help is an elevator-only product. Users should be able to ask
+  // "Abstand zwischen Kabine und Schachtwand?" without repeating "Aufzug".
+  const elevatorDomain =
+    /(aufzug|fahrkorb|kabin(?:e|en)?|kabin\b|schacht(?:wand|tür|grube|kopf)?|schwelle|führungsschiene|gegengewicht|puffer|landing\s+door|shaft(?:\s+wall)?|car\s+sill|cabin|guide\s+rail|counterweight)/i.test(question) ||
+    /(آسانسور|کابین|چاه(?:\s*آسانسور)?|دیواره\s*چاه|ریل|وزنه\s*تعادل)/i.test(question);
+
+  const asksNormativeDimension =
+    /(\bmin(?:imum)?\.?\b|\bmax(?:imum)?\.?\b|mindest|höchst|maximal|zulässig|abstand|clearance|distance|dimension|maß|mas+|فاصله|حداقل|حداکثر)/i.test(question);
+
+  const isStandard = explicitStandard || (elevatorDomain && asksNormativeDimension);
   if (!isStandard) return null;
 
   const questionLanguage = /[؀-ۿ]/.test(question)
     ? "fa"
-    : /\b(wer|was|warum|wie|aufzug|schacht|norm|normen)\b/i.test(question)
+    : /\b(wer|was|warum|wie|wieviel|wie\s+viel|min|max|abstand|aufzug|fahrkorb|kabin|schacht|schwelle|norm|normen)\b/i.test(question)
       ? "de"
       : "en";
 
@@ -376,7 +390,7 @@ function deterministicStandardsRoute(question: string): RouterResult | null {
     faultCode: null,
     faultFamily: null,
     faultName: null,
-    topics: [],
+    topics: asksNormativeDimension ? ["clearance", "dimensions"] : [],
     components: [],
     confidence: "high",
     needsClarification: false,

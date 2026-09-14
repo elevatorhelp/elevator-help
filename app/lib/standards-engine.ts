@@ -215,7 +215,34 @@ function deterministicQueryPlan(question: string, sourceLanguage: string) {
     }
   } else {
     const q = question.toLowerCase();
-    if (/schachtwand|wand|festigkeit|verform|glass|glas|دیواره/i.test(q)) {
+    const asksClearance =
+      /(abstand|mindestabstand|maximalabstand|minimum|maximum|\bmin\.?\b|\bmax\.?\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(q);
+    const clearanceComponents =
+      /(schachtwand|schacht|fahrkorb|kabin(?:e|en)?|kabin\b|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(q);
+
+    if (asksClearance && clearanceComponents) {
+      plan.push(
+        {
+          topic: "structure",
+          query:
+            sourceLanguage === "de"
+              ? "EN 81-20 5.2.5.3.1 horizontaler Abstand innere Schachtwand Schwelle Türrahmen Fahrkorb Schließkante Fahrkorb-Schiebetür"
+              : "EN 81-20 5.2.5.3.1 horizontal distance inner shaft wall car sill door frame car sliding door edge",
+        },
+        {
+          topic: "access",
+          query:
+            sourceLanguage === "de"
+              ? "EN 81-20 5.3.4.1 Horizontale Türabstände Schwellen Fahrkorbzugang Schachttür"
+              : "EN 81-20 5.3.4.1 horizontal door clearances car entrance sill landing door sill",
+        }
+      );
+    }
+
+    if (
+      /festigkeit|verform|glass|glas|mechanisch|strength|deformation|دیواره/i.test(q) ||
+      (!asksClearance && /schachtwand|wand/i.test(q))
+    ) {
       plan.push({
         topic: "structure",
         query:
@@ -385,7 +412,7 @@ function matchKey(match: any) {
 function matchRank(match: any) {
   const text = String(match?.metadata?.text || "");
   const clauseBonus = /\b\d+(?:\.\d+){2,6}\b/.test(text) ? 0.18 : 0;
-  const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength)/i.test(
+  const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength|abstand|clearance|schwelle|sill)/i.test(
     text
   )
     ? 0.05
