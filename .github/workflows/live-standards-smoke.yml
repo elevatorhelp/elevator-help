@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Re-run after safe metadata-filter fallback was applied to standards retrieval.
+# Re-run after correcting Vectorize topK for metadata-returning standards queries.
 jobs:
   live-standards:
     runs-on: ubuntu-latest
