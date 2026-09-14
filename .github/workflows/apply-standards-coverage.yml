@@ -20,93 +20,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Improve raw standards evidence recall
-        run: |
-          python <<'PY'
-          from pathlib import Path
-          p = Path('app/lib/standards-engine.ts')
-          s = p.read_text(encoding='utf-8')
-          old = '''  const queryWithFilter = async (filter?: Record<string, string>) => {
-    const result = await vectorize.query(queryVector, {
-      topK: 40,
-      returnMetadata: "all",
-      ...(filter ? { filter } : {}),
-    });
-
-    return (result.matches || [])
-      .filter(
-        (match: any) =>
-          match?.metadata?.contentType !== "document-map" &&
-          typeof match?.metadata?.text === "string" &&
-          match.metadata.text.trim().length > 0 &&
-          matchBelongsToStandard(match, standard.compact) &&
-          Number(match?.score || 0) >= MIN_STANDARD_SCORE
-      )
-      .sort((a: any, b: any) => matchRank(b) - matchRank(a))
-      .slice(0, 4)
-      .map((match: any) => ({
-        ...match,
-        standardSearchTopic: item.topic,
-        standardSearchQuery: item.query,
-      }));
-  };
-
-  const languageMatches = await queryWithFilter({ language: sourceLanguage });
-  if (languageMatches.length) return languageMatches;
-
-  // Legacy/raw standards vectors may not have reliable language metadata. Falling
-  // back to an unfiltered search is safe because final claims still require an
-  // exact standard match, an exact clause present in the raw excerpt and a
-  // verbatim evidence quote from that same raw excerpt.
-  return queryWithFilter();'''
-          new = '''  const exactClauseQuery = /\\b\\d+(?:\\.\\d+){2,6}\\b/.test(item.query);
-  const minimumScore = exactClauseQuery ? 0.2 : MIN_STANDARD_SCORE;
-
-  const queryWithFilter = async (filter?: Record<string, string>) => {
-    const result = await vectorize.query(queryVector, {
-      topK: 80,
-      returnMetadata: "all",
-      ...(filter ? { filter } : {}),
-    });
-
-    return (result.matches || [])
-      .filter(
-        (match: any) =>
-          match?.metadata?.contentType !== "document-map" &&
-          typeof match?.metadata?.text === "string" &&
-          match.metadata.text.trim().length > 0 &&
-          matchBelongsToStandard(match, standard.compact) &&
-          Number(match?.score || 0) >= minimumScore
-      )
-      .sort((a: any, b: any) => matchRank(b) - matchRank(a))
-      .slice(0, 6)
-      .map((match: any) => ({
-        ...match,
-        standardSearchTopic: item.topic,
-        standardSearchQuery: item.query,
-      }));
-  };
-
-  // Prefer raw vectors explicitly classified as standards. This keeps unrelated
-  // manuals from consuming the nearest-neighbour window while preserving the
-  // deterministic verifier as the final authority.
-  const standardMatches = await queryWithFilter({ contentType: "standard" });
-  if (standardMatches.length) return standardMatches;
-
-  const languageMatches = await queryWithFilter({ language: sourceLanguage });
-  if (languageMatches.length) return languageMatches;
-
-  // Legacy/raw standards vectors may not have reliable enrichment metadata.
-  // Falling back to an unfiltered search is safe because final claims still
-  // require exact standard membership, an exact clause in the raw excerpt and
-  // a verbatim evidence quote from that same raw excerpt.
-  return queryWithFilter();'''
-          if new in s:
-              raise SystemExit(0)
-          if old not in s:
-              raise SystemExit('Expected rawMatchesForQuery block not found')
-          p.write_text(s.replace(old, new, 1), encoding='utf-8')
-          PY
+      - name: Improve raw standards recall
+        run: sed -i 's/const MIN_STANDARD_SCORE = 0.32;/const MIN_STANDARD_SCORE = 0.20;/' app/lib/standards-engine.ts
+      - name: Verify deterministic verifier remains present
+        run: grep -q 'function verifyClaims' app/lib/standards-engine.ts && grep -q 'excerptContainsClause' app/lib/standards-engine.ts && grep -q 'evidenceContainsAllClaimNumbers' app/lib/standards-engine.ts
       - name: Build
         run: npm ci && npm run build
       - name: Commit patch
@@ -114,6 +31,4 @@ jobs:
           git config user.name elevatorhelp-bot
           git config user.email actions@users.noreply.github.com
           git add app/lib/standards-engine.ts
-          git diff --cached --quiet || (git commit -m 'Improve standards evidence recall without weakening verification' && git push)
-
-# automation retry marker 2026-09-14
+          git diff --cached --quiet || (git commit -m 'Raise standards raw evidence recall safely' && git push)
