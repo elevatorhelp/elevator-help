@@ -393,6 +393,123 @@ function matchRank(match: any) {
   return Number(match?.score || 0) + clauseBonus + headingBonus;
 }
 
+function inferTopicFromMapMetadata(metadata: any): StandardTopic {
+  const text = `${metadata?.topics || ""} ${metadata?.sectionTitle || ""} ${metadata?.text || ""}`.toLowerCase();
+  if (/(schachtwand|shaft wall|festigkeit|strength|structure|wand|wall)/i.test(text)) return "structure";
+  if (/(schachtgrube|pit|grube)/i.test(text)) return "pit";
+  if (/(schachtkopf|headroom|schutzraum|refuge)/i.test(text)) return "headroom";
+  if (/(beleuchtung|lighting|illumination|licht)/i.test(text)) return "lighting";
+  if (/(zugang|access|wartungstür|nottür|inspection door|emergency door)/i.test(text)) return "access";
+  if (/(trenn|separation|partition|gegengewicht|counterweight)/i.test(text)) return "separation";
+  return "general";
+}
+
+function mapMatchToQuery(match: any, standard: (typeof CORE_STANDARDS)[number]): PlannedQuery | null {
+  const metadata = match?.metadata || {};
+  if (metadata.contentType !== "document-map") return null;
+  if (!matchBelongsToStandard(match, standard.compact)) return null;
+
+  const parts = [
+    metadata.sectionId ? `${standard.code} ${metadata.sectionId}` : standard.code,
+    metadata.sectionTitle || "",
+    metadata.topics || "",
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  if (parts.length < 2) return null;
+  return { topic: inferTopicFromMapMetadata(metadata), query: parts.join(" ") };
+}
+
+async function discoverMapQueries(
+  question: string,
+  standard: (typeof CORE_STANDARDS)[number],
+  ai: any,
+  vectorize: any
+) {
+  try {
+    const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
+      text: [`${question}\n${standard.code}`],
+    });
+    const queryVector = (embeddingResult as any).data?.[0];
+    if (!queryVector) return [] as PlannedQuery[];
+
+    const result = await vectorize.query(queryVector, {
+      topK: 20,
+      returnMetadata: "all",
+      filter: { contentType: "document-map" },
+    });
+
+    const seen = new Set<string>();
+    const queries: PlannedQuery[] = [];
+    for (const match of result.matches || []) {
+      const query = mapMatchToQuery(match, standard);
+      if (!query) continue;
+      const key = `${query.topic}:${query.query.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      queries.push(query);
+      if (queries.length >= 6) break;
+    }
+    return queries;
+  } catch (error) {
+    console.error("Standards map discovery error:", {
+      standard: standard.code,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [] as PlannedQuery[];
+  }
+}
+
+async function rawMatchesForQuery(
+  item: PlannedQuery,
+  standard: (typeof CORE_STANDARDS)[number],
+  sourceLanguage: string,
+  ai: any,
+  vectorize: any
+) {
+  const retrievalQuery = `${item.query}\n${standard.code}`;
+  const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
+    text: [retrievalQuery],
+  });
+  const queryVector = (embeddingResult as any).data?.[0];
+  if (!queryVector) return [];
+
+  const queryWithFilter = async (filter?: Record<string, string>) => {
+    const result = await vectorize.query(queryVector, {
+      topK: 40,
+      returnMetadata: "all",
+      ...(filter ? { filter } : {}),
+    });
+
+    return (result.matches || [])
+      .filter(
+        (match: any) =>
+          match?.metadata?.contentType !== "document-map" &&
+          typeof match?.metadata?.text === "string" &&
+          match.metadata.text.trim().length > 0 &&
+          matchBelongsToStandard(match, standard.compact) &&
+          Number(match?.score || 0) >= MIN_STANDARD_SCORE
+      )
+      .sort((a: any, b: any) => matchRank(b) - matchRank(a))
+      .slice(0, 4)
+      .map((match: any) => ({
+        ...match,
+        standardSearchTopic: item.topic,
+        standardSearchQuery: item.query,
+      }));
+  };
+
+  const languageMatches = await queryWithFilter({ language: sourceLanguage });
+  if (languageMatches.length) return languageMatches;
+
+  // Legacy/raw standards vectors may not have reliable language metadata. Falling
+  // back to an unfiltered search is safe because final claims still require an
+  // exact standard match, an exact clause present in the raw excerpt and a
+  // verbatim evidence quote from that same raw excerpt.
+  return queryWithFilter();
+}
+
 async function queryOneStandard(
   question: string,
   route: any,
@@ -404,44 +521,20 @@ async function queryOneStandard(
   const preferredLanguage =
     route.preferredSourceLanguage || route.questionLanguage || "de";
   const languages = Array.from(
-    new Set([preferredLanguage, "de", "en"].filter(Boolean))
+    new Set([preferredLanguage, "de", "de-en", "en"].filter(Boolean))
   );
+  const mapQueries = await discoverMapQueries(question, standard, ai, vectorize);
 
   for (const sourceLanguage of languages) {
-    const plan = await expandQueryPlan(question, route, sourceLanguage, apiKey);
+    const basePlan = await expandQueryPlan(question, route, sourceLanguage, apiKey);
+    const plan = [...mapQueries, ...basePlan].filter((item, index, all) => {
+      const key = `${item.topic}:${item.query.toLowerCase()}`;
+      return all.findIndex((candidate) => `${candidate.topic}:${candidate.query.toLowerCase()}` === key) === index;
+    }).slice(0, 14);
     const perTopic = new Map<StandardTopic, any[]>();
 
     for (const item of plan) {
-      const retrievalQuery = `${item.query}\n${standard.code}`;
-      const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
-        text: [retrievalQuery],
-      });
-      const queryVector = (embeddingResult as any).data?.[0];
-      if (!queryVector) continue;
-
-      const result = await vectorize.query(queryVector, {
-        topK: 40,
-        returnMetadata: "all",
-        // Intentionally do not require contentType="standard" here because
-        // older indexed standards chunks may have inconsistent enrichment.
-        filter: { language: sourceLanguage },
-      });
-
-      const valid = (result.matches || [])
-        .filter(
-          (match: any) =>
-            typeof match?.metadata?.text === "string" &&
-            match.metadata.text.trim().length > 0 &&
-            matchBelongsToStandard(match, standard.compact) &&
-            Number(match?.score || 0) >= MIN_STANDARD_SCORE
-        )
-        .sort((a: any, b: any) => matchRank(b) - matchRank(a))
-        .slice(0, 4)
-        .map((match: any) => ({
-          ...match,
-          standardSearchTopic: item.topic,
-          standardSearchQuery: item.query,
-        }));
+      const valid = await rawMatchesForQuery(item, standard, sourceLanguage, ai, vectorize);
 
       const current = perTopic.get(item.topic) || [];
       const byKey = new Map(current.map((match: any) => [matchKey(match), match]));
@@ -827,6 +920,8 @@ export async function answerStandardsQuestion(
 
   // Preserve diversified retrieval order. Do not globally rerank here, because
   // a broad question must not be dominated by one narrow subtopic.
+  // Document-map nodes are deliberately excluded upstream: they can guide
+  // retrieval but they can never serve as normative evidence.
   const evidence = retrieval.matches.slice(0, retrieval.broad ? 24 : 18);
   const excerpts = evidence
     .map((match: any, index: number) => {
