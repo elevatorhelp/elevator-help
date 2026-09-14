@@ -434,15 +434,31 @@ async function discoverMapQueries(
     const queryVector = (embeddingResult as any).data?.[0];
     if (!queryVector) return [] as PlannedQuery[];
 
-    const result = await vectorize.query(queryVector, {
-      topK: 20,
-      returnMetadata: "all",
-      filter: { contentType: "document-map" },
-    });
+    let matches: any[] = [];
+    try {
+      const filtered = await vectorize.query(queryVector, {
+        topK: 30,
+        returnMetadata: "all",
+        filter: { contentType: "document-map" },
+      });
+      matches = filtered.matches || [];
+    } catch (error) {
+      console.error("Standards document-map metadata filter failed; using local filtering", {
+        standard: standard.code,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      const unfiltered = await vectorize.query(queryVector, {
+        topK: 80,
+        returnMetadata: "all",
+      });
+      matches = (unfiltered.matches || []).filter(
+        (match: any) => match?.metadata?.contentType === "document-map"
+      );
+    }
 
     const seen = new Set<string>();
     const queries: PlannedQuery[] = [];
-    for (const match of result.matches || []) {
+    for (const match of matches) {
       const query = mapMatchToQuery(match, standard);
       if (!query) continue;
       const key = `${query.topic}:${query.query.toLowerCase()}`;
