@@ -6,11 +6,15 @@ import { extractText, getDocumentProxy } from "unpdf";
 const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "1GAuMp6D99K9kqLkUMJZM-iHoIS319Loo";
 const MAX_FILES = Number(process.env.MAX_FILES || "1");
 const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/api/drive-ingest-batch";
+const DOCUMENT_MAP_ENDPOINT =
+  process.env.DOCUMENT_MAP_ENDPOINT || "https://elevator.help/api/document-map-ingest";
 const STATE_PATH = process.env.STATE_PATH || ".ingestion-state/drive.json";
 const BATCH_SIZE = 8;
 const CHUNK_SIZE = 2200;
 const CHUNK_OVERLAP = 250;
 const MIN_CHUNK_LENGTH = 80;
+const MAP_PAGES_PER_BATCH = 6;
+const MAX_MAP_PAGE_TEXT = 7000;
 
 function base64Url(input) {
   return Buffer.from(input).toString("base64url");
@@ -39,7 +43,7 @@ async function getGoogleAccessToken(serviceAccount) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      grant_type: "urn:ietf:params:oauth-grant-type:jwt-bearer",
       assertion: jwt,
     }),
   });
@@ -167,7 +171,7 @@ async function loadState() {
   try {
     return JSON.parse(await readFile(STATE_PATH, "utf8"));
   } catch {
-    return { version: 1, scopes: {} };
+    return { version: 2, scopes: {} };
   }
 }
 
@@ -176,8 +180,8 @@ async function saveState(state) {
   await writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-async function callIngest(payload, token) {
-  const response = await fetch(INGEST_ENDPOINT, {
+async function callJsonEndpoint(endpoint, payload, token, label) {
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -195,16 +199,57 @@ async function callIngest(payload, token) {
   }
 
   if (!response.ok || data?.ok === false) {
-    throw new Error(`Ingestion endpoint error ${response.status}: ${JSON.stringify(data)}`);
+    throw new Error(`${label} error ${response.status}: ${JSON.stringify(data)}`);
   }
 
   return data;
+}
+
+async function callIngest(payload, token) {
+  return callJsonEndpoint(INGEST_ENDPOINT, payload, token, "Ingestion endpoint");
+}
+
+async function callDocumentMap(payload, token) {
+  return callJsonEndpoint(DOCUMENT_MAP_ENDPOINT, payload, token, "Document-map endpoint");
 }
 
 async function deleteIds(ids, token) {
   for (let i = 0; i < ids.length; i += 200) {
     await callIngest({ action: "delete", ids: ids.slice(i, i + 200) }, token);
   }
+}
+
+async function buildDocumentMap(file, pages, ingestToken, languageHint, groupHint) {
+  const pageInputs = pages
+    .map((pageText, index) => ({
+      page: index + 1,
+      text: normalizeText(pageText).slice(0, MAX_MAP_PAGE_TEXT),
+    }))
+    .filter((page) => page.text.length >= MIN_CHUNK_LENGTH);
+
+  if (!pageInputs.length) return [];
+
+  const mapIds = [];
+  const document = {
+    sourceFileId: file.id,
+    fileName: file.name,
+    sourcePath: file.sourcePath,
+    modifiedTime: file.modifiedTime || undefined,
+    languageHint,
+    documentGroupHint: groupHint,
+  };
+
+  for (let i = 0; i < pageInputs.length; i += MAP_PAGES_PER_BATCH) {
+    const window = pageInputs.slice(i, i + MAP_PAGES_PER_BATCH);
+    const result = await callDocumentMap({ document, pages: window }, ingestToken);
+    const ids = Array.isArray(result?.ids) ? result.ids : [];
+    mapIds.push(...ids);
+    console.log(
+      `Mapped pages ${window[0].page}-${window[window.length - 1].page}: ${ids.length} knowledge nodes`
+    );
+  }
+
+  return mapIds;
 }
 
 async function processPdf(file, accessToken, ingestToken) {
@@ -243,7 +288,13 @@ async function processPdf(file, accessToken, ingestToken) {
     console.log(`Upserted ${result.upserted} chunks (${Math.min(i + BATCH_SIZE, chunks.length)}/${chunks.length})`);
   }
 
-  return chunks.map((chunk) => chunk.id);
+  const mapIds = await buildDocumentMap(file, pages, ingestToken, languageHint, groupHint);
+  console.log(`Created ${mapIds.length} document knowledge-map nodes`);
+
+  return {
+    ids: chunks.map((chunk) => chunk.id),
+    mapIds,
+  };
 }
 
 async function main() {
@@ -257,6 +308,7 @@ async function main() {
   const accessToken = await getGoogleAccessToken(serviceAccount);
   const files = await listFolder(DRIVE_FOLDER_ID, accessToken);
   const state = await loadState();
+  state.version = 2;
   state.scopes ||= {};
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
@@ -265,9 +317,15 @@ async function main() {
 
   const foundIds = new Set(files.map((file) => file.id));
   for (const [fileId, old] of Object.entries(scope.files)) {
-    if (!foundIds.has(fileId) && Array.isArray(old.ids) && old.ids.length) {
-      console.log(`Removing vectors for deleted Drive file ${fileId}`);
-      await deleteIds(old.ids, ingestToken);
+    if (!foundIds.has(fileId)) {
+      const oldIds = [
+        ...(Array.isArray(old.ids) ? old.ids : []),
+        ...(Array.isArray(old.mapIds) ? old.mapIds : []),
+      ];
+      if (oldIds.length) {
+        console.log(`Removing ${oldIds.length} vectors for deleted Drive file ${fileId}`);
+        await deleteIds(oldIds, ingestToken);
+      }
       delete scope.files[fileId];
     }
   }
@@ -279,18 +337,24 @@ async function main() {
 
   for (const file of selected) {
     const previous = scope.files[file.id];
-    if (Array.isArray(previous?.ids) && previous.ids.length) {
-      console.log(`Deleting ${previous.ids.length} old vectors for changed file ${file.name}`);
-      await deleteIds(previous.ids, ingestToken);
+    const previousIds = [
+      ...(Array.isArray(previous?.ids) ? previous.ids : []),
+      ...(Array.isArray(previous?.mapIds) ? previous.mapIds : []),
+    ];
+
+    if (previousIds.length) {
+      console.log(`Deleting ${previousIds.length} old vectors for changed file ${file.name}`);
+      await deleteIds(previousIds, ingestToken);
     }
 
-    const ids = await processPdf(file, accessToken, ingestToken);
+    const indexed = await processPdf(file, accessToken, ingestToken);
     scope.files[file.id] = {
       name: file.name,
       sourcePath: file.sourcePath,
       fingerprint: fingerprint(file),
       modifiedTime: file.modifiedTime || null,
-      ids,
+      ids: indexed.ids,
+      mapIds: indexed.mapIds,
       indexedAt: new Date().toISOString(),
     };
     state.scopes[DRIVE_FOLDER_ID] = scope;
