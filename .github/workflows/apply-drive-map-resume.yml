@@ -1,0 +1,43 @@
+name: Apply Drive Map Resume
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/patch-drive-map-resume.mjs'
+      - '.github/workflows/apply-drive-map-resume.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply per-window map resume patch
+        run: node scripts/patch-drive-map-resume.mjs
+      - name: Verify safety invariants
+        run: |
+          grep -q 'function verifyClaims' app/lib/standards-engine.ts
+          grep -q 'metadata.contentType !== "document-map"' app/lib/standards-engine.ts
+          grep -q 'partialMapIds' scripts/drive-ingest.mjs
+          grep -q 'mapNextPage' scripts/drive-ingest.mjs
+          grep -q 'Document-map progress checkpoint' scripts/drive-ingest.mjs
+          grep -q 'RAW_EMBEDDING_VERSION = 2' scripts/drive-ingest.mjs
+          grep -q 'DOCUMENT_MAP_VERSION = 3' scripts/drive-ingest.mjs
+      - name: Build
+        run: npm ci && npm run build
+      - name: Commit patch
+        run: |
+          git config user.name elevatorhelp-bot
+          git config user.email actions@users.noreply.github.com
+          git add scripts/drive-ingest.mjs
+          git diff --cached --quiet || (git commit -m 'Resume document-map ingestion by page window' && git push)
