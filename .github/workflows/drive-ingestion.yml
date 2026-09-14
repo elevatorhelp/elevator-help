@@ -46,6 +46,52 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Ensure Vectorize metadata indexes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+          existing=$(npx --yes wrangler@latest vectorize list-metadata-index elevator-help-index --json 2>/dev/null || true)
+
+          ensure_index() {
+            property="$1"
+            if printf '%s' "$existing" | grep -q "\"propertyName\"[[:space:]]*:[[:space:]]*\"$property\""; then
+              echo "Metadata index already exists: $property"
+            else
+              echo "Creating metadata index: $property"
+              npx --yes wrangler@latest vectorize create-metadata-index elevator-help-index \
+                --property-name="$property" --type=string
+            fi
+          }
+
+          ensure_index contentType
+          ensure_index language
+          ensure_index documentGroup
+          ensure_index sourceFileId
+
+          # Metadata-index creation is asynchronous. Give Vectorize a short window,
+          # then verify that all fields are visible before inserting/upserting vectors.
+          for attempt in $(seq 1 12); do
+            current=$(npx --yes wrangler@latest vectorize list-metadata-index elevator-help-index --json 2>/dev/null || true)
+            missing=0
+            for property in contentType language documentGroup sourceFileId; do
+              printf '%s' "$current" | grep -q "\"propertyName\"[[:space:]]*:[[:space:]]*\"$property\"" || missing=1
+            done
+            if [ "$missing" -eq 0 ]; then
+              echo "Required Vectorize metadata indexes are ready."
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "Required Vectorize metadata indexes did not become ready in time."
+              exit 1
+            fi
+            sleep 5
+          done
+
       - name: Restore ingestion state
         uses: actions/cache@v6
         with:
@@ -69,5 +115,3 @@ jobs:
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
         run: node scripts/drive-ingest-until-text.mjs
-
-# Re-run marker after Vectorize delete batching fix.
