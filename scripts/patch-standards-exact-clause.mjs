@@ -101,7 +101,8 @@ if (!source.includes("EXACT_CLAUSE_VECTOR_CANDIDATES")) {
     '',
   ].join("\n");
 
-  source = source.replace(anchor, `${helper}${anchor}`);
+  // Use a replacement callback so "$&" inside the generated regex remains literal.
+  source = source.replace(anchor, () => `${helper}${anchor}`);
 }
 
 if (!source.includes("const exactClauseMatches = await exactClauseMatchesForQuery")) {
@@ -117,14 +118,14 @@ if (!source.includes("const exactClauseMatches = await exactClauseMatchesForQuer
     '  const retrievalQuery = `${item.query}\\n${standard.code}`;',
   ].join("\n");
   if (!source.includes(old)) throw new Error("rawMatchesForQuery body anchor not found");
-  source = source.replace(old, replacement);
+  source = source.replace(old, () => replacement);
 }
 
 if (!source.includes("Standards query item failed; continuing")) {
   const old = `    for (const item of plan) {\n      const valid = await rawMatchesForQuery(item, standard, sourceLanguage, ai, vectorize);\n\n      const current = perTopic.get(item.topic) || [];`;
   const replacement = `    for (const item of plan) {\n      let valid: any[] = [];\n      try {\n        valid = await rawMatchesForQuery(item, standard, sourceLanguage, ai, vectorize);\n      } catch (error) {\n        console.error("Standards query item failed; continuing", {\n          standard: standard.code,\n          query: item.query,\n          message: error instanceof Error ? error.message : String(error),\n        });\n      }\n\n      const current = perTopic.get(item.topic) || [];`;
   if (!source.includes(old)) throw new Error("queryOneStandard loop anchor not found");
-  source = source.replace(old, replacement);
+  source = source.replace(old, () => replacement);
 }
 
 if (!source.includes("distinguish each physical interface")) {
@@ -132,7 +133,7 @@ if (!source.includes("distinguish each physical interface")) {
   if (!source.includes(anchor)) throw new Error("claim prompt anchor not found");
   source = source.replace(
     anchor,
-    `${anchor}- For distance/clearance questions, distinguish each physical interface; do not merge car-to-wall, sill-to-sill, door-edge or car-roof clearances into one requirement.\n`
+    () => `${anchor}- For distance/clearance questions, distinguish each physical interface; do not merge car-to-wall, sill-to-sill, door-edge or car-roof clearances into one requirement.\n`
   );
 }
 
@@ -141,7 +142,7 @@ if (!source.includes("verified facts only establish maximum permissible distance
   if (!source.includes(anchor)) throw new Error("summary prompt anchor not found");
   source = source.replace(
     anchor,
-    `${anchor}- If the user asks for a minimum but the verified facts only establish maximum permissible distances, explicitly say that the verified provisions are maximum limits, not minimum values. Do not claim that no minimum exists elsewhere unless the verified facts establish that.\n`
+    () => `${anchor}- If the user asks for a minimum but the verified facts only establish maximum permissible distances, explicitly say that the verified provisions are maximum limits, not minimum values. Do not claim that no minimum exists elsewhere unless the verified facts establish that.\n`
   );
 }
 
