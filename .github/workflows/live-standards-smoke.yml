@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Regression gate after multilingual-safe document-map query discovery.
+# Regression gate after contextual raw-embedding reindex of the EN 81-20 sources.
 jobs:
   live-standards:
     runs-on: ubuntu-latest
