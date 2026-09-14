@@ -1,9 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 const path = "app/lib/standards-engine.ts";
-const source = await readFile(path, "utf8");
+let source = await readFile(path, "utf8");
+let changed = false;
 
-const oldBlock = `  const queryWithFilter = async (filter?: Record<string, string>) => {
+const oldRawBlock = `  const queryWithFilter = async (filter?: Record<string, string>) => {
     const result = await vectorize.query(queryVector, {
       topK: 80,
       returnMetadata: "all",
@@ -28,7 +29,7 @@ const oldBlock = `  const queryWithFilter = async (filter?: Record<string, strin
       }));
   };`;
 
-const newBlock = `  const queryWithFilter = async (filter?: Record<string, string>) => {
+const newRawBlock = `  const queryWithFilter = async (filter?: Record<string, string>) => {
     try {
       const result = await vectorize.query(queryVector, {
         topK: 80,
@@ -65,14 +66,62 @@ const newBlock = `  const queryWithFilter = async (filter?: Record<string, strin
     }
   };`;
 
-if (source.includes(newBlock)) {
-  console.log("Standards filter fallback already applied.");
+if (!source.includes(newRawBlock)) {
+  if (!source.includes(oldRawBlock)) {
+    throw new Error("Expected raw queryWithFilter block not found; refusing unsafe patch.");
+  }
+  source = source.replace(oldRawBlock, newRawBlock);
+  changed = true;
+}
+
+const oldMapBlock = `    const result = await vectorize.query(queryVector, {
+      topK: 20,
+      returnMetadata: "all",
+      filter: { contentType: "document-map" },
+    });
+
+    const seen = new Set<string>();
+    const queries: PlannedQuery[] = [];
+    for (const match of result.matches || []) {`;
+
+const newMapBlock = `    let matches: any[] = [];
+    try {
+      const filtered = await vectorize.query(queryVector, {
+        topK: 30,
+        returnMetadata: "all",
+        filter: { contentType: "document-map" },
+      });
+      matches = filtered.matches || [];
+    } catch (error) {
+      console.error("Standards document-map metadata filter failed; using local filtering", {
+        standard: standard.code,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      const unfiltered = await vectorize.query(queryVector, {
+        topK: 80,
+        returnMetadata: "all",
+      });
+      matches = (unfiltered.matches || []).filter(
+        (match: any) => match?.metadata?.contentType === "document-map"
+      );
+    }
+
+    const seen = new Set<string>();
+    const queries: PlannedQuery[] = [];
+    for (const match of matches) {`;
+
+if (!source.includes(newMapBlock)) {
+  if (!source.includes(oldMapBlock)) {
+    throw new Error("Expected document-map query block not found; refusing unsafe patch.");
+  }
+  source = source.replace(oldMapBlock, newMapBlock);
+  changed = true;
+}
+
+if (!changed) {
+  console.log("Standards raw and document-map filter fallbacks already applied.");
   process.exit(0);
 }
 
-if (!source.includes(oldBlock)) {
-  throw new Error("Expected queryWithFilter block not found; refusing unsafe patch.");
-}
-
-await writeFile(path, source.replace(oldBlock, newBlock), "utf8");
-console.log("Applied safe standards metadata-filter fallback.");
+await writeFile(path, source, "utf8");
+console.log("Applied safe standards metadata-filter fallbacks for raw evidence and document-map discovery.");
