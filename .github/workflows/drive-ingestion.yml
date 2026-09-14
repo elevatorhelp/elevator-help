@@ -71,6 +71,7 @@ jobs:
           key: drive-ingestion-state-${{ github.run_id }}
           restore-keys: |
             drive-ingestion-state-
+          save-always: true
 
       - name: Guard Google JWT grant type
         run: |
