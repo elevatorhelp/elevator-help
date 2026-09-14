@@ -27,6 +27,8 @@ concurrency:
   group: elevator-help-drive-ingestion
   cancel-in-progress: false
 
+# State is checkpointed independently for raw vectors and document-map windows so
+# a quota-limited map run can resume without rebuilding already verified layers.
 jobs:
   ingest:
     runs-on: ubuntu-latest
