@@ -1,4 +1,4 @@
-const MIN_STANDARD_SCORE = 0.32;
+const MIN_STANDARD_SCORE = 0.20;
 
 const CORE_STANDARDS = [
   { code: "EN 81-20", compact: "EN8120" },
