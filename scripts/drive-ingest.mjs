@@ -380,10 +380,13 @@ async function main() {
   const foundIds = new Set(files.map((file) => file.id));
   for (const [fileId, old] of Object.entries(scope.files)) {
     if (!foundIds.has(fileId)) {
-      const oldIds = [
-        ...(Array.isArray(old.ids) ? old.ids : []),
-        ...(Array.isArray(old.mapIds) ? old.mapIds : []),
-      ];
+      const oldIds = Array.from(
+        new Set([
+          ...(Array.isArray(old.ids) ? old.ids : []),
+          ...(Array.isArray(old.mapIds) ? old.mapIds : []),
+          ...(Array.isArray(old.partialMapIds) ? old.partialMapIds : []),
+        ])
+      );
       if (oldIds.length) {
         console.log(`Removing ${oldIds.length} vectors for deleted Drive file ${fileId}`);
         await deleteIds(oldIds, ingestToken);
@@ -467,6 +470,24 @@ async function main() {
       const mapStartPage = canResumeMap ? previous.mapNextPage : 1;
       const initialMapIds = canResumeMap ? previous.partialMapIds : [];
 
+      // A partial map belongs to the exact source fingerprint that created it.
+      // If the Drive file changed (or the map schema/version changed), those
+      // interrupted nodes must not survive while a fresh map is being built.
+      if (!canResumeMap && Array.isArray(previous.partialMapIds) && previous.partialMapIds.length) {
+        console.log(
+          `Removing ${previous.partialMapIds.length} stale partial map vectors for ${file.name}`
+        );
+        await deleteIds(previous.partialMapIds, ingestToken);
+        delete next.partialMapIds;
+        delete next.partialMapVersion;
+        delete next.partialMapFingerprint;
+        delete next.mapNextPage;
+        delete next.mapProgressAt;
+        scope.files[file.id] = next;
+        state.scopes[DRIVE_FOLDER_ID] = scope;
+        await saveState(state);
+      }
+
       const indexedMap = await processPdf(file, accessToken, ingestToken, {
         ingestRaw: false,
         ingestMap: true,
@@ -486,9 +507,12 @@ async function main() {
       });
       const newMapIds = Array.isArray(indexedMap.mapIds) ? indexedMap.mapIds : [];
       const newMapIdSet = new Set(newMapIds);
-      const staleMapIds = (Array.isArray(previous.mapIds) ? previous.mapIds : []).filter(
-        (id) => !newMapIdSet.has(id)
-      );
+      const staleMapIds = Array.from(
+        new Set([
+          ...(Array.isArray(previous.mapIds) ? previous.mapIds : []),
+          ...(Array.isArray(previous.partialMapIds) ? previous.partialMapIds : []),
+        ])
+      ).filter((id) => !newMapIdSet.has(id));
       if (staleMapIds.length) await deleteIds(staleMapIds, ingestToken);
 
       next.mapIds = newMapIds;
