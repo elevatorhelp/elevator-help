@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Re-run after document-map guided raw-evidence retrieval patch.
+# Re-run after safe metadata-filter fallback was applied to standards retrieval.
 jobs:
   live-standards:
     runs-on: ubuntu-latest
