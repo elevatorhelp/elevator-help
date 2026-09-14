@@ -13,13 +13,62 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe live standards answer
+      - name: Verify natural standards clearance questions
+        shell: bash
         run: |
-          status=$(curl --silent --show-error --output /tmp/live.json --write-out "%{http_code}" \
-            -X POST "https://elevator.help/api/ask" \
-            -H "Content-Type: application/json" \
-            --data '{"question":"Was sagt die Norm über den Aufzugsschacht?"}')
-          echo "HTTP_STATUS=$status"
-          cat /tmp/live.json
-          test "$status" = "200"
-          jq -e '.answer and (.answer | length > 0)' /tmp/live.json >/dev/null
+          set -euo pipefail
+          questions=(
+            "wie viel ist min. abstand zwischen kabinenaufzug und schachtwand ?"
+            "wie viel ist min. abstand zwischen kabin und schachtwand ?"
+          )
+
+          validate() {
+            local file="$1"
+            node - "$file" <<'NODE'
+          const fs = require('fs');
+          const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const answer = String(data.answer || '');
+          const ok =
+            data.mode === 'standards_knowledge_base' &&
+            answer.includes('5.2.5.3.1') &&
+            answer.includes('5.3.4.1') &&
+            /(?:0[,.]15\s*m|150\s*mm)/i.test(answer) &&
+            /35\s*mm/i.test(answer) &&
+            !answer.includes('2.1.1') &&
+            !answer.includes('2.1.2') &&
+            !/formuliere.*konkreter|bitte.*aufzug|bitte.*elevator/i.test(answer.toLowerCase().replace(/\s+/g, ' '));
+          if (!ok) {
+            console.error(JSON.stringify({ mode: data.mode, answer }, null, 2));
+            process.exit(1);
+          }
+NODE
+          }
+
+          for attempt in $(seq 1 18); do
+            echo "Attempt $attempt/18"
+            all_ok=1
+            index=0
+            for q in "${questions[@]}"; do
+              index=$((index+1))
+              payload=$(node -e 'process.stdout.write(JSON.stringify({question:process.argv[1]}))' "$q")
+              status=$(curl --silent --show-error --max-time 90 --output "/tmp/live-$index.json" --write-out "%{http_code}" \
+                -X POST "https://elevator.help/api/ask" \
+                -H "Content-Type: application/json" \
+                --data "$payload") || status="000"
+              echo "Question $index HTTP_STATUS=$status"
+              cat "/tmp/live-$index.json" 2>/dev/null || true
+              echo
+              if [ "$status" != "200" ] || ! validate "/tmp/live-$index.json"; then
+                all_ok=0
+                break
+              fi
+            done
+            if [ "$all_ok" -eq 1 ]; then
+              echo "PASS: both natural phrasings return verified EN 81-20 clearance clauses and values."
+              exit 0
+            fi
+            sleep 20
+          done
+
+          echo "FAIL: live clearance QA did not pass after deployment retries."
+          exit 1
