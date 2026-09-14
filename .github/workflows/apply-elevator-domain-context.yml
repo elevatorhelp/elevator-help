@@ -1,0 +1,83 @@
+name: Apply Elevator Domain Context Routing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-elevator-domain-context.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Make elevator context implicit and improve clearance retrieval
+        shell: python
+        run: |
+          from pathlib import Path
+
+          router_path = Path('app/lib/router.ts')
+          router = router_path.read_text()
+
+          rules_anchor = '''20. topics and components should describe useful retrieval concepts from the user's question. Do not invent unrelated components.\n'''
+          rules_replacement = '''20. topics and components should describe useful retrieval concepts from the user's question. Do not invent unrelated components.\n21. This product is exclusively for elevator/lift engineering. Do NOT require the user to repeat words such as elevator, lift or Aufzug when the technical terms already make the elevator context clear.\n22. Treat domain terms such as Kabine/Kabin, Fahrkorb, Schacht, Schachtwand, Schachttür, Schwelle, Schachtgrube, Schachtkopf, Führungsschiene, Gegengewicht, Puffer, car, cabin, shaft, shaft wall, landing door, sill and guide rail as elevator context.\n23. A question asking for a minimum, maximum, permissible value, distance, clearance or dimension between elevator components is standards-related unless the user clearly asks only for a project preference. Route such questions as intent = standard even if the user does not write Norm, EN 81, elevator, lift or Aufzug.\n24. Do not ask the user to add the word elevator/Aufzug when the component vocabulary is already unambiguous. Ask clarification only for the actually ambiguous technical detail, such as which side or which component interface is meant.\n'''
+          if rules_anchor not in router:
+              raise SystemExit('router rules anchor not found')
+          router = router.replace(rules_anchor, rules_replacement, 1)
+
+          old_function = '''function deterministicStandardsRoute(question: string): RouterResult | null {\n  const isStandard =\n    /\\bEN\\s*81\\s*[-–]?\\s*\\d+\\b/i.test(question) ||\n    /\\b(DIN\\s*)?(norm|normen|standard|standards)\\b/i.test(question) ||\n    /(استاندارد|نورم|نُرم)/i.test(question);\n\n  if (!isStandard) return null;\n\n  const questionLanguage = /[؀-ۿ]/.test(question)\n    ? "fa"\n    : /\\b(wer|was|warum|wie|aufzug|schacht|norm|normen)\\b/i.test(question)\n      ? "de"\n      : "en";\n\n  return {\n    intent: "standard",\n    questionLanguage,\n    preferredSourceLanguage: questionLanguage,\n    manufacturer: null,\n    productFamily: null,\n    controller: null,\n    faultCode: null,\n    faultFamily: null,\n    faultName: null,\n    topics: [],\n    components: [],\n    confidence: "high",\n    needsClarification: false,\n    clarificationQuestion: null,\n    searchStrategy: "semantic_broad",\n  };\n}\n'''
+
+          new_function = '''function deterministicStandardsRoute(question: string): RouterResult | null {\n  const explicitStandard =\n    /\\bEN\\s*81\\s*[-–]?\\s*\\d+\\b/i.test(question) ||\n    /\\b(DIN\\s*)?(norm|normen|standard|standards)\\b/i.test(question) ||\n    /(استاندارد|نورم|نُرم)/i.test(question);\n\n  // elevator.help is an elevator-only product. Users should be able to ask\n  // "Abstand zwischen Kabine und Schachtwand?" without repeating "Aufzug".\n  const elevatorDomain =\n    /(aufzug|fahrkorb|kabin(?:e|en)?|kabin\\b|schacht(?:wand|tür|grube|kopf)?|schwelle|führungsschiene|gegengewicht|puffer|landing\\s+door|shaft(?:\\s+wall)?|car\\s+sill|cabin|guide\\s+rail|counterweight)/i.test(question) ||\n    /(آسانسور|کابین|چاه(?:\\s*آسانسور)?|دیواره\\s*چاه|ریل|وزنه\\s*تعادل)/i.test(question);\n\n  const asksNormativeDimension =\n    /(\\bmin(?:imum)?\\.?\\b|\\bmax(?:imum)?\\.?\\b|mindest|höchst|maximal|zulässig|abstand|clearance|distance|dimension|maß|mas+|فاصله|حداقل|حداکثر)/i.test(question);\n\n  const isStandard = explicitStandard || (elevatorDomain && asksNormativeDimension);\n  if (!isStandard) return null;\n\n  const questionLanguage = /[؀-ۿ]/.test(question)\n    ? "fa"\n    : /\\b(wer|was|warum|wie|wieviel|wie\\s+viel|min|max|abstand|aufzug|fahrkorb|kabin|schacht|schwelle|norm|normen)\\b/i.test(question)\n      ? "de"\n      : "en";\n\n  return {\n    intent: "standard",\n    questionLanguage,\n    preferredSourceLanguage: questionLanguage,\n    manufacturer: null,\n    productFamily: null,\n    controller: null,\n    faultCode: null,\n    faultFamily: null,\n    faultName: null,\n    topics: asksNormativeDimension ? ["clearance", "dimensions"] : [],\n    components: [],\n    confidence: "high",\n    needsClarification: false,\n    clarificationQuestion: null,\n    searchStrategy: "semantic_broad",\n  };\n}\n'''
+
+          if old_function not in router:
+              raise SystemExit('deterministicStandardsRoute anchor not found')
+          router = router.replace(old_function, new_function, 1)
+          router_path.write_text(router)
+
+          standards_path = Path('app/lib/standards-engine.ts')
+          standards = standards_path.read_text()
+
+          clearance_anchor = '''  } else {\n    const q = question.toLowerCase();\n    if (/schachtwand|wand|festigkeit|verform|glass|glas|دیواره/i.test(q)) {\n      plan.push({\n        topic: "structure",\n        query:\n          sourceLanguage === "de"\n            ? "Schachtwände Festigkeit mechanische Festigkeit Verformung Kraft Glas"\n            : "shaft walls mechanical strength deformation force glass",\n      });\n    }\n'''
+
+          clearance_replacement = '''  } else {\n    const q = question.toLowerCase();\n    const asksClearance =\n      /(abstand|mindestabstand|maximalabstand|minimum|maximum|\\bmin\\.?\\b|\\bmax\\.?\\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(q);\n    const clearanceComponents =\n      /(schachtwand|schacht|fahrkorb|kabin(?:e|en)?|kabin\\b|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(q);\n\n    if (asksClearance && clearanceComponents) {\n      plan.push(\n        {\n          topic: "structure",\n          query:\n            sourceLanguage === "de"\n              ? "EN 81-20 5.2.5.3.1 horizontaler Abstand innere Schachtwand Schwelle Türrahmen Fahrkorb Schließkante Fahrkorb-Schiebetür"\n              : "EN 81-20 5.2.5.3.1 horizontal distance inner shaft wall car sill door frame car sliding door edge",\n        },\n        {\n          topic: "access",\n          query:\n            sourceLanguage === "de"\n              ? "EN 81-20 5.3.4.1 Horizontale Türabstände Schwellen Fahrkorbzugang Schachttür"\n              : "EN 81-20 5.3.4.1 horizontal door clearances car entrance sill landing door sill",\n        }\n      );\n    }\n\n    if (\n      /festigkeit|verform|glass|glas|mechanisch|strength|deformation|دیواره/i.test(q) ||\n      (!asksClearance && /schachtwand|wand/i.test(q))\n    ) {\n      plan.push({\n        topic: "structure",\n        query:\n          sourceLanguage === "de"\n            ? "Schachtwände Festigkeit mechanische Festigkeit Verformung Kraft Glas"\n            : "shaft walls mechanical strength deformation force glass",\n      });\n    }\n'''
+
+          if clearance_anchor not in standards:
+              raise SystemExit('standards clearance anchor not found')
+          standards = standards.replace(clearance_anchor, clearance_replacement, 1)
+
+          rank_anchor = '''  const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength)/i.test(\n    text\n  )\n'''
+          rank_replacement = '''  const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength|abstand|clearance|schwelle|sill)/i.test(\n    text\n  )\n'''
+          if rank_anchor not in standards:
+              raise SystemExit('matchRank anchor not found')
+          standards = standards.replace(rank_anchor, rank_replacement, 1)
+          standards_path.write_text(standards)
+
+      - name: Verify routing invariants
+        run: |
+          grep -q 'This product is exclusively for elevator/lift engineering' app/lib/router.ts
+          grep -q 'elevatorDomain && asksNormativeDimension' app/lib/router.ts
+          grep -q 'EN 81-20 5.2.5.3.1 horizontaler Abstand' app/lib/standards-engine.ts
+          grep -q 'EN 81-20 5.3.4.1 Horizontale Türabstände' app/lib/standards-engine.ts
+          grep -q 'function verifyClaims' app/lib/standards-engine.ts
+          grep -q 'evidenceContainsAllClaimNumbers' app/lib/standards-engine.ts
+
+      - name: Build
+        run: npm ci && npm run build
+
+      - name: Commit patch
+        run: |
+          git config user.name elevatorhelp-bot
+          git config user.email actions@users.noreply.github.com
+          git add app/lib/router.ts app/lib/standards-engine.ts
+          git diff --cached --quiet || (git commit -m 'Treat elevator context as implicit and route clearance questions' && git push)
