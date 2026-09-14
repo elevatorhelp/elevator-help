@@ -16,6 +16,7 @@ const MIN_CHUNK_LENGTH = 80;
 const MAP_PAGES_PER_BATCH = 6;
 const MAX_MAP_PAGE_TEXT = 7000;
 const DOCUMENT_MAP_VERSION = 2;
+const RAW_EMBEDDING_VERSION = 2;
 
 function base64Url(input) {
   return Buffer.from(input).toString("base64url");
@@ -355,11 +356,14 @@ async function main() {
     const previous = scope.files[file.id];
     return (
       previous?.fingerprint !== fingerprint(file) ||
+      previous?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION ||
       previous?.mapVersion !== DOCUMENT_MAP_VERSION ||
       !Array.isArray(previous?.mapIds)
     );
   }));
-  console.log(`${changed.length} PDF files are new, changed, or need document-map backfill`);
+  console.log(
+    `${changed.length} PDF files are new, changed, or need raw/document-map backfill`
+  );
 
   const selected = changed.slice(0, Math.max(0, MAX_FILES));
 
@@ -383,6 +387,7 @@ async function main() {
       modifiedTime: file.modifiedTime || null,
       ids: indexed.ids,
       mapIds: indexed.mapIds,
+      rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
       mapVersion: DOCUMENT_MAP_VERSION,
       indexedAt: new Date().toISOString(),
     };
