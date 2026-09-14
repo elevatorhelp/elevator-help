@@ -1,0 +1,59 @@
+name: Fix Standards Vectorize TopK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-standards-vectorize-topk.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Respect Vectorize metadata query limit
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'app/lib/standards-engine.ts';
+          let source = fs.readFileSync(path, 'utf8');
+          const before = source;
+          source = source.replace(/topK: 80,(\r?\n\s*)returnMetadata: "all"/g, 'topK: 50,$1returnMetadata: "all"');
+          if (source === before) {
+            if (/topK: 80/.test(source)) {
+              throw new Error('Found topK: 80 in an unexpected query shape; refusing an unsafe blind edit.');
+            }
+            console.log('No metadata-returning topK 80 query remains; nothing to patch.');
+          } else {
+            fs.writeFileSync(path, source, 'utf8');
+            console.log('Reduced metadata-returning Vectorize topK from 80 to 50.');
+          }
+          NODE
+      - name: Verify standards safety gates
+        shell: bash
+        run: |
+          ! grep -n 'topK: 80' app/lib/standards-engine.ts
+          grep -q 'function verifyClaims' app/lib/standards-engine.ts
+          grep -q 'excerptContainsClause' app/lib/standards-engine.ts
+          grep -q 'evidenceContainsAllClaimNumbers' app/lib/standards-engine.ts
+          grep -q 'metadata.contentType !== "document-map"' app/lib/standards-engine.ts
+      - name: Build
+        run: npm ci && npm run build
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name elevatorhelp-bot
+          git config user.email actions@users.noreply.github.com
+          git add app/lib/standards-engine.ts
+          git diff --cached --quiet || (git commit -m 'Respect Vectorize metadata query topK limit' && git push)
