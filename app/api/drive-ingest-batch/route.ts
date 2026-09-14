@@ -24,10 +24,12 @@ type EnrichedMetadata = {
   faultName: string | null;
   language: string | null;
   documentGroup: string | null;
+  retrievalContext: string | null;
 };
 
 const MAX_BATCH_SIZE = 8;
 const MAX_TEXT_LENGTH = 5000;
+const MAX_RETRIEVAL_CONTEXT_LENGTH = 700;
 
 function unauthorized() {
   return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -65,6 +67,11 @@ function normalizeNullable(value: unknown) {
     return null;
   }
   return trimmed;
+}
+
+function normalizeRetrievalContext(value: unknown) {
+  const normalized = normalizeNullable(value);
+  return normalized ? normalized.slice(0, MAX_RETRIEVAL_CONTEXT_LENGTH) : null;
 }
 
 function normalizeContentType(value: unknown) {
@@ -111,18 +118,22 @@ Return exactly one JSON object with this shape:
       "faultCode": "string or null",
       "faultName": "string or null",
       "language": "ISO-style source language code such as de, en, de-en, or null",
-      "documentGroup": "stable document family string or null"
+      "documentGroup": "stable document family string or null",
+      "retrievalContext": "short English retrieval description or null"
     }
   ]
 }
 
 Rules:
 - Use only evidence present in the file name, source path, hints, or chunk text.
-- Never invent manufacturer, controller, fault code, fault family, or fault name.
+- Never invent manufacturer, controller, fault code, fault family, fault name, clause/section identifiers, requirements, values, or relationships.
 - Preserve exact manufacturer/controller/fault naming when it is explicit.
 - A folder name such as 02_NEW-Lift, 10_KONE, 11_Schindler, 12_Otis, 13_TKE, 21_Sematic, 03_Weber, or 05_Ziehl-Abegg is valid manufacturer evidence.
 - If the chunk is a fault/error description, use contentType "fault".
 - Prefer languageHint and documentGroupHint when supplied and plausible.
+- retrievalContext is ONLY for semantic retrieval, never final evidence. Write it in concise technical English so an English embedding model can retrieve non-English source chunks.
+- In retrievalContext, include exact visible standard/clause/section identifiers, component/controller/fault identifiers, and the main technical topic when present. Translate the topic into English when useful, but do not invent or reconstruct a requirement.
+- Keep retrievalContext under ${MAX_RETRIEVAL_CONTEXT_LENGTH} characters. Use null only when the chunk contains no useful retrievable technical concept.
 - Do not add explanations outside the JSON.
 
 Chunks:
@@ -139,7 +150,7 @@ ${JSON.stringify(payload)}
         generationConfig: {
           temperature: 0,
           responseMimeType: "application/json",
-          maxOutputTokens: 2200,
+          maxOutputTokens: 3200,
         },
       }),
     }
@@ -175,6 +186,7 @@ ${JSON.stringify(payload)}
       language: normalizeNullable(item.language) || normalizeNullable(chunk.languageHint),
       documentGroup:
         normalizeNullable(item.documentGroup) || normalizeNullable(chunk.documentGroupHint),
+      retrievalContext: normalizeRetrievalContext(item.retrievalContext),
     };
   });
 }
@@ -242,8 +254,14 @@ export async function POST(request: NextRequest) {
     }
 
     const enriched = await enrichChunks(chunks, apiKey);
+    const embeddingTexts = chunks.map((chunk, index) => {
+      const context = enriched[index]?.retrievalContext;
+      return context
+        ? `[RETRIEVAL CONTEXT]\n${context}\n\n[RAW SOURCE]\n${chunk.text}`
+        : chunk.text;
+    });
     const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
-      text: chunks.map((chunk) => chunk.text),
+      text: embeddingTexts,
     });
 
     const embeddings = (embeddingResult as any).data;
@@ -255,6 +273,9 @@ export async function POST(request: NextRequest) {
     const vectors = chunks.map((chunk, index) => {
       const meta = enriched[index];
       const metadata: Record<string, string | number> = {
+        // Final standards evidence must remain the exact raw source text. The
+        // Gemini retrieval context affects only vector values and is never stored
+        // in this evidence field.
         text: chunk.text,
         sourceFileId: chunk.sourceFileId,
         fileName: chunk.fileName,
@@ -286,7 +307,7 @@ export async function POST(request: NextRequest) {
       ok: true,
       upserted: vectors.length,
       ids: vectors.map((vector) => vector.id),
-      enrichment: enriched,
+      enrichment: enriched.map(({ retrievalContext: _retrievalContext, ...metadata }) => metadata),
     });
   } catch (error) {
     console.error("Drive ingestion error:", error);
