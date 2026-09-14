@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/apply-standards-exact-clause.yml'
+      - 'scripts/patch-standards-exact-clause.mjs'
 
 permissions:
   contents: write
