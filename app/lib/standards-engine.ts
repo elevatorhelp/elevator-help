@@ -479,28 +479,40 @@ async function rawMatchesForQuery(
   const minimumScore = exactClauseQuery ? 0.12 : MIN_STANDARD_SCORE;
 
   const queryWithFilter = async (filter?: Record<string, string>) => {
-    const result = await vectorize.query(queryVector, {
-      topK: 80,
-      returnMetadata: "all",
-      ...(filter ? { filter } : {}),
-    });
+    try {
+      const result = await vectorize.query(queryVector, {
+        topK: 80,
+        returnMetadata: "all",
+        ...(filter ? { filter } : {}),
+      });
 
-    return (result.matches || [])
-      .filter(
-        (match: any) =>
-          match?.metadata?.contentType !== "document-map" &&
-          typeof match?.metadata?.text === "string" &&
-          match.metadata.text.trim().length > 0 &&
-          matchBelongsToStandard(match, standard.compact) &&
-          Number(match?.score || 0) >= minimumScore
-      )
-      .sort((a: any, b: any) => matchRank(b) - matchRank(a))
-      .slice(0, 6)
-      .map((match: any) => ({
-        ...match,
-        standardSearchTopic: item.topic,
-        standardSearchQuery: item.query,
-      }));
+      return (result.matches || [])
+        .filter(
+          (match: any) =>
+            match?.metadata?.contentType !== "document-map" &&
+            typeof match?.metadata?.text === "string" &&
+            match.metadata.text.trim().length > 0 &&
+            matchBelongsToStandard(match, standard.compact) &&
+            Number(match?.score || 0) >= minimumScore
+        )
+        .sort((a: any, b: any) => matchRank(b) - matchRank(a))
+        .slice(0, 6)
+        .map((match: any) => ({
+          ...match,
+          standardSearchTopic: item.topic,
+          standardSearchQuery: item.query,
+        }));
+    } catch (error) {
+      if (filter) {
+        console.error("Standards metadata-filter query failed; falling back safely", {
+          filter,
+          standard: standard.code,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }
+      throw error;
+    }
   };
 
   // Prefer raw vectors explicitly classified as standards so unrelated manuals do
