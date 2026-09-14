@@ -69,3 +69,5 @@ jobs:
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
         run: node scripts/drive-ingest-until-text.mjs
+
+# Re-run marker after Vectorize delete batching fix.
