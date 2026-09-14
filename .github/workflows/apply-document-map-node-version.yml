@@ -1,0 +1,46 @@
+name: Apply Document Map Node Version
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-document-map-node-version.yml'
+      - 'scripts/patch-document-map-node-version.mjs'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply document-map node version patch
+        run: node scripts/patch-document-map-node-version.mjs
+
+      - name: Verify map-version and standards safety invariants
+        run: |
+          grep -q 'mapVersion: DOCUMENT_MAP_VERSION' scripts/drive-ingest.mjs
+          grep -q 'mapVersion' app/api/document-map-ingest/route.ts
+          grep -q 'ACTIVE_DOCUMENT_MAP_VERSION = 3' app/lib/standards-engine.ts
+          grep -q 'contentType !== "document-map"' app/lib/standards-engine.ts
+          grep -q 'function verifyClaims' app/lib/standards-engine.ts
+          grep -q 'evidenceContainsAllClaimNumbers' app/lib/standards-engine.ts
+
+      - name: Build
+        run: npm ci && npm run build
+
+      - name: Commit migration
+        run: |
+          git config user.name elevatorhelp-bot
+          git config user.email actions@users.noreply.github.com
+          git add scripts/drive-ingest.mjs app/api/document-map-ingest/route.ts app/lib/standards-engine.ts
+          git diff --cached --quiet || (git commit -m 'Version document-map nodes in Vectorize' && git push)
