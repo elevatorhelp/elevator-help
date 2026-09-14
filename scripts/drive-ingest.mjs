@@ -235,8 +235,8 @@ async function callDocumentMap(payload, token) {
 }
 
 async function deleteIds(ids, token) {
-  for (let i = 0; i < ids.length; i += 200) {
-    await callIngest({ action: "delete", ids: ids.slice(i, i + 200) }, token);
+  for (let i = 0; i < ids.length; i += 100) {
+    await callIngest({ action: "delete", ids: ids.slice(i, i + 100) }, token);
   }
 }
 
