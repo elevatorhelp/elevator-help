@@ -6,7 +6,7 @@ let changed = false;
 
 const oldRawBlock = `  const queryWithFilter = async (filter?: Record<string, string>) => {
     const result = await vectorize.query(queryVector, {
-      topK: 80,
+      topK: 50,
       returnMetadata: "all",
       ...(filter ? { filter } : {}),
     });
@@ -32,7 +32,7 @@ const oldRawBlock = `  const queryWithFilter = async (filter?: Record<string, st
 const newRawBlock = `  const queryWithFilter = async (filter?: Record<string, string>) => {
     try {
       const result = await vectorize.query(queryVector, {
-        topK: 80,
+        topK: 50,
         returnMetadata: "all",
         ...(filter ? { filter } : {}),
       });
@@ -98,7 +98,7 @@ const newMapBlock = `    let matches: any[] = [];
         message: error instanceof Error ? error.message : String(error),
       });
       const unfiltered = await vectorize.query(queryVector, {
-        topK: 80,
+        topK: 50,
         returnMetadata: "all",
       });
       matches = (unfiltered.matches || []).filter(
