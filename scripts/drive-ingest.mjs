@@ -307,6 +307,11 @@ async function processPdf(file, accessToken, ingestToken) {
   for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
     const batch = chunks.slice(i, i + BATCH_SIZE);
     const result = await callIngest({ action: "upsert", chunks: batch }, ingestToken);
+    if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
+      throw new Error(
+        `Ingestion endpoint raw embedding version mismatch: expected ${RAW_EMBEDDING_VERSION}, got ${String(result?.rawEmbeddingVersion ?? "missing")}`
+      );
+    }
     console.log(`Upserted ${result.upserted} chunks (${Math.min(i + BATCH_SIZE, chunks.length)}/${chunks.length})`);
   }
 
