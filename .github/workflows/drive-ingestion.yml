@@ -65,13 +65,12 @@ jobs:
           echo "Required Vectorize metadata indexes are available."
 
       - name: Restore ingestion state
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: .ingestion-state
           key: drive-ingestion-state-${{ github.run_id }}
           restore-keys: |
             drive-ingestion-state-
-          save-always: true
 
       - name: Guard Google JWT grant type
         run: |
@@ -88,3 +87,10 @@ jobs:
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
         run: node scripts/drive-ingest-until-text.mjs
+
+      - name: Save ingestion state
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .ingestion-state
+          key: drive-ingestion-state-${{ github.run_id }}
