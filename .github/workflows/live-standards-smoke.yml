@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Re-run after standards raw-evidence recall patch.
+# Re-run after document-map guided raw-evidence retrieval patch.
 jobs:
   live-standards:
     runs-on: ubuntu-latest
