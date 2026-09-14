@@ -5,9 +5,67 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Regression gate after contextual raw-embedding reindex of the EN 81-20 sources.
+# Standards regression gates: natural phrasing must route correctly and every
+# normative value must survive the exact-clause/evidence verifier.
 jobs:
-  live-standards:
+  clearance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Test both natural car-to-shaft-wall questions
+        shell: bash
+        run: |
+          set -u
+          QUESTIONS=(
+            'wie viel ist min. abstand zwischen kabinenaufzug und schachtwand ?'
+            'wie viel ist min. abstand zwischen kabin und schachtwand ?'
+          )
+          LAST_RESPONSE=''
+
+          for attempt in $(seq 1 18); do
+            echo "Clearance test attempt ${attempt}/18"
+            ALL_OK=1
+
+            for QUESTION in "${QUESTIONS[@]}"; do
+              RESPONSE=$(curl -sS --max-time 60 \
+                -H 'content-type: application/json' \
+                --data "$(jq -nc --arg q "$QUESTION" '{question:$q}')" \
+                https://elevator.help/api/ask || true)
+              LAST_RESPONSE="$RESPONSE"
+              ANSWER=$(printf '%s' "$RESPONSE" | jq -r '.answer // empty' 2>/dev/null || true)
+              MODE=$(printf '%s' "$RESPONSE" | jq -r '.mode // empty' 2>/dev/null || true)
+
+              echo "Question: $QUESTION"
+              echo "mode=$MODE"
+              printf '%s\n' "$ANSWER"
+
+              if [[ "$MODE" != "standards_knowledge_base" ]] \
+                || ! grep -q '5\.2\.5\.3\.1' <<<"$ANSWER" \
+                || ! grep -q '5\.3\.4\.1' <<<"$ANSWER" \
+                || ! grep -Eq '0[,.]15[[:space:]]*m|150[[:space:]]*mm' <<<"$ANSWER" \
+                || ! grep -Eq '35[[:space:]]*mm' <<<"$ANSWER" \
+                || grep -q '2\.1\.1' <<<"$ANSWER" \
+                || grep -q '2\.1\.2' <<<"$ANSWER" \
+                || grep -Eqi 'formuliere.*konkreter|bitte.*aufzug|bitte.*elevator' <<<"$ANSWER"; then
+                ALL_OK=0
+                break
+              fi
+            done
+
+            if [[ "$ALL_OK" -eq 1 ]]; then
+              echo 'PASS: both natural clearance phrasings return verified EN 81-20 clauses and values.'
+              exit 0
+            fi
+
+            sleep 20
+          done
+
+          echo 'FAIL: clearance answers did not reach the required quality gate.'
+          echo 'Last raw response:'
+          printf '%s\n' "$LAST_RESPONSE"
+          exit 1
+
+  broad-shaft:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
