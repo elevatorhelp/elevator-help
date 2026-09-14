@@ -30,6 +30,7 @@ type EnrichedMetadata = {
 const MAX_BATCH_SIZE = 8;
 const MAX_TEXT_LENGTH = 5000;
 const MAX_RETRIEVAL_CONTEXT_LENGTH = 700;
+const RAW_EMBEDDING_VERSION = 2;
 
 function unauthorized() {
   return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -306,6 +307,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       upserted: vectors.length,
+      rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
       ids: vectors.map((vector) => vector.id),
       enrichment: enriched.map(({ retrievalContext: _retrievalContext, ...metadata }) => metadata),
     });
