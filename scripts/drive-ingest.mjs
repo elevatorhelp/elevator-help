@@ -15,7 +15,7 @@ const CHUNK_OVERLAP = 250;
 const MIN_CHUNK_LENGTH = 80;
 const MAP_PAGES_PER_BATCH = 6;
 const MAX_MAP_PAGE_TEXT = 7000;
-const DOCUMENT_MAP_VERSION = 1;
+const DOCUMENT_MAP_VERSION = 2;
 
 function base64Url(input) {
   return Buffer.from(input).toString("base64url");
