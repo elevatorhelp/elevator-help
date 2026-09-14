@@ -15,6 +15,7 @@ const CHUNK_OVERLAP = 250;
 const MIN_CHUNK_LENGTH = 80;
 const MAP_PAGES_PER_BATCH = 6;
 const MAX_MAP_PAGE_TEXT = 7000;
+const DOCUMENT_MAP_VERSION = 1;
 
 function base64Url(input) {
   return Buffer.from(input).toString("base64url");
@@ -43,7 +44,7 @@ async function getGoogleAccessToken(serviceAccount) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      grant_type: "urn:ietf:params:oauth-grant-type:jwt-bearer",
       assertion: jwt,
     }),
   });
@@ -330,8 +331,15 @@ async function main() {
     }
   }
 
-  const changed = files.filter((file) => scope.files[file.id]?.fingerprint !== fingerprint(file));
-  console.log(`${changed.length} PDF files are new or changed`);
+  const changed = files.filter((file) => {
+    const previous = scope.files[file.id];
+    return (
+      previous?.fingerprint !== fingerprint(file) ||
+      previous?.mapVersion !== DOCUMENT_MAP_VERSION ||
+      !Array.isArray(previous?.mapIds)
+    );
+  });
+  console.log(`${changed.length} PDF files are new, changed, or need document-map backfill`);
 
   const selected = changed.slice(0, Math.max(0, MAX_FILES));
 
@@ -355,6 +363,7 @@ async function main() {
       modifiedTime: file.modifiedTime || null,
       ids: indexed.ids,
       mapIds: indexed.mapIds,
+      mapVersion: DOCUMENT_MAP_VERSION,
       indexedAt: new Date().toISOString(),
     };
     state.scopes[DRIVE_FOLDER_ID] = scope;
