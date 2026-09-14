@@ -15,6 +15,13 @@ on:
         description: Maximum PDFs to inspect in one run while looking for text-bearing files
         required: false
         default: "20"
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/drive-ingestion.yml'
+      - 'scripts/drive-ingest.mjs'
+      - 'scripts/drive-ingest-until-text.mjs'
+      - 'app/api/document-map-ingest/route.ts'
 
 concurrency:
   group: elevator-help-drive-ingestion
@@ -47,12 +54,18 @@ jobs:
           restore-keys: |
             drive-ingestion-state-
 
-      - name: Ingest Google Drive PDFs
+      - name: Guard Google JWT grant type
+        run: |
+          sed -i 's#urn:ietf:params:oauth-grant-type:jwt-bearer#urn:ietf:params:oauth:grant-type:jwt-bearer#g' scripts/drive-ingest.mjs
+          grep -q 'urn:ietf:params:oauth:grant-type:jwt-bearer' scripts/drive-ingest.mjs
+
+      - name: Ingest Google Drive PDFs and document maps
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
-          DRIVE_FOLDER_ID: ${{ inputs.folder_id }}
-          TARGET_TEXT_FILES: ${{ inputs.target_text_files }}
-          MAX_SCAN_FILES: ${{ inputs.max_scan_files }}
+          DRIVE_FOLDER_ID: ${{ inputs.folder_id || '1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5' }}
+          TARGET_TEXT_FILES: ${{ inputs.target_text_files || '2' }}
+          MAX_SCAN_FILES: ${{ inputs.max_scan_files || '20' }}
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
+          DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
         run: node scripts/drive-ingest-until-text.mjs
