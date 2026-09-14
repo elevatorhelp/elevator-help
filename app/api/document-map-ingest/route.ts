@@ -28,6 +28,7 @@ type MapNode = {
 
 const MAX_PAGES = 6;
 const MAX_TOTAL_TEXT = 45000;
+const MAX_MAP_NODES = 12;
 
 function unauthorized() {
   return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -87,6 +88,66 @@ async function stableId(parts: string[]) {
   return `map-${hex.slice(0, 40)}`;
 }
 
+const responseSchema = {
+  type: "OBJECT",
+  properties: {
+    items: {
+      type: "ARRAY",
+      maxItems: MAX_MAP_NODES,
+      items: {
+        type: "OBJECT",
+        properties: {
+          nodeType: { type: "STRING" },
+          sectionId: { type: "STRING", nullable: true },
+          parentSection: { type: "STRING", nullable: true },
+          title: { type: "STRING", nullable: true },
+          topics: {
+            type: "ARRAY",
+            maxItems: 10,
+            items: { type: "STRING" },
+          },
+          summary: { type: "STRING" },
+          pageStart: { type: "INTEGER" },
+          pageEnd: { type: "INTEGER" },
+        },
+        required: ["nodeType", "topics", "summary", "pageStart", "pageEnd"],
+      },
+    },
+  },
+  required: ["items"],
+};
+
+async function requestDocumentMap(prompt: string, apiKey: string) {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema,
+          maxOutputTokens: 5000,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Gemini document-map error: ${await response.text()}`);
+  }
+
+  const data: any = await response.json();
+  return (
+    data?.candidates?.[0]?.content?.parts
+      ?.map((part: { text?: string }) => part.text || "")
+      .join("")
+      .trim() || ""
+  );
+}
+
 async function analyzeDocumentWindow(
   document: DocumentInput,
   pages: PageInput[],
@@ -107,21 +168,14 @@ ${JSON.stringify({
   documentGroupHint: document.documentGroupHint || null,
 })}
 
-Return exactly one JSON object:
-{
-  "items": [
-    {
-      "nodeType": "standard-clause | section | fault | procedure | parameter | component | planning-topic | table | general",
-      "sectionId": "exact clause/section identifier when explicitly present, otherwise null",
-      "parentSection": "explicit parent clause/section when safely derivable from the visible numbering, otherwise null",
-      "title": "exact or concise section title, or null",
-      "topics": ["short retrieval topics"],
-      "summary": "concise factual description grounded only in these pages",
-      "pageStart": ${firstPage},
-      "pageEnd": ${lastPage}
-    }
-  ]
-}
+Return a JSON object with an "items" array. Each item has:
+- nodeType: standard-clause | section | fault | procedure | parameter | component | planning-topic | table | general
+- sectionId: exact clause/section identifier when explicitly present, otherwise null
+- parentSection: explicit parent clause/section when safely derivable from visible numbering, otherwise null
+- title: exact or concise section title, or null
+- topics: short retrieval topics
+- summary: concise factual description grounded only in these pages
+- pageStart/pageEnd: pages inside ${firstPage}-${lastPage}
 
 Rules:
 - Build a navigation/knowledge map, not a user-facing answer.
@@ -130,43 +184,34 @@ Rules:
 - Do not turn cross-references into requirements unless the requirement itself is visible in these pages.
 - A node should represent one coherent retrievable concept.
 - Prefer section/clause-level nodes over generic page summaries.
+- Return at most ${MAX_MAP_NODES} nodes for this window; merge closely related material rather than overflowing the response.
 - For broad subjects, include useful topical labels such as shaft, structure, pit, headroom, lighting, access, doors, separation, drive, controller, fault, wiring, commissioning, maintenance, planning, traffic-analysis, or other document-specific terms.
 - pageStart/pageEnd must stay inside the supplied page range.
 - If these pages do not contain a useful retrievable concept, return {"items":[]}.
-- No prose outside JSON.
 
 Pages:
 ${JSON.stringify(pages)}
 `;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0,
-          responseMimeType: "application/json",
-          maxOutputTokens: 3500,
-        },
-      }),
-    }
-  );
+  let parsed: any = null;
+  let lastError: unknown = null;
 
-  if (!response.ok) {
-    throw new Error(`Gemini document-map error: ${await response.text()}`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const raw = await requestDocumentMap(prompt, apiKey);
+      if (!raw) return [];
+      parsed = parseJsonObject(raw);
+      break;
+    } catch (error) {
+      lastError = error;
+      console.error(`Document-map Gemini attempt ${attempt + 1} failed:`, error);
+    }
   }
 
-  const data: any = await response.json();
-  const raw = data?.candidates?.[0]?.content?.parts
-    ?.map((part: { text?: string }) => part.text || "")
-    .join("")
-    .trim();
-  if (!raw) return [];
+  if (!parsed) {
+    throw lastError instanceof Error ? lastError : new Error("Could not parse document-map JSON");
+  }
 
-  const parsed = parseJsonObject(raw);
   const items = Array.isArray(parsed?.items) ? parsed.items : [];
 
   return items
@@ -192,7 +237,7 @@ ${JSON.stringify(pages)}
       };
     })
     .filter((item: MapNode | null): item is MapNode => Boolean(item))
-    .slice(0, 30);
+    .slice(0, MAX_MAP_NODES);
 }
 
 export async function POST(request: NextRequest) {
