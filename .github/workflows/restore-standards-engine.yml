@@ -1,0 +1,22 @@
+name: Restore Standards Engine
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/restore-standards-engine.yml']
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Restore standards engine from parent commit
+        run: |
+          git checkout HEAD^ -- app/lib/standards-engine.ts
+          git config user.name elevatorhelp
+          git config user.email baharmand@hotmail.com
+          git add app/lib/standards-engine.ts
+          git commit -m "Restore standards engine after guarded migration edit"
+          git push
