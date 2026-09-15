@@ -11,12 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
-      - name: Restore standards engine from parent commit
+          fetch-depth: 20
+      - name: Restore standards engine from known-good migration commit
         run: |
-          git checkout HEAD^ -- app/lib/standards-engine.ts
+          git checkout e4be38bfdde4782141cfebf70abde0fddba26121 -- app/lib/standards-engine.ts
           git config user.name elevatorhelp
           git config user.email baharmand@hotmail.com
           git add app/lib/standards-engine.ts
+          if git diff --cached --quiet; then exit 0; fi
           git commit -m "Restore standards engine after guarded migration edit"
           git push
