@@ -6,6 +6,13 @@ Version 0.2 foundation.
 - Build command: `npm run cf:build`
 - Deploy command: `npx wrangler deploy`
 
+## Beta architecture
+- Gemini is the semantic-understanding, query-planning and answer-synthesis brain.
+- Internal documents are searched first; public web research is the fallback when internal evidence is insufficient.
+- Retrieval infrastructure is retrieval-only and does not replace Gemini reasoning.
+- Exact normative claims must be verified against raw source evidence before they are returned.
+- Internal source files and storage mechanics remain backend-only.
+
 ## v0.2
 - Updated technical-source list (without Wittur)
 - Added NEW Lift, Weber and & more
