@@ -1,0 +1,42 @@
+name: Live Gemini Core Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  semantic-core:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for deployment and test natural elevator questions
+        shell: bash
+        run: |
+          set -u
+          QUESTIONS=(
+            'Was für Öl ist für Schienen geeignet?!'
+            'Wann wird Geländer auf dem kabin noting!'
+          )
+          for attempt in $(seq 1 18); do
+            echo "Semantic-core attempt ${attempt}/18"
+            ALL_OK=1
+            for QUESTION in "${QUESTIONS[@]}"; do
+              RESPONSE=$(curl -sS --max-time 60 -H 'content-type: application/json' --data "$(jq -nc --arg q "$QUESTION" '{question:$q}')" https://elevator.help/api/ask || true)
+              echo "Question: $QUESTION"
+              echo "$RESPONSE" | jq -c '{mode,answer,error}' 2>/dev/null || echo "$RESPONSE"
+              ANSWER=$(printf '%s' "$RESPONSE" | jq -r '.answer // empty' 2>/dev/null || true)
+              ERROR=$(printf '%s' "$RESPONSE" | jq -r '.error // empty' 2>/dev/null || true)
+              MODE=$(printf '%s' "$RESPONSE" | jq -r '.mode // empty' 2>/dev/null || true)
+              if [[ -n "$ERROR" || -z "$ANSWER" || -z "$MODE" ]] || grep -Eqi 'could not process|nicht zuverlässig verarbeitet|نتوانستم درخواست را' <<<"$ANSWER$ERROR"; then
+                ALL_OK=0
+                break
+              fi
+            done
+            if [[ "$ALL_OK" -eq 1 ]]; then
+              echo 'PASS: natural and malformed elevator questions return substantive answers.'
+              exit 0
+            fi
+            sleep 20
+          done
+          echo 'FAIL: Gemini-first semantic core still returns an error/empty response.'
+          exit 1
