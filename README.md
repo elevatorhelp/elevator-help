@@ -21,3 +21,5 @@ Version 0.2 foundation.
 - Added Industry Partners advertising section
 - Added `info@elevator.help` contact points
 - Prepared UI for the next AI + web-search stage
+
+<!-- CI verification branch for the Gemini runtime repair. -->
