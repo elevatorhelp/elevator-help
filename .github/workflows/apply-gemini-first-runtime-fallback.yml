@@ -1,0 +1,95 @@
+name: Apply Gemini First Runtime Fallback
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-gemini-first-runtime-fallback.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Add conservative semantic-router fallback and normalized downstream question
+        shell: python
+        run: |
+          from pathlib import Path
+
+          router = Path('app/lib/router.ts')
+          text = router.read_text()
+          old = 'const fallback=deterministicStandardsRoute(question);if(fallback)return fallback;throw lastError instanceof Error?lastError:new Error("Router failed");}'
+          new = '''const fallback=deterministicStandardsRoute(question);if(fallback)return fallback;
+          // A temporary Gemini routing failure must not kill an otherwise answerable elevator question.
+          // Keep the fallback deliberately broad: downstream Gemini research/synthesis remains the brain,
+          // while exact standards claims are still handled by the deterministic standards path above.
+          const ql=/[؀-ۿ]/.test(question)?"fa":/\\b(wer|was|warum|wie|wann|welch|für|ist|sind|öl|schiene|geländer|kabin|schacht|tür|bremse|seil)\\b/i.test(question)?"de":"en";
+          return {intent:"general_technical",questionLanguage:ql,preferredSourceLanguage:ql,manufacturer:null,productFamily:null,controller:null,faultCode:null,faultFamily:null,faultName:null,topics:[],components:[],confidence:"low",needsClarification:false,clarificationQuestion:null,searchStrategy:"semantic_broad",normalizedQuestion:question,interpretation:null};}'''
+          if old not in text:
+            raise SystemExit('Expected router fallback marker not found')
+          router.write_text(text.replace(old, new))
+
+          ask = Path('app/api/ask/route.ts')
+          text = ask.read_text()
+          marker = '    detectedLanguage = route.questionLanguage;\n\n    const standardsQuestion = isStandardsQuestion(question, route);'
+          replacement = '    detectedLanguage = route.questionLanguage;\n    const effectiveQuestion = route.normalizedQuestion || question;\n\n    const standardsQuestion = isStandardsQuestion(effectiveQuestion, route);'
+          if marker not in text:
+            raise SystemExit('Expected ask route marker not found')
+          text = text.replace(marker, replacement)
+          text = text.replace('          question,\n          route,\n          apiKey,\n          ai,\n          vectorize\n        );', '          effectiveQuestion,\n          route,\n          apiKey,\n          ai,\n          vectorize\n        );', 1)
+          text = text.replace('          question,\n          route,\n          apiKey,\n          ai,\n          vectorize\n        )\n      : null;', '          effectiveQuestion,\n          route,\n          apiKey,\n          ai,\n          vectorize\n        )\n      : null;', 1)
+          text = text.replace('      const answer = await answerFromKnowledge(question, route, retrieval, apiKey);', '      const answer = await answerFromKnowledge(effectiveQuestion, route, retrieval, apiKey);')
+          text = text.replace('    const answer = await answerFromWeb(question, route, apiKey);', '    const answer = await answerFromWeb(effectiveQuestion, route, apiKey);')
+          ask.write_text(text)
+      - name: Verify architecture invariants
+        run: |
+          grep -q 'gemini-2.5-flash' app/lib/router.ts
+          grep -q 'effectiveQuestion = route.normalizedQuestion' app/api/ask/route.ts
+          grep -q 'google_search' app/api/ask/route.ts
+          grep -q 'function verifyClaims' app/lib/standards-engine.ts
+          ! grep -R 'gemini-3.5-flash-lite' app/lib/router.ts app/api/ask/route.ts app/lib/standards-engine.ts
+      - name: Build Check
+        run: npm ci && npm run build
+      - name: Commit repair
+        run: |
+          git config user.name elevatorhelp-bot
+          git config user.email actions@users.noreply.github.com
+          git add app/lib/router.ts app/api/ask/route.ts
+          git diff --cached --quiet || (git commit -m 'Harden Gemini-first runtime fallback' && git push)
+      - name: Live end-to-end QA
+        run: |
+          QUESTIONS=(
+            'Was für Öl ist für Schienen geeignet?!'
+            'Wann wird Geländer auf dem kabin noting!'
+          )
+          for attempt in $(seq 1 24); do
+            echo "Live QA attempt ${attempt}/24"
+            all_ok=1
+            for q in "${QUESTIONS[@]}"; do
+              response=$(curl -sS --max-time 60 -H 'content-type: application/json' --data "$(jq -nc --arg q "$q" '{question:$q}')" https://elevator.help/api/ask || true)
+              echo "$response" | jq -c '{mode,answer,error}' 2>/dev/null || true
+              answer=$(printf '%s' "$response" | jq -r '.answer // empty' 2>/dev/null || true)
+              error=$(printf '%s' "$response" | jq -r '.error // empty' 2>/dev/null || true)
+              mode=$(printf '%s' "$response" | jq -r '.mode // empty' 2>/dev/null || true)
+              if [[ -n "$error" || -z "$answer" || -z "$mode" ]] || grep -Eqi 'could not process|nicht zuverlässig verarbeitet|نتوانستم درخواست را' <<<"$answer$error"; then
+                all_ok=0
+                break
+              fi
+            done
+            if [[ "$all_ok" -eq 1 ]]; then
+              echo 'PASS: Gemini-first natural/malformed elevator QA is live.'
+              exit 0
+            fi
+            sleep 20
+          done
+          echo 'FAIL: live semantic core has not recovered yet.'
+          exit 1
