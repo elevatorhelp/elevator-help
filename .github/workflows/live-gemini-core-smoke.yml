@@ -23,7 +23,7 @@ jobs:
             for QUESTION in "${QUESTIONS[@]}"; do
               RESPONSE=$(curl -sS --max-time 60 -H 'content-type: application/json' --data "$(jq -nc --arg q "$QUESTION" '{question:$q}')" https://elevator.help/api/ask || true)
               echo "Question: $QUESTION"
-              echo "$RESPONSE" | jq -c '{mode,answer,error}' 2>/dev/null || echo "$RESPONSE"
+              echo "$RESPONSE" | jq -c '{mode,answer,error,diagnosticCode}' 2>/dev/null || echo "$RESPONSE"
               ANSWER=$(printf '%s' "$RESPONSE" | jq -r '.answer // empty' 2>/dev/null || true)
               ERROR=$(printf '%s' "$RESPONSE" | jq -r '.error // empty' 2>/dev/null || true)
               MODE=$(printf '%s' "$RESPONSE" | jq -r '.mode // empty' 2>/dev/null || true)
