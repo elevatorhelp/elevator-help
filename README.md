@@ -12,6 +12,7 @@ Version 0.2 foundation.
 - Retrieval infrastructure is retrieval-only and does not replace Gemini reasoning.
 - Exact normative claims must be verified against raw source evidence before they are returned.
 - Internal source files and storage mechanics remain backend-only.
+- Production assistant runtime uses the current Gemini 3.6 Flash model; standards verification remains deterministic against raw source evidence.
 
 ## v0.2
 - Updated technical-source list (without Wittur)
