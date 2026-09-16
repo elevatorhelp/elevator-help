@@ -124,7 +124,7 @@ ${question}
     }
   );
 
-  if (!response.ok) throw new Error("Product answer failed");
+  if (!response.ok) throw new Error(`GEMINI_PRODUCT_HTTP_${response.status}`);
   const data: any = await response.json();
   const answer = data?.candidates?.[0]?.content?.parts
     ?.map((part: { text?: string }) => part.text || "")
@@ -167,7 +167,7 @@ ${question}
     }
   );
 
-  if (!response.ok) throw new Error("Retrieval translation failed");
+  if (!response.ok) throw new Error(`GEMINI_TRANSLATION_HTTP_${response.status}`);
   const data: any = await response.json();
   const translated = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
   if (!translated) throw new Error("Retrieval translation was empty");
@@ -423,7 +423,7 @@ ${question}
     }
   );
 
-  if (!response.ok) throw new Error("Web answer failed");
+  if (!response.ok) throw new Error(`GEMINI_WEB_HTTP_${response.status}`);
   const data: any = await response.json();
   const answer = data?.candidates?.[0]?.content?.parts
     ?.map((part: { text?: string }) => part.text || "")
@@ -585,7 +585,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Ask API error:", error);
     return NextResponse.json(
-      { error: safeErrorMessage(detectedLanguage) },
+      { error: safeErrorMessage(detectedLanguage), diagnosticCode: error instanceof Error && /^GEMINI_[A-Z_]+HTTP_\d+$/.test(error.message) ? error.message : "ASK_PIPELINE_FAILURE" },
       { status: 500 }
     );
   }
