@@ -505,22 +505,38 @@ export async function POST(request: NextRequest) {
     const vectorize = (env as any).VECTORIZE;
 
     if (isStandardsQuestion(question, route)) {
-      const standardsResult = await answerStandardsQuestion(
-        question,
-        route,
-        apiKey,
-        ai,
-        vectorize
-      );
+      try {
+        const standardsResult = await answerStandardsQuestion(
+          question,
+          route,
+          apiKey,
+          ai,
+          vectorize
+        );
 
-      return NextResponse.json({
-        answer: standardsResult.answer,
-        sources: [],
-        mode: standardsResult.sufficient
-          ? "standards_knowledge_base"
-          : "standards_unverified",
-        standardsChecked: standardsResult.checkedStandards,
-      });
+        return NextResponse.json({
+          answer: standardsResult.answer,
+          sources: [],
+          mode: standardsResult.sufficient
+            ? "standards_knowledge_base"
+            : "standards_unverified",
+          standardsChecked: standardsResult.checkedStandards,
+        });
+      } catch (standardsError) {
+        console.error("Standards pipeline error:", standardsError);
+        const language = route.questionLanguage || detectedLanguage;
+        const answer = language === "de"
+          ? "Ich konnte die Normenabfrage gerade nicht vollständig verifizieren. Ich gebe deshalb keine unbestätigte Normangabe aus. Bitte versuche die Frage gleich noch einmal."
+          : language === "fa"
+            ? "در حال حاضر نتوانستم بررسی استاندارد را کامل و دقیق تأیید کنم؛ بنابراین بند یا عدد تأییدنشده ارائه نمی‌دهم. لطفاً همین سؤال را دوباره امتحان کن."
+            : "I could not complete exact standards verification just now, so I will not return an unverified clause or value. Please retry the same question shortly.";
+        return NextResponse.json({
+          answer,
+          sources: [],
+          mode: "standards_unverified",
+          standardsChecked: ["EN 81-20", "EN 81-50"],
+        });
+      }
     }
 
     if (route.needsClarification || route.searchStrategy === "clarify_first") {
