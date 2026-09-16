@@ -499,8 +499,9 @@ export async function POST(request: NextRequest) {
 
     const route = await routeQuestion(question);
     detectedLanguage = route.questionLanguage;
+    const effectiveQuestion = route.normalizedQuestion || question;
 
-    const standardsQuestion = isStandardsQuestion(question, route);
+    const standardsQuestion = isStandardsQuestion(effectiveQuestion, route);
     const needsRetrievalBindings = standardsQuestion || hasEnoughRoutingContext(route);
     let ai: any = null;
     let vectorize: any = null;
@@ -514,7 +515,7 @@ export async function POST(request: NextRequest) {
     if (standardsQuestion) {
       try {
         const standardsResult = await answerStandardsQuestion(
-          question,
+          effectiveQuestion,
           route,
           apiKey,
           ai,
@@ -558,7 +559,7 @@ export async function POST(request: NextRequest) {
 
     const retrieval = hasEnoughRoutingContext(route)
       ? await retrieveOwnKnowledge(
-          question,
+          effectiveQuestion,
           route,
           apiKey,
           ai,
@@ -567,7 +568,7 @@ export async function POST(request: NextRequest) {
       : null;
 
     if (retrieval) {
-      const answer = await answerFromKnowledge(question, route, retrieval, apiKey);
+      const answer = await answerFromKnowledge(effectiveQuestion, route, retrieval, apiKey);
       return NextResponse.json({
         answer,
         sources: [],
@@ -575,7 +576,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const answer = await answerFromWeb(question, route, apiKey);
+    const answer = await answerFromWeb(effectiveQuestion, route, apiKey);
     return NextResponse.json({
       answer,
       sources: [],
