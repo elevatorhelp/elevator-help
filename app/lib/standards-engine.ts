@@ -720,7 +720,10 @@ async function queryOneStandard(
 
   for (const sourceLanguage of languages) {
     const basePlan = await expandQueryPlan(question, route, sourceLanguage, apiKey);
-    const plan = [...mapQueries, ...basePlan].filter((item, index, all) => {
+    // Deterministic intent queries come first. Map-derived hints are useful expansion,
+// but must never consume the bounded plan before exact-clause candidates such as
+// 5.2.5.3.1 / 5.3.4.1 can reach raw-evidence verification.
+const plan = [...basePlan, ...mapQueries].filter((item, index, all) => {
       const key = `${item.topic}:${item.query.toLowerCase()}`;
       return all.findIndex((candidate) => `${candidate.topic}:${candidate.query.toLowerCase()}` === key) === index;
     }).slice(0, 14);
