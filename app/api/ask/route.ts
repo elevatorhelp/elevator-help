@@ -500,11 +500,18 @@ export async function POST(request: NextRequest) {
     const route = await routeQuestion(question);
     detectedLanguage = route.questionLanguage;
 
-    const { env } = getCloudflareContext();
-    const ai = (env as any).AI;
-    const vectorize = (env as any).VECTORIZE;
+    const standardsQuestion = isStandardsQuestion(question, route);
+    const needsRetrievalBindings = standardsQuestion || hasEnoughRoutingContext(route);
+    let ai: any = null;
+    let vectorize: any = null;
 
-    if (isStandardsQuestion(question, route)) {
+    if (needsRetrievalBindings) {
+      const { env } = getCloudflareContext();
+      ai = (env as any).AI;
+      vectorize = (env as any).VECTORIZE;
+    }
+
+    if (standardsQuestion) {
       try {
         const standardsResult = await answerStandardsQuestion(
           question,
@@ -549,13 +556,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const retrieval = await retrieveOwnKnowledge(
-      question,
-      route,
-      apiKey,
-      ai,
-      vectorize
-    );
+    const retrieval = hasEnoughRoutingContext(route)
+      ? await retrieveOwnKnowledge(
+          question,
+          route,
+          apiKey,
+          ai,
+          vectorize
+        )
+      : null;
 
     if (retrieval) {
       const answer = await answerFromKnowledge(question, route, retrieval, apiKey);
