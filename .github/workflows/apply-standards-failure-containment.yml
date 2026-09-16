@@ -1,0 +1,44 @@
+name: Apply Standards Failure Containment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-standards-failure-containment.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Keep standards failures inside the standards path
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('app/api/ask/route.ts')
+          s=p.read_text()
+          old='''    if (isStandardsQuestion(question, route)) {\n      const standardsResult = await answerStandardsQuestion(\n        question,\n        route,\n        apiKey,\n        ai,\n        vectorize\n      );\n\n      return NextResponse.json({\n        answer: standardsResult.answer,\n        sources: [],\n        mode: standardsResult.sufficient\n          ? "standards_knowledge_base"\n          : "standards_unverified",\n        standardsChecked: standardsResult.checkedStandards,\n      });\n    }\n'''
+          new='''    if (isStandardsQuestion(question, route)) {\n      try {\n        const standardsResult = await answerStandardsQuestion(\n          question,\n          route,\n          apiKey,\n          ai,\n          vectorize\n        );\n\n        return NextResponse.json({\n          answer: standardsResult.answer,\n          sources: [],\n          mode: standardsResult.sufficient\n            ? "standards_knowledge_base"\n            : "standards_unverified",\n          standardsChecked: standardsResult.checkedStandards,\n        });\n      } catch (standardsError) {\n        console.error("Standards pipeline error:", standardsError);\n        const language = route.questionLanguage || detectedLanguage;\n        const answer = language === "de"\n          ? "Ich konnte die Normenabfrage gerade nicht vollständig verifizieren. Ich gebe deshalb keine unbestätigte Normangabe aus. Bitte versuche die Frage gleich noch einmal."\n          : language === "fa"\n            ? "در حال حاضر نتوانستم بررسی استاندارد را کامل و دقیق تأیید کنم؛ بنابراین بند یا عدد تأییدنشده ارائه نمی‌دهم. لطفاً همین سؤال را دوباره امتحان کن."\n            : "I could not complete exact standards verification just now, so I will not return an unverified clause or value. Please retry the same question shortly.";\n        return NextResponse.json({\n          answer,\n          sources: [],\n          mode: "standards_unverified",\n          standardsChecked: ["EN 81-20", "EN 81-50"],\n        });\n      }\n    }\n'''
+          if old not in s:
+              raise SystemExit('standards route anchor not found')
+          p.write_text(s.replace(old,new,1))
+      - name: Verify and build
+        run: |
+          grep -q 'Standards pipeline error' app/api/ask/route.ts
+          npm ci
+          npm run build
+      - name: Commit patch
+        run: |
+          git config user.name elevatorhelp-bot
+          git config user.email actions@users.noreply.github.com
+          git add app/api/ask/route.ts
+          git diff --cached --quiet || (git commit -m 'Contain standards pipeline failures without generic 500' && git push)
