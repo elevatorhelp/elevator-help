@@ -72,6 +72,21 @@ Return only the answer to the user.`;
   const data: any = await response.json();
   const answer = data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("").trim();
   if (!answer) throw new Error("GEMINI_DIRECT_EMPTY");
+
+  // Provider-reported usage is our source of truth for per-request cost observability.
+  // Keep this server-side: it is useful in Cloudflare logs and does not expose internals to users.
+  const usage = data?.usageMetadata || {};
+  console.info("Gemini direct usage", {
+    model: MODEL,
+    promptTokenCount: Number(usage.promptTokenCount || 0),
+    candidatesTokenCount: Number(usage.candidatesTokenCount || 0),
+    thoughtsTokenCount: Number(usage.thoughtsTokenCount || 0),
+    cachedContentTokenCount: Number(usage.cachedContentTokenCount || 0),
+    totalTokenCount: Number(usage.totalTokenCount || 0),
+    historyItems: history.length,
+    promptChars: prompt.length,
+    answerChars: answer.length,
+  });
   return answer;
 }
 
