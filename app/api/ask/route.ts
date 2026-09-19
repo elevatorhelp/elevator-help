@@ -6,6 +6,17 @@ import { answerStandardsQuestion, isStandardsQuestion } from "../../lib/standard
 const MODEL = "gemini-3.6-flash";
 type HistoryItem = { role?: string; content?: string; text?: string };
 
+class GeminiDirectError extends Error {
+  providerStatus?: string;
+  providerMessage?: string;
+  constructor(httpStatus: number, providerStatus?: string, providerMessage?: string) {
+    super(`GEMINI_DIRECT_HTTP_${httpStatus}`);
+    this.name = "GeminiDirectError";
+    this.providerStatus = providerStatus;
+    this.providerMessage = providerMessage;
+  }
+}
+
 function normalizeHistory(value: unknown): HistoryItem[] {
   if (!Array.isArray(value)) return [];
   return value.slice(-10).filter((item: any) => item && typeof item === "object");
@@ -47,7 +58,17 @@ Return only the answer to the user.`;
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.25, maxOutputTokens: 1000 } }),
   });
-  if (!response.ok) throw new Error(`GEMINI_DIRECT_HTTP_${response.status}`);
+  if (!response.ok) {
+    let providerStatus = "";
+    let providerMessage = "";
+    try {
+      const errorBody: any = await response.json();
+      providerStatus = typeof errorBody?.error?.status === "string" ? errorBody.error.status : "";
+      providerMessage = typeof errorBody?.error?.message === "string" ? errorBody.error.message.slice(0, 500) : "";
+    } catch {}
+    console.error("Gemini direct request failed", { httpStatus: response.status, providerStatus, providerMessage });
+    throw new GeminiDirectError(response.status, providerStatus, providerMessage);
+  }
   const data: any = await response.json();
   const answer = data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("").trim();
   if (!answer) throw new Error("GEMINI_DIRECT_EMPTY");
@@ -96,6 +117,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ answer, sources: [], mode: "gemini_direct_unverified" });
   } catch (error) {
     console.error("Ask API error:", error);
-    return NextResponse.json({ error: safeError(question), diagnosticCode: error instanceof Error ? error.message : "ASK_FAILURE" }, { status: 500 });
+    const geminiError = error instanceof GeminiDirectError ? error : null;
+    return NextResponse.json({
+      error: safeError(question),
+      diagnosticCode: error instanceof Error ? error.message : "ASK_FAILURE",
+      ...(geminiError?.providerStatus ? { diagnosticProviderStatus: geminiError.providerStatus } : {}),
+      ...(geminiError?.providerMessage ? { diagnosticProviderMessage: geminiError.providerMessage } : {}),
+    }, { status: 500 });
   }
 }
