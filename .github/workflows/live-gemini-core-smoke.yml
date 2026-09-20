@@ -8,23 +8,52 @@ on:
 jobs:
   conversational-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 4
     steps:
-      - name: Test minimal Gemini-first conversation once
+      - name: Test bounded Phase 1 Gemini conversation
         shell: bash
         run: |
-          set -u
-          QUESTION='Bist du da?'
-          RESPONSE=$(curl -sS --max-time 45 \
-            -H 'content-type: application/json' \
-            --data "$(jq -nc --arg q "$QUESTION" '{question:$q}')" \
-            https://elevator.help/api/ask || true)
-          echo "$RESPONSE" | jq -c '{mode,answer,error,diagnosticCode,diagnosticProviderStatus,diagnosticProviderMessage}' 2>/dev/null || echo "$RESPONSE"
-          ANSWER=$(printf '%s' "$RESPONSE" | jq -r '.answer // empty' 2>/dev/null || true)
-          ERROR=$(printf '%s' "$RESPONSE" | jq -r '.error // empty' 2>/dev/null || true)
-          MODE=$(printf '%s' "$RESPONSE" | jq -r '.mode // empty' 2>/dev/null || true)
-          if [[ -n "$ERROR" || -z "$ANSWER" || "$MODE" != "gemini_direct" ]]; then
-            echo 'FAIL: minimal direct Gemini path is not live-green.'
+          set -euo pipefail
+
+          ask() {
+            local payload="$1"
+            curl -sS --fail-with-body --max-time 45 \
+              -H 'content-type: application/json' \
+              --data "$payload" \
+              https://elevator.help/api/ask
+          }
+
+          require_direct_answer() {
+            local response="$1"
+            echo "$response" | jq -c '{mode,answer,error,diagnosticCode,diagnosticProviderStatus,diagnosticProviderMessage}'
+            local answer mode error
+            answer=$(printf '%s' "$response" | jq -r '.answer // empty')
+            mode=$(printf '%s' "$response" | jq -r '.mode // empty')
+            error=$(printf '%s' "$response" | jq -r '.error // empty')
+            if [[ -n "$error" || -z "$answer" || "$mode" != "gemini_direct" ]]; then
+              echo 'FAIL: Phase 1 direct Gemini gate failed.'
+              exit 1
+            fi
+          }
+
+          # Keep this regression deliberately bounded: four Gemini calls total.
+          R1=$(ask "$(jq -nc --arg q 'Bist du da?' '{question:$q}')")
+          require_direct_answer "$R1"
+
+          R2=$(ask "$(jq -nc --arg q 'Was bist du?' '{question:$q}')")
+          require_direct_answer "$R2"
+
+          R3=$(ask "$(jq -nc --arg q 'Wobei kannst du mir bei Aufzügen helfen?' '{question:$q}')")
+          require_direct_answer "$R3"
+          A3=$(printf '%s' "$R3" | jq -r '.answer')
+
+          # The final turn proves that recent conversation reaches Gemini and remains usable.
+          R4=$(ask "$(jq -nc --arg a "$A3" '{question:"Was habe ich dich direkt davor gefragt?",history:[{role:"user",content:"Wobei kannst du mir bei Aufzügen helfen?"},{role:"assistant",content:$a}]}')")
+          require_direct_answer "$R4"
+          A4=$(printf '%s' "$R4" | jq -r '.answer')
+          if ! printf '%s' "$A4" | grep -Eiq 'helfen|aufz[uü]g|lift|elevator'; then
+            echo 'FAIL: contextual follow-up did not retain the preceding elevator-help question.'
             exit 1
           fi
-          echo 'PASS: minimal direct Gemini conversation is live-green.'
+
+          echo 'PASS: Phase 1 ordinary conversation, identity/capability and contextual follow-up are live-green.'
