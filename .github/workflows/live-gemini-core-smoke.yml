@@ -1,8 +1,6 @@
 name: Live Gemini Core Smoke
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -36,7 +34,8 @@ jobs:
             fi
           }
 
-          # Keep this regression deliberately bounded: four Gemini calls total.
+          # This regression is intentionally manual after Phase 1 passed so later
+          # implementation commits do not spend four Gemini calls unnecessarily.
           R1=$(ask "$(jq -nc --arg q 'Bist du da?' '{question:$q}')")
           require_direct_answer "$R1"
 
@@ -47,7 +46,6 @@ jobs:
           require_direct_answer "$R3"
           A3=$(printf '%s' "$R3" | jq -r '.answer')
 
-          # The final turn proves that recent conversation reaches Gemini and remains usable.
           R4=$(ask "$(jq -nc --arg a "$A3" '{question:"Was habe ich dich direkt davor gefragt?",history:[{role:"user",content:"Wobei kannst du mir bei Aufzügen helfen?"},{role:"assistant",content:$a}]}')")
           require_direct_answer "$R4"
           A4=$(printf '%s' "$R4" | jq -r '.answer')
