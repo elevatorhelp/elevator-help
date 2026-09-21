@@ -1,0 +1,43 @@
+name: Phase 3 Semantic Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/phase3-semantic-gate.yml'
+  workflow_dispatch:
+
+jobs:
+  semantic-understanding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify bounded semantic elevator understanding
+        shell: bash
+        run: |
+          set -euo pipefail
+          ask() {
+            local q="$1"
+            curl -sS --fail-with-body --max-time 45 \
+              -H 'content-type: application/json' \
+              --data "$(jq -nc --arg q "$q" '{question:$q}')" \
+              https://elevator.help/api/ask
+          }
+          check() {
+            local label="$1" q="$2"
+            local r answer mode error
+            r=$(ask "$q")
+            answer=$(printf '%s' "$r" | jq -r '.answer // empty')
+            mode=$(printf '%s' "$r" | jq -r '.mode // empty')
+            error=$(printf '%s' "$r" | jq -r '.error // empty')
+            echo "$label: $(printf '%s' "$r" | jq -c '{mode,hasAnswer:(.answer|type=="string" and length>0),error}')"
+            if [[ -n "$error" || -z "$answer" || "$mode" != "gemini_direct" ]]; then
+              echo "FAIL: $label did not stay on semantic Gemini-direct path."
+              exit 1
+            fi
+          }
+          check 'natural technical' 'Führungsschiene ölen oder lieber trocken lassen?'
+          check 'malformed shorthand' 'kabinen dach geländer wie hoch mus das sein??'
+          check 'Persian technical' 'قطر سیم بکسل آسانسور چقدر باید باشه؟'
+          check 'mixed-language shorthand' 'glass schachtwand abstand kabine?'
+          echo 'PASS: Phase 3 semantic elevator understanding is live-green.'
