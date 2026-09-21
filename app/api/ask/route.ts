@@ -80,9 +80,6 @@ async function answerDirect(question: string, apiKey: string, history: HistoryIt
   return callGemini(basePrompt(question, history, verificationUnavailable), apiKey, false);
 }
 
-// Public web is deliberately opt-in. It is for questions whose wording itself asks for
-// current/online evidence or exact manufacturer documentation; ordinary conversation and
-// general engineering stay on the single-call direct path.
 function needsPublicWeb(question: string) {
   const current = /\b(latest|current|today|online|web|internet|website|newest|aktuell|heute|online|webseite|internet)\b/i.test(question) || /(جدیدترین|فعلی|امروز|آنلاین|اینترنت|وب)/i.test(question);
   const docs = /\b(manual|datasheet|data\s*sheet|catalog(?:ue)?|handbuch|datenblatt|katalog|betriebsanleitung)\b/i.test(question) || /(دفترچه|کاتالوگ|دیتاشیت|راهنما)/i.test(question);
@@ -91,8 +88,14 @@ function needsPublicWeb(question: string) {
   return current || docs || (manufacturer && exactFault);
 }
 
-function isExplicitStandardsRequest(question: string) {
-  return /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) || /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) || /(استاندارد|نورم|نُرم)/i.test(question);
+// Keep ordinary conversation on the cheap direct path, but route wording that asks for
+// mandatory/minimum/maximum/safety-critical elevator requirements through deterministic
+// standards verification even when the user never writes EN/Norm/standard explicitly.
+function needsStandardsVerification(question: string) {
+  const explicit = /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) || /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) || /(استاندارد|نورم|نُرم)/i.test(question);
+  const requirement = /\b(min(?:imum)?\.?|max(?:imum)?\.?|mindestens|höchstens|zulässig|vorgeschrieben|pflicht|erforderlich|muss|darf|clearance|distance|abstand|schutzraum|refuge|guardrail|geländer|schachtwand|kabinenwand)\b/i.test(question) || /(حداقل|حداکثر|مجاز|اجباری|الزامی|فاصله|جان‌پناه|نرده|دیواره?\s*چاه|کابین)/i.test(question);
+  const elevator = /\b(aufzug|lift|elevator|kabine|kabin|schacht|fahrkorb|car|shaft|pit|grube|headroom|überfahrt|tür|door)\b/i.test(question) || /(آسانسور|کابین|چاه|چاهک|درب|بالاسری)/i.test(question);
+  return explicit || (requirement && elevator);
 }
 function safeError(question: string) {
   if (/[؀-ۿ]/.test(question)) return "الان ارتباط مستقیم با هوش مصنوعی برقرار نشد. لطفاً همین پیام را یک بار دیگر بفرست.";
@@ -110,7 +113,7 @@ export async function POST(request: NextRequest) {
     if (!apiKey) return NextResponse.json({ error: "AI is not configured." }, { status: 500 });
     const history = normalizeHistory(body?.history ?? body?.messages ?? body?.conversation);
 
-    if (!isExplicitStandardsRequest(question)) {
+    if (!needsStandardsVerification(question)) {
       if (needsPublicWeb(question)) {
         try {
           const webPrompt = `${basePrompt(question, history, false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because this turn explicitly needs current/online or manufacturer evidence.\n- Prefer manufacturer/official primary sources where available.\n- Do not expose internal retrieval mechanics or a routine source list.\n- Public web evidence is not a substitute for deterministic standards verification: do not state an exact normative clause/value as verified unless the specialist standards path verifies it.`;
