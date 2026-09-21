@@ -2,148 +2,32 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
 import { routeQuestion } from "../../lib/router";
 import { answerStandardsQuestion, isStandardsQuestion } from "../../lib/standards-engine";
+import { retrieveInternalEvidence, shouldTryInternalRetrieval } from "../../lib/internal-retrieval";
 
 const MODEL = "gemini-3.6-flash";
 type HistoryItem = { role?: string; content?: string; text?: string };
 
 class GeminiDirectError extends Error {
-  providerStatus?: string;
-  providerMessage?: string;
-  constructor(httpStatus: number, providerStatus?: string, providerMessage?: string) {
-    super(`GEMINI_DIRECT_HTTP_${httpStatus}`);
-    this.name = "GeminiDirectError";
-    this.providerStatus = providerStatus;
-    this.providerMessage = providerMessage;
-  }
+  providerStatus?: string; providerMessage?: string;
+  constructor(httpStatus:number, providerStatus?:string, providerMessage?:string){super(`GEMINI_DIRECT_HTTP_${httpStatus}`);this.name="GeminiDirectError";this.providerStatus=providerStatus;this.providerMessage=providerMessage;}
 }
+function normalizeHistory(v:unknown):HistoryItem[]{return Array.isArray(v)?v.slice(-10).filter((x:any)=>x&&typeof x==="object"):[];}
+function historyText(h:HistoryItem[]){return h.map(i=>{const r=i.role==="assistant"||i.role==="model"?"Assistant":"User";const t=typeof i.content==="string"?i.content:typeof i.text==="string"?i.text:"";return t.trim()?`${r}: ${t.trim()}`:""}).filter(Boolean).join("\n");}
+function basePrompt(q:string,h:HistoryItem[],unverified=false){return `You are elevator.help, a Gemini-first conversational assistant specialized in elevators and lift engineering.\nPRIMARY BEHAVIOR:\n- Understand natural, misspelled, incomplete, shorthand and mixed-language input.\n- Reply naturally in the language the user is using now. Preserve technical identifiers, manufacturer names and fault codes.\n- Maintain conversational context when relevant. Ordinary conversation works directly without retrieval.\n- Never expose internal filenames, storage locations, archive/Drive links or implementation details.\nTECHNICAL SAFETY / EVIDENCE:\n- Never invent a fault-code meaning, standard clause, mandatory minimum/maximum, parameter, connector/pin, wiring value, test value or manufacturer-specific procedure.\n- If an exact manufacturer-specific or normative fact cannot be verified from evidence supplied by the application, say that the exact point cannot currently be verified.\n- Do not pretend retrieval succeeded when it did not.\n${unverified?"- A specialist retrieval tool failed or returned no verified evidence for this turn. Do not present the requested specialist fact as verified.":""}\nRECENT CONVERSATION:\n${historyText(h)||"(none)"}\nCURRENT USER MESSAGE:\n${q}\nReturn only the answer to the user.`;}
+async function callGemini(prompt:string,key:string,useWeb=false){const body:any={contents:[{role:"user",parts:[{text:prompt}]}],generationConfig:{temperature:.25,maxOutputTokens:1000}};if(useWeb)body.tools=[{google_search:{}}];const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok){let s="",m="";try{const e:any=await r.json();s=typeof e?.error?.status==="string"?e.error.status:"";m=typeof e?.error?.message==="string"?e.error.message.slice(0,500):""}catch{}console.error(useWeb?"Gemini web request failed":"Gemini direct request failed",{httpStatus:r.status,providerStatus:s,providerMessage:m});throw new GeminiDirectError(r.status,s,m)}const d:any=await r.json();const a=d?.candidates?.[0]?.content?.parts?.map((p:any)=>p?.text||"").join("").trim();if(!a)throw new Error(useWeb?"GEMINI_WEB_EMPTY":"GEMINI_DIRECT_EMPTY");const u=d?.usageMetadata||{};console.info(useWeb?"Gemini web usage":"Gemini direct usage",{model:MODEL,promptTokenCount:Number(u.promptTokenCount||0),candidatesTokenCount:Number(u.candidatesTokenCount||0),thoughtsTokenCount:Number(u.thoughtsTokenCount||0),totalTokenCount:Number(u.totalTokenCount||0),promptChars:prompt.length,answerChars:a.length});return a;}
+const answerDirect=(q:string,k:string,h:HistoryItem[]=[],u=false)=>callGemini(basePrompt(q,h,u),k,false);
+function needsPublicWeb(q:string){const current=/\b(latest|current|today|online|web|internet|website|newest|aktuell|heute|online|webseite|internet)\b/i.test(q)||/(جدیدترین|فعلی|امروز|آنلاین|اینترنت|وب)/i.test(q);const docs=/\b(manual|datasheet|data\s*sheet|catalog(?:ue)?|handbuch|datenblatt|katalog|betriebsanleitung)\b/i.test(q)||/(دفترچه|کاتالوگ|دیتاشیت|راهنما)/i.test(q);const fault=/\b(?:fehler|fault|error|code)\s*[A-Z-]*\d{1,4}\b/i.test(q);const maker=/\b(Schindler|KONE|Otis|TKE|ThyssenKrupp|NEW\s*LIFT|Ziehl[-\s]*Abegg|Weber)\b/i.test(q);return current||docs||(maker&&fault);}
+function likelyTechnical(q:string){return /\b(aufzug|lift|elevator|fehler|fault|error|schacht|kabine|fahrkorb|führung|schiene|seil|bremse|tür|door|manual|handbuch|katalog|datasheet|controller|steuerung|wartung|öl|geländer|guardrail)\b/i.test(q)||/(آسانسور|کابین|چاه|خطا|ارور|ریل|سیم.?بکسل|ترمز|درب|دفترچه|کاتالوگ|تابلو|روغن)/i.test(q);}
+function needsStandardsVerification(q:string){const e=/\bEN\s*81\s*[-–]?\s*\d+\b/i.test(q)||/\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(q)||/(استاندارد|نورم|نُرم)/i.test(q);const r=/\b(min(?:imum)?\.?|max(?:imum)?\.?|mindestens|höchstens|zulässig|vorgeschrieben|pflicht|erforderlich|muss|darf|clearance|distance|abstand|schutzraum|refuge|guardrail|geländer|schachtwand|kabinenwand)\b/i.test(q)||/(حداقل|حداکثر|مجاز|اجباری|الزامی|فاصله|جان.?پناه|نرده|دیواره?\s*چاه|کابین)/i.test(q);const d=/\b(aufzug|lift|elevator|kabine|kabin|schacht|fahrkorb|car|shaft|pit|grube|headroom|überfahrt|tür|door)\b/i.test(q)||/(آسانسور|کابین|چاه|چاهک|درب|بالاسری)/i.test(q);return e||(r&&d);}
+function safeError(q:string){if(/[؀-ۿ]/.test(q))return "الان ارتباط مستقیم با هوش مصنوعی برقرار نشد. لطفاً همین پیام را یک بار دیگر بفرست.";if(/\b(du|dich|was|wie|wer|aufzug|fehler|schacht)\b/i.test(q))return "Die direkte KI-Verbindung hat gerade nicht geantwortet. Bitte sende dieselbe Nachricht noch einmal.";return "The direct AI connection did not respond just now. Please send the same message once more.";}
 
-function normalizeHistory(value: unknown): HistoryItem[] {
-  if (!Array.isArray(value)) return [];
-  return value.slice(-10).filter((item: any) => item && typeof item === "object");
+export async function POST(request:NextRequest){let question="";try{const body:any=await request.json();question=typeof body?.question==="string"?body.question.trim():"";if(!question)return NextResponse.json({error:"Please enter a question."},{status:400});const key=process.env.GEMINI_API_KEY;if(!key)return NextResponse.json({error:"AI is not configured."},{status:500});const history=normalizeHistory(body?.history??body?.messages??body?.conversation);
+if(needsStandardsVerification(question)){let route:any=null;try{route=await routeQuestion(question)}catch(e){console.error("Standards routing unavailable:",e)}const effective=route?.normalizedQuestion||question;if(route&&isStandardsQuestion(effective,route)){try{const {env}=getCloudflareContext();const result=await answerStandardsQuestion(effective,route,key,(env as any).AI,(env as any).VECTORIZE);return NextResponse.json({answer:result.answer,sources:[],mode:result.sufficient?"standards_knowledge_base":"standards_unverified",standardsChecked:result.checkedStandards})}catch(e){console.error("Standards tool unavailable; preserving conversation:",e)}}return NextResponse.json({answer:await answerDirect(effective,key,history,true),sources:[],mode:"gemini_direct_unverified"});}
+
+if(likelyTechnical(question)){let route:any=null;try{route=await routeQuestion(question)}catch(e){console.error("Technical routing unavailable:",e)}const effective=route?.normalizedQuestion||question;if(route?.needsClarification&&route?.clarificationQuestion)return NextResponse.json({answer:route.clarificationQuestion,sources:[],mode:"clarification"});if(route&&shouldTryInternalRetrieval(route)){try{const {env}=getCloudflareContext();const evidence=await retrieveInternalEvidence(effective,route,(env as any).AI,(env as any).VECTORIZE);if(evidence.length){const excerpts=evidence.map((x:any,i:number)=>`Evidence ${i+1}: ${x.text}`).join("\n\n");const p=`${basePrompt(effective,history,false)}\n\nVERIFIED INTERNAL EVIDENCE:\n${excerpts}\n\nAnswer only from this evidence for manufacturer-specific/document-specific facts. Do not mention internal files, storage, retrieval, filenames, scores or document names. If the evidence does not support a requested exact fact, say that exact point cannot be verified.`;return NextResponse.json({answer:await callGemini(p,key,false),sources:[],mode:"internal_evidence"});}}catch(e){console.error("Internal retrieval unavailable; falling through safely:",e)}
+if(needsPublicWeb(effective)){try{const p=`${basePrompt(effective,history,false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because internal evidence was unavailable or insufficient. Prefer manufacturer/official primary sources. Do not expose internal retrieval mechanics or a routine source list. Public web evidence is not a substitute for deterministic standards verification.`;return NextResponse.json({answer:await callGemini(p,key,true),sources:[],mode:"gemini_web"})}catch(e){console.error("Public web unavailable; preserving conversation:",e);return NextResponse.json({answer:await answerDirect(effective,key,history,true),sources:[],mode:"gemini_direct_unverified"})}}
+return NextResponse.json({answer:await answerDirect(effective,key,history,false),sources:[],mode:"gemini_direct"});}
 }
-function historyText(history: HistoryItem[]) {
-  return history.map((item) => {
-    const role = item.role === "assistant" || item.role === "model" ? "Assistant" : "User";
-    const text = typeof item.content === "string" ? item.content : typeof item.text === "string" ? item.text : "";
-    return text.trim() ? `${role}: ${text.trim()}` : "";
-  }).filter(Boolean).join("\n");
-}
-
-function basePrompt(question: string, history: HistoryItem[], verificationUnavailable = false) {
-  const prior = historyText(history);
-  return `You are elevator.help, a Gemini-first conversational assistant specialized in elevators and lift engineering.
-
-PRIMARY BEHAVIOR:
-- Understand natural, misspelled, incomplete, shorthand and mixed-language input.
-- Reply naturally in the language the user is using now. Preserve technical identifiers, manufacturer names and fault codes.
-- Maintain conversational context from the supplied recent conversation when relevant.
-- Ordinary conversation works directly without retrieval. If asked whether you are there, who/what you are, or what you can do, answer directly and naturally.
-- You can help with elevator troubleshooting, technical concepts, planning, documentation and standards-oriented questions when evidence is available.
-- Never expose internal filenames, storage locations, archive/Drive links or implementation details.
-
-TECHNICAL SAFETY / EVIDENCE:
-- Never invent a fault-code meaning, standard clause, mandatory minimum/maximum, parameter, connector/pin, wiring value, test value or manufacturer-specific procedure.
-- If an exact manufacturer-specific or normative fact cannot be verified from evidence supplied by the application, say only that the exact point cannot currently be verified; remain conversational and explain what detail would help.
-- Do not pretend retrieval succeeded when it did not.
-${verificationUnavailable ? "- A specialist retrieval tool failed or returned no verified evidence for this turn. Continue conversationally, but do not present the requested specialist fact as verified." : ""}
-
-RECENT CONVERSATION:
-${prior || "(none)"}
-
-CURRENT USER MESSAGE:
-${question}
-
-Return only the answer to the user.`;
-}
-
-async function callGemini(prompt: string, apiKey: string, useWeb = false) {
-  const body: any = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.25, maxOutputTokens: 1000 } };
-  if (useWeb) body.tools = [{ google_search: {} }];
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    let providerStatus = ""; let providerMessage = "";
-    try { const errorBody: any = await response.json(); providerStatus = typeof errorBody?.error?.status === "string" ? errorBody.error.status : ""; providerMessage = typeof errorBody?.error?.message === "string" ? errorBody.error.message.slice(0, 500) : ""; } catch {}
-    console.error(useWeb ? "Gemini web request failed" : "Gemini direct request failed", { httpStatus: response.status, providerStatus, providerMessage });
-    throw new GeminiDirectError(response.status, providerStatus, providerMessage);
-  }
-  const data: any = await response.json();
-  const answer = data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("").trim();
-  if (!answer) throw new Error(useWeb ? "GEMINI_WEB_EMPTY" : "GEMINI_DIRECT_EMPTY");
-  const usage = data?.usageMetadata || {};
-  console.info(useWeb ? "Gemini web usage" : "Gemini direct usage", { model: MODEL, promptTokenCount: Number(usage.promptTokenCount || 0), candidatesTokenCount: Number(usage.candidatesTokenCount || 0), thoughtsTokenCount: Number(usage.thoughtsTokenCount || 0), cachedContentTokenCount: Number(usage.cachedContentTokenCount || 0), totalTokenCount: Number(usage.totalTokenCount || 0), promptChars: prompt.length, answerChars: answer.length });
-  return answer;
-}
-
-async function answerDirect(question: string, apiKey: string, history: HistoryItem[] = [], verificationUnavailable = false) {
-  return callGemini(basePrompt(question, history, verificationUnavailable), apiKey, false);
-}
-
-function needsPublicWeb(question: string) {
-  const current = /\b(latest|current|today|online|web|internet|website|newest|aktuell|heute|online|webseite|internet)\b/i.test(question) || /(جدیدترین|فعلی|امروز|آنلاین|اینترنت|وب)/i.test(question);
-  const docs = /\b(manual|datasheet|data\s*sheet|catalog(?:ue)?|handbuch|datenblatt|katalog|betriebsanleitung)\b/i.test(question) || /(دفترچه|کاتالوگ|دیتاشیت|راهنما)/i.test(question);
-  const exactFault = /\b(?:fehler|fault|error|code)\s*[A-Z-]*\d{1,4}\b/i.test(question);
-  const manufacturer = /\b(Schindler|KONE|Otis|TKE|ThyssenKrupp|NEW\s*LIFT|Ziehl[-\s]*Abegg|Weber)\b/i.test(question);
-  return current || docs || (manufacturer && exactFault);
-}
-
-// Keep ordinary conversation on the cheap direct path, but route wording that asks for
-// mandatory/minimum/maximum/safety-critical elevator requirements through deterministic
-// standards verification even when the user never writes EN/Norm/standard explicitly.
-function needsStandardsVerification(question: string) {
-  const explicit = /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) || /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) || /(استاندارد|نورم|نُرم)/i.test(question);
-  const requirement = /\b(min(?:imum)?\.?|max(?:imum)?\.?|mindestens|höchstens|zulässig|vorgeschrieben|pflicht|erforderlich|muss|darf|clearance|distance|abstand|schutzraum|refuge|guardrail|geländer|schachtwand|kabinenwand)\b/i.test(question) || /(حداقل|حداکثر|مجاز|اجباری|الزامی|فاصله|جان‌پناه|نرده|دیواره?\s*چاه|کابین)/i.test(question);
-  const elevator = /\b(aufzug|lift|elevator|kabine|kabin|schacht|fahrkorb|car|shaft|pit|grube|headroom|überfahrt|tür|door)\b/i.test(question) || /(آسانسور|کابین|چاه|چاهک|درب|بالاسری)/i.test(question);
-  return explicit || (requirement && elevator);
-}
-function safeError(question: string) {
-  if (/[؀-ۿ]/.test(question)) return "الان ارتباط مستقیم با هوش مصنوعی برقرار نشد. لطفاً همین پیام را یک بار دیگر بفرست.";
-  if (/\b(du|dich|was|wie|wer|aufzug|fehler|schacht)\b/i.test(question)) return "Die direkte KI-Verbindung hat gerade nicht geantwortet. Bitte sende dieselbe Nachricht noch einmal.";
-  return "The direct AI connection did not respond just now. Please send the same message once more.";
-}
-
-export async function POST(request: NextRequest) {
-  let question = "";
-  try {
-    const body: any = await request.json();
-    question = typeof body?.question === "string" ? body.question.trim() : "";
-    if (!question) return NextResponse.json({ error: "Please enter a question." }, { status: 400 });
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return NextResponse.json({ error: "AI is not configured." }, { status: 500 });
-    const history = normalizeHistory(body?.history ?? body?.messages ?? body?.conversation);
-
-    if (!needsStandardsVerification(question)) {
-      if (needsPublicWeb(question)) {
-        try {
-          const webPrompt = `${basePrompt(question, history, false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because this turn explicitly needs current/online or manufacturer evidence.\n- Prefer manufacturer/official primary sources where available.\n- Do not expose internal retrieval mechanics or a routine source list.\n- Public web evidence is not a substitute for deterministic standards verification: do not state an exact normative clause/value as verified unless the specialist standards path verifies it.`;
-          const answer = await callGemini(webPrompt, apiKey, true);
-          return NextResponse.json({ answer, sources: [], mode: "gemini_web" });
-        } catch (error) {
-          console.error("Public web unavailable; preserving conversation:", error);
-          const answer = await answerDirect(question, apiKey, history, true);
-          return NextResponse.json({ answer, sources: [], mode: "gemini_direct_unverified" });
-        }
-      }
-      const answer = await answerDirect(question, apiKey, history, false);
-      return NextResponse.json({ answer, sources: [], mode: "gemini_direct" });
-    }
-
-    let route: any = null;
-    try { route = await routeQuestion(question); } catch (error) { console.error("Standards routing unavailable:", error); }
-    const effectiveQuestion = route?.normalizedQuestion || question;
-    if (route && isStandardsQuestion(effectiveQuestion, route)) {
-      try {
-        const { env } = getCloudflareContext();
-        const result = await answerStandardsQuestion(effectiveQuestion, route, apiKey, (env as any).AI, (env as any).VECTORIZE);
-        return NextResponse.json({ answer: result.answer, sources: [], mode: result.sufficient ? "standards_knowledge_base" : "standards_unverified", standardsChecked: result.checkedStandards });
-      } catch (error) { console.error("Standards tool unavailable; preserving conversation:", error); }
-    }
-    const answer = await answerDirect(effectiveQuestion, apiKey, history, true);
-    return NextResponse.json({ answer, sources: [], mode: "gemini_direct_unverified" });
-  } catch (error) {
-    console.error("Ask API error:", error);
-    const geminiError = error instanceof GeminiDirectError ? error : null;
-    return NextResponse.json({ error: safeError(question), diagnosticCode: error instanceof Error ? error.message : "ASK_FAILURE", ...(geminiError?.providerStatus ? { diagnosticProviderStatus: geminiError.providerStatus } : {}), ...(geminiError?.providerMessage ? { diagnosticProviderMessage: geminiError.providerMessage } : {}) }, { status: 500 });
-  }
-}
+if(needsPublicWeb(question)){try{const p=`${basePrompt(question,history,false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because this turn explicitly needs current/online evidence. Prefer official primary sources. Do not expose a routine source list.`;return NextResponse.json({answer:await callGemini(p,key,true),sources:[],mode:"gemini_web"})}catch(e){console.error("Public web unavailable; preserving conversation:",e);return NextResponse.json({answer:await answerDirect(question,key,history,true),sources:[],mode:"gemini_direct_unverified"})}}
+return NextResponse.json({answer:await answerDirect(question,key,history,false),sources:[],mode:"gemini_direct"});
+}catch(error){console.error("Ask API error:",error);const g=error instanceof GeminiDirectError?error:null;return NextResponse.json({error:safeError(question),diagnosticCode:error instanceof Error?error.message:"ASK_FAILURE",...(g?.providerStatus?{diagnosticProviderStatus:g.providerStatus}:{}),...(g?.providerMessage?{diagnosticProviderMessage:g.providerMessage}:{})},{status:500});}}
