@@ -29,9 +29,9 @@ function historyText(history: HistoryItem[]) {
   }).filter(Boolean).join("\n");
 }
 
-async function answerDirect(question: string, apiKey: string, history: HistoryItem[] = [], verificationUnavailable = false) {
+function basePrompt(question: string, history: HistoryItem[], verificationUnavailable = false) {
   const prior = historyText(history);
-  const prompt = `You are elevator.help, a Gemini-first conversational assistant specialized in elevators and lift engineering.
+  return `You are elevator.help, a Gemini-first conversational assistant specialized in elevators and lift engineering.
 
 PRIMARY BEHAVIOR:
 - Understand natural, misspelled, incomplete, shorthand and mixed-language input.
@@ -54,40 +54,41 @@ CURRENT USER MESSAGE:
 ${question}
 
 Return only the answer to the user.`;
+}
+
+async function callGemini(prompt: string, apiKey: string, useWeb = false) {
+  const body: any = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.25, maxOutputTokens: 1000 } };
+  if (useWeb) body.tools = [{ google_search: {} }];
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.25, maxOutputTokens: 1000 } }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   if (!response.ok) {
-    let providerStatus = "";
-    let providerMessage = "";
-    try {
-      const errorBody: any = await response.json();
-      providerStatus = typeof errorBody?.error?.status === "string" ? errorBody.error.status : "";
-      providerMessage = typeof errorBody?.error?.message === "string" ? errorBody.error.message.slice(0, 500) : "";
-    } catch {}
-    console.error("Gemini direct request failed", { httpStatus: response.status, providerStatus, providerMessage });
+    let providerStatus = ""; let providerMessage = "";
+    try { const errorBody: any = await response.json(); providerStatus = typeof errorBody?.error?.status === "string" ? errorBody.error.status : ""; providerMessage = typeof errorBody?.error?.message === "string" ? errorBody.error.message.slice(0, 500) : ""; } catch {}
+    console.error(useWeb ? "Gemini web request failed" : "Gemini direct request failed", { httpStatus: response.status, providerStatus, providerMessage });
     throw new GeminiDirectError(response.status, providerStatus, providerMessage);
   }
   const data: any = await response.json();
   const answer = data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("").trim();
-  if (!answer) throw new Error("GEMINI_DIRECT_EMPTY");
-
-  // Provider-reported usage is our source of truth for per-request cost observability.
-  // Keep this server-side: it is useful in Cloudflare logs and does not expose internals to users.
+  if (!answer) throw new Error(useWeb ? "GEMINI_WEB_EMPTY" : "GEMINI_DIRECT_EMPTY");
   const usage = data?.usageMetadata || {};
-  console.info("Gemini direct usage", {
-    model: MODEL,
-    promptTokenCount: Number(usage.promptTokenCount || 0),
-    candidatesTokenCount: Number(usage.candidatesTokenCount || 0),
-    thoughtsTokenCount: Number(usage.thoughtsTokenCount || 0),
-    cachedContentTokenCount: Number(usage.cachedContentTokenCount || 0),
-    totalTokenCount: Number(usage.totalTokenCount || 0),
-    historyItems: history.length,
-    promptChars: prompt.length,
-    answerChars: answer.length,
-  });
+  console.info(useWeb ? "Gemini web usage" : "Gemini direct usage", { model: MODEL, promptTokenCount: Number(usage.promptTokenCount || 0), candidatesTokenCount: Number(usage.candidatesTokenCount || 0), thoughtsTokenCount: Number(usage.thoughtsTokenCount || 0), cachedContentTokenCount: Number(usage.cachedContentTokenCount || 0), totalTokenCount: Number(usage.totalTokenCount || 0), promptChars: prompt.length, answerChars: answer.length });
   return answer;
+}
+
+async function answerDirect(question: string, apiKey: string, history: HistoryItem[] = [], verificationUnavailable = false) {
+  return callGemini(basePrompt(question, history, verificationUnavailable), apiKey, false);
+}
+
+// Public web is deliberately opt-in. It is for questions whose wording itself asks for
+// current/online evidence or exact manufacturer documentation; ordinary conversation and
+// general engineering stay on the single-call direct path.
+function needsPublicWeb(question: string) {
+  const current = /\b(latest|current|today|online|web|internet|website|newest|aktuell|heute|online|webseite|internet)\b/i.test(question) || /(جدیدترین|فعلی|امروز|آنلاین|اینترنت|وب)/i.test(question);
+  const docs = /\b(manual|datasheet|data\s*sheet|catalog(?:ue)?|handbuch|datenblatt|katalog|betriebsanleitung)\b/i.test(question) || /(دفترچه|کاتالوگ|دیتاشیت|راهنما)/i.test(question);
+  const exactFault = /\b(?:fehler|fault|error|code)\s*[A-Z-]*\d{1,4}\b/i.test(question);
+  const manufacturer = /\b(Schindler|KONE|Otis|TKE|ThyssenKrupp|NEW\s*LIFT|Ziehl[-\s]*Abegg|Weber)\b/i.test(question);
+  return current || docs || (manufacturer && exactFault);
 }
 
 function isExplicitStandardsRequest(question: string) {
@@ -109,15 +110,22 @@ export async function POST(request: NextRequest) {
     if (!apiKey) return NextResponse.json({ error: "AI is not configured." }, { status: 500 });
     const history = normalizeHistory(body?.history ?? body?.messages ?? body?.conversation);
 
-    // Phase 1 invariant: ordinary conversation is exactly one direct Gemini call.
-    // Do not spend a second Gemini subrequest on semantic routing before the answer.
     if (!isExplicitStandardsRequest(question)) {
+      if (needsPublicWeb(question)) {
+        try {
+          const webPrompt = `${basePrompt(question, history, false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because this turn explicitly needs current/online or manufacturer evidence.\n- Prefer manufacturer/official primary sources where available.\n- Do not expose internal retrieval mechanics or a routine source list.\n- Public web evidence is not a substitute for deterministic standards verification: do not state an exact normative clause/value as verified unless the specialist standards path verifies it.`;
+          const answer = await callGemini(webPrompt, apiKey, true);
+          return NextResponse.json({ answer, sources: [], mode: "gemini_web" });
+        } catch (error) {
+          console.error("Public web unavailable; preserving conversation:", error);
+          const answer = await answerDirect(question, apiKey, history, true);
+          return NextResponse.json({ answer, sources: [], mode: "gemini_direct_unverified" });
+        }
+      }
       const answer = await answerDirect(question, apiKey, history, false);
       return NextResponse.json({ answer, sources: [], mode: "gemini_direct" });
     }
 
-    // Explicit normative requests may enter the specialist path. A failure there
-    // degrades to conversational Gemini without inventing an unverified norm fact.
     let route: any = null;
     try { route = await routeQuestion(question); } catch (error) { console.error("Standards routing unavailable:", error); }
     const effectiveQuestion = route?.normalizedQuestion || question;
@@ -133,11 +141,6 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Ask API error:", error);
     const geminiError = error instanceof GeminiDirectError ? error : null;
-    return NextResponse.json({
-      error: safeError(question),
-      diagnosticCode: error instanceof Error ? error.message : "ASK_FAILURE",
-      ...(geminiError?.providerStatus ? { diagnosticProviderStatus: geminiError.providerStatus } : {}),
-      ...(geminiError?.providerMessage ? { diagnosticProviderMessage: geminiError.providerMessage } : {}),
-    }, { status: 500 });
+    return NextResponse.json({ error: safeError(question), diagnosticCode: error instanceof Error ? error.message : "ASK_FAILURE", ...(geminiError?.providerStatus ? { diagnosticProviderStatus: geminiError.providerStatus } : {}), ...(geminiError?.providerMessage ? { diagnosticProviderMessage: geminiError.providerMessage } : {}) }, { status: 500 });
   }
 }
