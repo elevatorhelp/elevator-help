@@ -32,6 +32,19 @@ export function shouldTryInternalRetrieval(route: RouterResult) {
   );
 }
 
+function normalized(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function routeBoost(item: InternalEvidence, route: RouterResult) {
+  let boost = 0;
+  if (route.manufacturer && normalized(item.manufacturer) === normalized(route.manufacturer)) boost += 0.08;
+  if (route.controller && normalized(item.controller) === normalized(route.controller)) boost += 0.08;
+  if (route.faultCode && normalized(item.faultCode) === normalized(String(route.faultCode))) boost += 0.12;
+  if (route.faultName && normalized(item.faultName).includes(normalized(route.faultName))) boost += 0.05;
+  return boost;
+}
+
 export async function retrieveInternalEvidence(
   query: string,
   route: RouterResult,
@@ -45,9 +58,9 @@ export async function retrieveInternalEvidence(
   if (!queryVector) return [];
 
   const filter = buildFilter(route);
-  // Current Beta corpus is German. Do not force a language filter here: semantic routing may
-  // normalize/translate later and older indexed records may use different language metadata.
-  const options: any = { topK: 3, returnMetadata: "all" };
+  // Retrieve a wider candidate set, then cheaply rerank locally. This follows the useful
+  // retrieve-wide/rerank-narrow pattern without adding another paid LLM call.
+  const options: any = { topK: 12, returnMetadata: "all" };
   if (Object.keys(filter).length) options.filter = filter;
 
   const result = await vectorize.query(queryVector, options);
@@ -65,7 +78,11 @@ export async function retrieveInternalEvidence(
         faultName: typeof metadata.faultName === "string" ? metadata.faultName : null,
       } as InternalEvidence;
     })
-    // A retrieval hit is usable only when it contains actual evidence text. Internal IDs,
-    // filenames, document names and storage metadata are deliberately never returned.
-    .filter((item: InternalEvidence) => item.text.length > 0 && item.score >= 0.55);
+    // Keep a modest semantic floor for candidates. Exact routed metadata can then promote the
+    // best evidence, while weak unrelated matches still cannot reach the synthesis context.
+    .filter((item: InternalEvidence) => item.text.length > 0 && item.score >= 0.45)
+    .map((item: InternalEvidence) => ({ ...item, score: item.score + routeBoost(item, route) }))
+    .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score)
+    .filter((item: InternalEvidence) => item.score >= 0.55)
+    .slice(0, 4);
 }
