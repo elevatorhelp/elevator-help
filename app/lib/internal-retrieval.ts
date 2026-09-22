@@ -7,6 +7,7 @@ export type InternalEvidence = {
   controller: string | null;
   faultCode: string | null;
   faultName: string | null;
+  contentType: string | null;
 };
 
 function buildFilter(route: RouterResult) {
@@ -99,8 +100,12 @@ export async function retrieveInternalEvidence(
         controller: typeof metadata.controller === "string" ? metadata.controller : null,
         faultCode: metadata.faultCode != null ? String(metadata.faultCode) : null,
         faultName: typeof metadata.faultName === "string" ? metadata.faultName : null,
+        contentType: typeof metadata.contentType === "string" ? metadata.contentType : null,
       } as InternalEvidence;
     })
+    // Document-map vectors are navigation metadata, not source evidence. Their text can contain
+    // internal filenames and generated summaries, so they must never enter answer synthesis.
+    .filter((item: InternalEvidence) => normalized(item.contentType) !== "document-map")
     // Keep a modest semantic floor for candidates. Exact routed metadata can then promote the
     // best evidence, while weak unrelated matches still cannot reach the synthesis context.
     .filter((item: InternalEvidence) => item.text.length > 0 && item.score >= 0.45)
