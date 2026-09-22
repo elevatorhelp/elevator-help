@@ -405,6 +405,10 @@ export default function HomePage() {
         },
         body: JSON.stringify({
           question: finalQuestion,
+          history: messages.slice(-10).map((message) => ({
+            role: message.role,
+            content: message.text,
+          })),
         }),
       });
 
