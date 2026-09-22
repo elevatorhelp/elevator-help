@@ -45,6 +45,29 @@ function routeBoost(item: InternalEvidence, route: RouterResult) {
   return boost;
 }
 
+function retrievalFingerprint(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .slice(0, 700);
+}
+
+function dedupeEvidence(items: InternalEvidence[]) {
+  const seen = new Set<string>();
+  const unique: InternalEvidence[] = [];
+
+  for (const item of items) {
+    const fingerprint = retrievalFingerprint(item.text);
+    if (!fingerprint || seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
 export async function retrieveInternalEvidence(
   query: string,
   route: RouterResult,
@@ -66,7 +89,7 @@ export async function retrieveInternalEvidence(
   const result = await vectorize.query(queryVector, options);
   const matches = Array.isArray(result?.matches) ? result.matches : [];
 
-  return matches
+  const ranked = matches
     .map((match: any) => {
       const metadata = match?.metadata || {};
       return {
@@ -83,6 +106,10 @@ export async function retrieveInternalEvidence(
     .filter((item: InternalEvidence) => item.text.length > 0 && item.score >= 0.45)
     .map((item: InternalEvidence) => ({ ...item, score: item.score + routeBoost(item, route) }))
     .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score)
-    .filter((item: InternalEvidence) => item.score >= 0.55)
-    .slice(0, 4);
+    .filter((item: InternalEvidence) => item.score >= 0.55);
+
+  // Ingestion overlap and repeated manual sections can yield duplicate evidence. Remove exact
+  // normalized duplicates before context assembly so they do not waste Gemini context tokens or
+  // crowd out distinct supporting chunks. This is deterministic and does not alter source text.
+  return dedupeEvidence(ranked).slice(0, 4);
 }
