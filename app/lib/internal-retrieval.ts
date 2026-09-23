@@ -37,6 +37,25 @@ function normalized(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+function buildRetrievalQuery(query: string, route: RouterResult) {
+  const entities = [
+    route.manufacturer,
+    route.productFamily,
+    route.controller,
+    route.faultCode ? `fault ${route.faultCode}` : null,
+    route.faultFamily,
+    route.faultName,
+    ...(route.components || []),
+    ...(route.topics || []),
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+
+  const uniqueEntities = [...new Set(entities.map((value) => value.toLowerCase()))];
+  const entityText = uniqueEntities.join(" ");
+  return entityText ? `${query}\nTechnical entities: ${entityText}` : query;
+}
+
 function routeBoost(item: InternalEvidence, route: RouterResult) {
   let boost = 0;
   if (route.manufacturer && normalized(item.manufacturer) === normalized(route.manufacturer)) boost += 0.08;
@@ -77,7 +96,12 @@ export async function retrieveInternalEvidence(
 ): Promise<InternalEvidence[]> {
   if (!ai || !vectorize) return [];
 
-  const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [query] });
+  // Keep the router's self-contained normalized question as the semantic anchor, but append
+  // compact normalized elevator entities from the same router call. This makes shorthand,
+  // mixed-language and follow-up queries more stable without another Gemini call or a brittle
+  // regex-only rewrite. These labels are used only for backend retrieval and are never evidence.
+  const retrievalQuery = buildRetrievalQuery(query, route);
+  const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [retrievalQuery] });
   const queryVector = (embeddingResult as any)?.data?.[0];
   if (!queryVector) return [];
 
