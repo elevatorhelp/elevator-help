@@ -25,6 +25,7 @@ export function shouldTryInternalRetrieval(route: RouterResult) {
   if (route.intent === "standard" || route.intent === "unknown") return false;
   return Boolean(
     route.manufacturer ||
+    route.productFamily ||
     route.controller ||
     route.faultCode ||
     route.faultFamily ||
