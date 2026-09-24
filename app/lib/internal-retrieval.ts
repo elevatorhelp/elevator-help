@@ -29,6 +29,7 @@ export function shouldTryInternalRetrieval(route: RouterResult) {
     route.controller ||
     route.faultCode ||
     route.faultFamily ||
+    route.faultName ||
     route.intent === "documentation" ||
     route.intent === "troubleshooting"
   );
@@ -98,48 +99,33 @@ export async function retrieveInternalEvidence(
   if (!ai || !vectorize) return [];
 
   // Keep the router's self-contained normalized question as the semantic anchor, but append
-  // compact normalized elevator entities from the same router call. This makes shorthand,
-  // mixed-language and follow-up queries more stable without another Gemini call or a brittle
-  // regex-only rewrite. These labels are used only for backend retrieval and are never evidence.
+  // resolved entities so retrieval can exploit context without replacing semantic meaning.
   const retrievalQuery = buildRetrievalQuery(query, route);
-  const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [retrievalQuery] });
-  const queryVector = (embeddingResult as any)?.data?.[0];
-  if (!queryVector) return [];
+  const embedded = await ai.run("@cf/baai/bge-m3", { text: [retrievalQuery] });
+  const vector = embedded?.data?.[0];
+  if (!Array.isArray(vector)) return [];
 
   const filter = buildFilter(route);
-  // Retrieve a wider candidate set, then cheaply rerank locally. This follows the useful
-  // retrieve-wide/rerank-narrow pattern without adding another paid LLM call.
-  const options: any = { topK: 12, returnMetadata: "all" };
-  if (Object.keys(filter).length) options.filter = filter;
+  const result = await vectorize.query(vector, {
+    topK: 20,
+    returnMetadata: "all",
+    ...(Object.keys(filter).length ? { filter } : {}),
+  });
 
-  const result = await vectorize.query(queryVector, options);
   const matches = Array.isArray(result?.matches) ? result.matches : [];
-
-  const ranked = matches
-    .map((match: any) => {
-      const metadata = match?.metadata || {};
-      return {
-        text: typeof metadata.text === "string" ? metadata.text.trim() : "",
-        score: Number(match?.score || 0),
-        manufacturer: typeof metadata.manufacturer === "string" ? metadata.manufacturer : null,
-        controller: typeof metadata.controller === "string" ? metadata.controller : null,
-        faultCode: metadata.faultCode != null ? String(metadata.faultCode) : null,
-        faultName: typeof metadata.faultName === "string" ? metadata.faultName : null,
-        contentType: typeof metadata.contentType === "string" ? metadata.contentType : null,
-      } as InternalEvidence;
-    })
-    // Document-map vectors are navigation metadata, not source evidence. Their text can contain
-    // internal filenames and generated summaries, so they must never enter answer synthesis.
-    .filter((item: InternalEvidence) => normalized(item.contentType) !== "document-map")
-    // Keep a modest semantic floor for candidates. Exact routed metadata can then promote the
-    // best evidence, while weak unrelated matches still cannot reach the synthesis context.
-    .filter((item: InternalEvidence) => item.text.length > 0 && item.score >= 0.45)
+  const candidates: InternalEvidence[] = matches
+    .map((match: any) => ({
+      text: typeof match?.metadata?.text === "string" ? match.metadata.text.trim() : "",
+      score: Number(match?.score || 0),
+      manufacturer: match?.metadata?.manufacturer ?? null,
+      controller: match?.metadata?.controller ?? null,
+      faultCode: match?.metadata?.faultCode ?? null,
+      faultName: match?.metadata?.faultName ?? null,
+      contentType: match?.metadata?.contentType ?? null,
+    }))
+    .filter((item: InternalEvidence) => item.text.length > 0)
     .map((item: InternalEvidence) => ({ ...item, score: item.score + routeBoost(item, route) }))
-    .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score)
-    .filter((item: InternalEvidence) => item.score >= 0.55);
+    .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score);
 
-  // Ingestion overlap and repeated manual sections can yield duplicate evidence. Remove exact
-  // normalized duplicates before context assembly so they do not waste Gemini context tokens or
-  // crowd out distinct supporting chunks. This is deterministic and does not alter source text.
-  return dedupeEvidence(ranked).slice(0, 4);
+  return dedupeEvidence(candidates).slice(0, 6);
 }
