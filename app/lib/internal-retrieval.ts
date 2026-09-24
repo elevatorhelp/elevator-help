@@ -105,8 +105,8 @@ function authoritativeCandidate(item: any) {
 export async function retrieveInternalEvidence(
   query: string,
   route: RouterResult,
-  ai: Ai,
-  vectorize: VectorizeIndex
+  ai: any,
+  vectorize: any
 ): Promise<InternalEvidence[]> {
   if (!shouldTryInternalRetrieval(route)) return [];
   const retrievalQuery = buildRetrievalQuery(query, route);
