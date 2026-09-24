@@ -23,6 +23,7 @@ function buildFilter(route: RouterResult) {
 export function shouldTryInternalRetrieval(route: RouterResult) {
   if (route.needsClarification || route.searchStrategy === "clarify_first") return false;
   if (route.intent === "standard") return false;
+  if (route.evidenceNeed === "internal") return true;
   const hasSourceSpecificEntity = Boolean(
     route.manufacturer ||
     route.productFamily ||
