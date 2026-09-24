@@ -22,14 +22,18 @@ function buildFilter(route: RouterResult) {
 
 export function shouldTryInternalRetrieval(route: RouterResult) {
   if (route.needsClarification || route.searchStrategy === "clarify_first") return false;
-  if (route.intent === "standard" || route.intent === "unknown") return false;
-  return Boolean(
+  if (route.intent === "standard") return false;
+  const hasSourceSpecificEntity = Boolean(
     route.manufacturer ||
     route.productFamily ||
     route.controller ||
     route.faultCode ||
     route.faultFamily ||
-    route.faultName ||
+    route.faultName
+  );
+  if (route.intent === "unknown" && !hasSourceSpecificEntity) return false;
+  return Boolean(
+    hasSourceSpecificEntity ||
     route.intent === "documentation" ||
     route.intent === "troubleshooting"
   );
@@ -78,44 +82,47 @@ function retrievalFingerprint(text: string) {
 
 function dedupeEvidence(items: InternalEvidence[]) {
   const seen = new Set<string>();
-  const unique: InternalEvidence[] = [];
-
+  const out: InternalEvidence[] = [];
   for (const item of items) {
-    const fingerprint = retrievalFingerprint(item.text);
-    if (!fingerprint || seen.has(fingerprint)) continue;
-    seen.add(fingerprint);
-    unique.push(item);
+    const key = retrievalFingerprint(item.text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
   }
+  return out;
+}
 
-  return unique;
+function authoritativeCandidate(item: any) {
+  const kind = normalized(item?.metadata?.contentType || item?.metadata?.kind || item?.metadata?.type);
+  const source = normalized(item?.metadata?.source || item?.metadata?.sourceType || item?.metadata?.documentType);
+  const generated = item?.metadata?.generated === true || normalized(item?.metadata?.generated) === "true";
+  if (generated) return false;
+  if (/document[-_ ]?map|summary|metadata|index/.test(kind)) return false;
+  if (/document[-_ ]?map|summary|metadata|index/.test(source)) return false;
+  return true;
 }
 
 export async function retrieveInternalEvidence(
   query: string,
   route: RouterResult,
-  ai: any,
-  vectorize: any
+  ai: Ai,
+  vectorize: VectorizeIndex
 ): Promise<InternalEvidence[]> {
-  if (!ai || !vectorize) return [];
-
-  // Keep the router's self-contained normalized question as the semantic anchor, but append
-  // resolved entities so retrieval can exploit context without replacing semantic meaning.
+  if (!shouldTryInternalRetrieval(route)) return [];
   const retrievalQuery = buildRetrievalQuery(query, route);
-  const embedded = await ai.run("@cf/baai/bge-m3", { text: [retrievalQuery] });
-  const vector = embedded?.data?.[0];
-  if (!Array.isArray(vector)) return [];
-
+  const embedding = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [retrievalQuery] });
+  const vector = (embedding as any)?.data?.[0];
+  if (!Array.isArray(vector)) throw new Error("Internal retrieval embedding failed");
   const filter = buildFilter(route);
   const result = await vectorize.query(vector, {
-    topK: 20,
+    topK: 12,
     returnMetadata: "all",
     ...(Object.keys(filter).length ? { filter } : {}),
   });
-
-  const matches = Array.isArray(result?.matches) ? result.matches : [];
-  const candidates: InternalEvidence[] = matches
+  const candidates = (result.matches || [])
+    .filter(authoritativeCandidate)
     .map((match: any) => ({
-      text: typeof match?.metadata?.text === "string" ? match.metadata.text.trim() : "",
+      text: String(match?.metadata?.text || match?.metadata?.content || "").trim(),
       score: Number(match?.score || 0),
       manufacturer: match?.metadata?.manufacturer ?? null,
       controller: match?.metadata?.controller ?? null,
@@ -126,6 +133,5 @@ export async function retrieveInternalEvidence(
     .filter((item: InternalEvidence) => item.text.length > 0)
     .map((item: InternalEvidence) => ({ ...item, score: item.score + routeBoost(item, route) }))
     .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score);
-
-  return dedupeEvidence(candidates).slice(0, 6);
+  return dedupeEvidence(candidates).slice(0, 5);
 }
