@@ -1227,6 +1227,7 @@ ${excerpts}
       sufficient: false,
       answer: unverifiedMessage(route.questionLanguage),
       checkedStandards,
+      verifiedClaims: [] as VerifiedStandardClaim[],
     };
   }
 
@@ -1234,5 +1235,6 @@ ${excerpts}
     sufficient: true,
     answer: await formatAnswer(question, selected, route.questionLanguage, apiKey),
     checkedStandards,
+    verifiedClaims: selected,
   };
 }
