@@ -3,6 +3,7 @@
 import {
   FormEvent,
   ReactNode,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -327,12 +328,17 @@ function SourceList({
 function Bubble({
   children,
   role,
+  anchorId,
 }: {
   children: ReactNode;
   role: "user" | "assistant";
+  anchorId?: string;
 }) {
   return (
-    <div className={`messageRow ${role}`}>
+    <div
+      id={anchorId}
+      className={`messageRow ${role}`}
+    >
       <div className="messageInner">
         {role === "assistant" && (
           <div className="assistantAvatar">
@@ -374,6 +380,23 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
 
   const hasConversation = messages.length > 0;
+
+  useEffect(() => {
+    const latestMessage = messages[messages.length - 1];
+
+    if (!latestMessage || latestMessage.role !== "user") return;
+
+    const frame = requestAnimationFrame(() => {
+      document
+        .getElementById(`message-${latestMessage.id}`)
+        ?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [messages]);
 
   async function ask(customQuestion?: string) {
     const finalQuestion = (
@@ -604,6 +627,11 @@ export default function HomePage() {
               <Bubble
                 key={message.id}
                 role={message.role}
+                anchorId={
+                  message.role === "user"
+                    ? `message-${message.id}`
+                    : undefined
+                }
               >
                 <div className="messageText">
                   {message.text}
@@ -1077,6 +1105,7 @@ export default function HomePage() {
         .messageRow {
           width: 100%;
           padding: 20px 22px;
+          scroll-margin-top: 14px;
         }
 
         .messageInner {
