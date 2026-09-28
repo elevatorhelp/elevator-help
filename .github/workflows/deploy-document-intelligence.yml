@@ -57,6 +57,8 @@ jobs:
           npx wrangler versions view "$production_version" \
             --name elevator-help \
             --json > /tmp/production-worker-version.json
+          jq -r '.resources.bindings[] | [.name, .type] | @tsv' \
+            /tmp/production-worker-version.json
           gemini_key=$(jq -r '
             .resources.bindings[]
             | select(.name == "GEMINI_API_KEY" and .type == "plain_text")
