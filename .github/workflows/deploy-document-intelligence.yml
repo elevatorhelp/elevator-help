@@ -46,21 +46,28 @@ jobs:
             exit 0
           fi
 
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/elevator-help/settings" \
-            > /tmp/production-worker-settings.json
-          jq -e '.success == true' /tmp/production-worker-settings.json >/dev/null
+          npx wrangler versions list \
+            --name elevator-help \
+            --json > /tmp/production-worker-versions.json
+          production_version=$(jq -r '
+            sort_by(.metadata.created_on)
+            | last.id // empty
+          ' /tmp/production-worker-versions.json)
+          test -n "$production_version"
+          npx wrangler versions view "$production_version" \
+            --name elevator-help \
+            --json > /tmp/production-worker-version.json
           gemini_key=$(jq -r '
-            .result.bindings[]
+            .resources.bindings[]
             | select(.name == "GEMINI_API_KEY" and .type == "plain_text")
-            | .text
-          ' /tmp/production-worker-settings.json)
+            | (.text // .value // empty)
+          ' /tmp/production-worker-version.json)
           test -n "$gemini_key"
           printf '%s' "$gemini_key" \
             | npx wrangler secret put GEMINI_API_KEY \
                 --name document-intelligence-elevator-help
           unset gemini_key
+          unset production_version
 
       - name: Deploy preview Worker
         env:
