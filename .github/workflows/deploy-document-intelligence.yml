@@ -31,26 +31,44 @@ jobs:
       - name: Build Cloudflare Worker
         run: npm run cf:build
 
-      - name: Deploy preview Worker
+      - name: Restore preview runtime variables when needed
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-          npx wrangler deploy --name document-intelligence-elevator-help
+          if curl --fail --silent --show-error \
+            https://document-intelligence-elevator-help.baharmand.workers.dev/api/health/gemini \
+            | jq -e '.ok == true' >/dev/null; then
+            echo "Preview runtime variables are healthy."
+            exit 0
+          fi
 
-      - name: Configure preview runtime secrets
+          npx wrangler versions list \
+            --name document-intelligence-elevator-help \
+            --json > /tmp/versions.json
+          healthy_version=$(jq -r '
+            [.. | objects
+              | select((.id? // .version_id?) and (.created_on? // .created_at?))
+              | {id: (.id // .version_id), created: (.created_on // .created_at)}]
+            | unique_by(.id)
+            | map(select(.created < "2026-09-28T21:17:00Z"))
+            | sort_by(.created)
+            | reverse
+            | .[0].id // empty
+          ' /tmp/versions.json)
+          test -n "$healthy_version"
+          npx wrangler rollback "$healthy_version" \
+            --name document-intelligence-elevator-help \
+            --yes \
+            --message "Restore preview runtime variables before automated deploy"
+
+      - name: Deploy preview Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: |
-          test -n "$GEMINI_API_KEY"
-          test -n "$ELEVATOR_INGESTION_TOKEN"
-          test -n "$GOOGLE_SERVICE_ACCOUNT_JSON"
-          printf '%s' "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY --name document-intelligence-elevator-help
-          printf '%s' "$ELEVATOR_INGESTION_TOKEN" | npx wrangler secret put INGESTION_TOKEN --name document-intelligence-elevator-help
-          printf '%s' "$GOOGLE_SERVICE_ACCOUNT_JSON" | npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON --name document-intelligence-elevator-help
+          npx wrangler deploy \
+            --name document-intelligence-elevator-help \
+            --keep-vars
