@@ -49,6 +49,8 @@ jobs:
           npx wrangler versions list \
             --name document-intelligence-elevator-help \
             --json > /tmp/versions.json
+          jq -r '.[] | [.id, (.metadata.created_on // "missing-date")] | @tsv' \
+            /tmp/versions.json
           healthy_version=$(jq -r '
             [.. | objects
               | select(.id? and .metadata.created_on?)
