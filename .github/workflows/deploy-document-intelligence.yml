@@ -38,9 +38,10 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-          if curl --fail --silent --show-error \
+          health_json=$(curl --silent --show-error \
             https://document-intelligence-elevator-help.baharmand.workers.dev/api/health/gemini \
-            | jq -e '.ok == true' >/dev/null; then
+            || true)
+          if jq -e '.ok == true' <<<"$health_json" >/dev/null 2>&1; then
             echo "Preview runtime variables are healthy."
             exit 0
           fi
