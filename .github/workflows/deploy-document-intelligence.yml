@@ -51,8 +51,8 @@ jobs:
             --json > /tmp/versions.json
           healthy_version=$(jq -r '
             [.. | objects
-              | select((.id? // .version_id?) and (.created_on? // .created_at?))
-              | {id: (.id // .version_id), created: (.created_on // .created_at)}]
+              | select(.id? and .metadata.created_on?)
+              | {id, created: .metadata.created_on}]
             | unique_by(.id)
             | map(select(.created < "2026-09-28T21:17:00Z"))
             | sort_by(.created)
