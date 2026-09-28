@@ -31,7 +31,7 @@ jobs:
       - name: Build Cloudflare Worker
         run: npm run cf:build
 
-      - name: Restore preview runtime variables when needed
+      - name: Restore preview Gemini secret when needed
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -46,26 +46,21 @@ jobs:
             exit 0
           fi
 
-          npx wrangler versions list \
-            --name document-intelligence-elevator-help \
-            --json > /tmp/versions.json
-          jq -r '.[] | [.id, (.metadata.created_on // "missing-date")] | @tsv' \
-            /tmp/versions.json
-          healthy_version=$(jq -r '
-            [.. | objects
-              | select(.id? and .metadata.created_on?)
-              | {id, created: .metadata.created_on}]
-            | unique_by(.id)
-            | map(select(.created < "2026-09-28T21:17:00Z"))
-            | sort_by(.created)
-            | reverse
-            | .[0].id // empty
-          ' /tmp/versions.json)
-          test -n "$healthy_version"
-          npx wrangler rollback "$healthy_version" \
-            --name document-intelligence-elevator-help \
-            --yes \
-            --message "Restore preview runtime variables before automated deploy"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/elevator-help/settings" \
+            > /tmp/production-worker-settings.json
+          jq -e '.success == true' /tmp/production-worker-settings.json >/dev/null
+          gemini_key=$(jq -r '
+            .result.bindings[]
+            | select(.name == "GEMINI_API_KEY" and .type == "plain_text")
+            | .text
+          ' /tmp/production-worker-settings.json)
+          test -n "$gemini_key"
+          printf '%s' "$gemini_key" \
+            | npx wrangler secret put GEMINI_API_KEY \
+                --name document-intelligence-elevator-help
+          unset gemini_key
 
       - name: Deploy preview Worker
         env:
