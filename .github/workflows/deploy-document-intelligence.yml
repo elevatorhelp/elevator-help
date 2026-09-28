@@ -31,7 +31,7 @@ jobs:
       - name: Build Cloudflare Worker
         run: npm run cf:build
 
-      - name: Restore preview Gemini secret when needed
+      - name: Restore preview deployment when needed
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -46,30 +46,22 @@ jobs:
             exit 0
           fi
 
-          npx wrangler versions list \
-            --name elevator-help \
-            --json > /tmp/production-worker-versions.json
-          production_version=$(jq -r '
-            sort_by(.metadata.created_on)
-            | last.id // empty
-          ' /tmp/production-worker-versions.json)
-          test -n "$production_version"
-          npx wrangler versions view "$production_version" \
-            --name elevator-help \
-            --json > /tmp/production-worker-version.json
-          jq -r '.resources.bindings[] | [.name, .type] | @tsv' \
-            /tmp/production-worker-version.json
-          gemini_key=$(jq -r '
-            .resources.bindings[]
-            | select(.name == "GEMINI_API_KEY" and .type == "plain_text")
-            | (.text // .value // empty)
-          ' /tmp/production-worker-version.json)
-          test -n "$gemini_key"
-          printf '%s' "$gemini_key" \
-            | npx wrangler secret put GEMINI_API_KEY \
-                --name document-intelligence-elevator-help
-          unset gemini_key
-          unset production_version
+          npx wrangler deployments list \
+            --name document-intelligence-elevator-help \
+            --json > /tmp/preview-deployments.json
+          jq -r '.[] | [.created_on, (.versions[].version_id)] | @tsv' \
+            /tmp/preview-deployments.json
+          healthy_version=$(jq -r '
+            map(select(.created_on < "2026-09-28T21:17:30Z"))
+            | sort_by(.created_on)
+            | reverse
+            | .[0].versions[0].version_id // empty
+          ' /tmp/preview-deployments.json)
+          test -n "$healthy_version"
+          npx wrangler rollback "$healthy_version" \
+            --name document-intelligence-elevator-help \
+            --yes \
+            --message "Restore preview runtime configuration"
 
       - name: Deploy preview Worker
         env:
