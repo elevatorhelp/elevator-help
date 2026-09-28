@@ -21,6 +21,7 @@ type ChatMessage = {
   text: string;
   references?: ReferenceItem[];
   disclosure?: string;
+  mode?: string;
 };
 
 const quickPrompts = [
@@ -431,6 +432,7 @@ export default function HomePage() {
           history: messages.slice(-10).map((message) => ({
             role: message.role,
             content: message.text,
+            mode: message.mode,
           })),
         }),
       });
@@ -491,6 +493,7 @@ export default function HomePage() {
           typeof data?.disclosure === "string"
             ? data.disclosure
             : undefined,
+        mode: typeof data?.mode === "string" ? data.mode : undefined,
       };
 
       setMessages((current) => [

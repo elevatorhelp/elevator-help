@@ -10,9 +10,15 @@ import { extractText, getDocumentProxy } from "unpdf";
 
 const execFileAsync = promisify(execFile);
 const OFFICE_EXTENSIONS = new Set([
-  ".doc", ".docx", ".docm", ".dot", ".dotx", ".rtf",
-  ".xls", ".xlsx", ".xlsm", ".xlt", ".xltx", ".csv",
-  ".ppt", ".pptx", ".pptm", ".pot", ".potx", ".pps", ".ppsx",
+  ".doc", ".docx", ".docm", ".dot", ".dotx", ".dotm", ".rtf",
+  ".xls", ".xlsx", ".xlsm", ".xlsb", ".xlt", ".xltx", ".xltm", ".xlam",
+  ".ppt", ".pptx", ".pptm", ".pot", ".potx", ".potm", ".pps", ".ppsx", ".ppsm",
+]);
+const TEXT_EXTENSIONS = new Set([".txt", ".md", ".csv", ".tsv", ".log"]);
+const GOOGLE_WORKSPACE_MIME_TYPES = new Set([
+  "application/vnd.google-apps.document",
+  "application/vnd.google-apps.spreadsheet",
+  "application/vnd.google-apps.presentation",
 ]);
 
 const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "1GAuMp6D99K9kqLkUMJZM-iHoIS319Loo";
@@ -96,7 +102,9 @@ async function listFolder(folderId, accessToken, pathPrefix = "") {
       if (file.mimeType === "application/vnd.google-apps.folder") {
         entries.push(...(await listFolder(file.id, accessToken, currentPath)));
       } else if (file.mimeType === "application/pdf" || file.mimeType === "text/plain" ||
-        OFFICE_EXTENSIONS.has(extname(file.name).toLowerCase())) {
+        TEXT_EXTENSIONS.has(extname(file.name).toLowerCase()) ||
+        OFFICE_EXTENSIONS.has(extname(file.name).toLowerCase()) ||
+        GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType)) {
         entries.push({ ...file, sourcePath: currentPath });
       }
     }
@@ -107,11 +115,15 @@ async function listFolder(folderId, accessToken, pathPrefix = "") {
   return entries;
 }
 
-async function downloadPdf(fileId, accessToken) {
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+async function downloadDocument(file, accessToken) {
+  const googleWorkspace = GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType);
+  const url = googleWorkspace
+    ? `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=application%2Fpdf`
+    : `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+  const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!response.ok) throw new Error(`PDF download error: ${await response.text()}`);
+  if (!response.ok) throw new Error(`Document download error: ${await response.text()}`);
   return new Uint8Array(await response.arrayBuffer());
 }
 
@@ -152,7 +164,7 @@ function detectLanguageHint(fileName) {
 
 function documentGroupHint(fileName) {
   return fileName
-    .replace(/\.(?:pdf|txt)$/i, "")
+    .replace(/\.[^.]+$/i, "")
     .replace(/(?:^|[_\-.])(de[_\-.]?en|en[_\-.]?de|de|en)(?:[_\-.]|$)/gi, "-")
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-+|-+$/g, "")
@@ -341,8 +353,10 @@ async function processPdf(
   } = {}
 ) {
   console.log(`Downloading ${file.sourcePath}`);
-  const original = await downloadPdf(file.id, accessToken);
-  const bytes = file.mimeType === "application/pdf" ? original : await officeToPdf(file, original);
+  const original = await downloadDocument(file, accessToken);
+  const bytes = file.mimeType === "application/pdf" || GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType)
+    ? original
+    : await officeToPdf(file, original);
   const pdf = await getDocumentProxy(bytes, { maxImageSize: 16_777_216 });
   const { totalPages, text } = await extractText(pdf, { mergePages: false });
   const pages = Array.isArray(text) ? text : [text];
@@ -442,7 +456,7 @@ async function main() {
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
 
-  console.log(`Found ${files.length} PDF/text files in Drive scope ${DRIVE_FOLDER_ID}`);
+  console.log(`Found ${files.length} supported documents in Drive scope ${DRIVE_FOLDER_ID}`);
 
   const foundIds = new Set(allFiles.map((file) => file.id));
   for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : scope.files)) {
@@ -467,7 +481,7 @@ async function main() {
     const currentFingerprint = fingerprint(file);
     const rawFingerprint = previous?.rawFingerprint ?? previous?.fingerprint;
     const mapFingerprint = previous?.mapFingerprint ?? previous?.fingerprint;
-    return (
+    return Boolean(TARGET_FILE_ID) || (
       rawFingerprint !== currentFingerprint ||
       previous?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION ||
       !Array.isArray(previous?.ids) ||
@@ -487,11 +501,12 @@ async function main() {
     const currentFingerprint = fingerprint(file);
     const previousRawFingerprint = previous.rawFingerprint ?? previous.fingerprint;
     const previousMapFingerprint = previous.mapFingerprint ?? previous.fingerprint;
-    const needsRaw =
+    const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
+    const needsRaw = Boolean(TARGET_FILE_ID) ||
       previousRawFingerprint !== currentFingerprint ||
       previous.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION ||
       !Array.isArray(previous.ids);
-    const needsMap =
+    const needsMap = Boolean(TARGET_FILE_ID) ||
       previousMapFingerprint !== currentFingerprint ||
       previous.mapVersion !== DOCUMENT_MAP_VERSION ||
       !Array.isArray(previous.mapIds);
@@ -505,7 +520,7 @@ async function main() {
 
     if (needsRaw) {
       console.log(`Raw-vector backfill required for ${file.name}`);
-      const indexedRaw = await (file.mimeType === "text/plain"
+      const indexedRaw = await (isText
         ? processText(file, accessToken, ingestToken)
         : processPdf(file, accessToken, ingestToken, {
         ingestRaw: true,
@@ -529,7 +544,7 @@ async function main() {
     }
 
     if (needsMap) {
-      if (file.mimeType === "text/plain") {
+      if (isText) {
         next.mapIds = [];
         next.mapVersion = DOCUMENT_MAP_VERSION;
         next.mapFingerprint = currentFingerprint;

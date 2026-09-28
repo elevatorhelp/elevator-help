@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
+import { canonicalManufacturer, extractFaultCode } from "../../lib/fault-context";
 
 type IncomingChunk = {
   id: string;
@@ -175,19 +176,29 @@ ${JSON.stringify(payload)}
 
   return chunks.map((chunk): EnrichedMetadata => {
     const item = byId.get(chunk.id) || {};
+    const faultDocument = /(?:fault|error|fehler|code|خطا|کد)/i.test(
+      `${chunk.sourcePath} ${chunk.fileName}`
+    );
+    const deterministicFaultCode = extractFaultCode(chunk.text, faultDocument);
+    const deterministicManufacturer = canonicalManufacturer(
+      `${chunk.sourcePath} ${chunk.fileName} ${chunk.text.slice(0, 500)}`
+    );
+    const retrievalContext = normalizeRetrievalContext(item.retrievalContext);
 
     return {
       id: chunk.id,
-      manufacturer: normalizeNullable(item.manufacturer),
+      manufacturer: normalizeNullable(item.manufacturer) || deterministicManufacturer,
       controller: normalizeNullable(item.controller),
-      contentType: normalizeContentType(item.contentType),
+      contentType: deterministicFaultCode ? "fault" : normalizeContentType(item.contentType),
       faultFamily: normalizeNullable(item.faultFamily),
-      faultCode: normalizeNullable(item.faultCode),
+      faultCode: normalizeNullable(item.faultCode) || deterministicFaultCode,
       faultName: normalizeNullable(item.faultName),
       language: normalizeNullable(item.language) || normalizeNullable(chunk.languageHint),
       documentGroup:
         normalizeNullable(item.documentGroup) || normalizeNullable(chunk.documentGroupHint),
-      retrievalContext: normalizeRetrievalContext(item.retrievalContext),
+      retrievalContext: deterministicFaultCode && !retrievalContext?.includes(deterministicFaultCode)
+        ? `Exact fault code ${deterministicFaultCode}. ${retrievalContext || ""}`.trim()
+        : retrievalContext,
     };
   });
 }

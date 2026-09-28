@@ -21,6 +21,18 @@ function buildFilter(route: RouterResult) {
   return filter;
 }
 
+function buildFilterAttempts(route: RouterResult) {
+  const full = buildFilter(route);
+  const attempts: Record<string, string>[] = [];
+  if (Object.keys(full).length) attempts.push(full);
+  if (route.faultCode) attempts.push({ faultCode: String(route.faultCode) });
+  if (route.manufacturer) attempts.push({ manufacturer: route.manufacturer });
+  return attempts.filter(
+    (filter, index, all) =>
+      all.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(filter)) === index
+  );
+}
+
 export function shouldTryInternalRetrieval(route: RouterResult) {
   if (route.needsClarification || route.searchStrategy === "clarify_first") return false;
   if (route.intent === "standard") return false;
@@ -69,6 +81,7 @@ function routeBoost(item: InternalEvidence, route: RouterResult) {
   if (route.manufacturer && normalized(item.manufacturer) === normalized(route.manufacturer)) boost += 0.08;
   if (route.controller && normalized(item.controller) === normalized(route.controller)) boost += 0.08;
   if (route.faultCode && normalized(item.faultCode) === normalized(String(route.faultCode))) boost += 0.12;
+  if (route.faultCode && normalized(item.text).includes(normalized(String(route.faultCode)))) boost += 0.5;
   if (route.faultName && normalized(item.faultName).includes(normalized(route.faultName))) boost += 0.05;
   return boost;
 }
@@ -115,14 +128,14 @@ export async function retrieveInternalEvidence(
   const embedding = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [retrievalQuery] });
   const vector = (embedding as any)?.data?.[0];
   if (!Array.isArray(vector)) throw new Error("Internal retrieval embedding failed");
-  const filter = buildFilter(route);
   const options = { topK: 12, returnMetadata: "all" };
   let result: any;
-  if (Object.keys(filter).length) {
+  for (const filter of buildFilterAttempts(route)) {
     try {
       result = await vectorize.query(vector, { ...options, filter });
+      if (result?.matches?.length) break;
     } catch (error) {
-      console.warn("Filtered internal retrieval unavailable; retrying broad retrieval", error);
+      console.warn("Filtered internal retrieval attempt unavailable", { filter, error });
     }
   }
   if (!result?.matches?.length) result = await vectorize.query(vector, options);
