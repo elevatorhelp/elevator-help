@@ -7,6 +7,9 @@ on:
         description: Google Drive root folder ID to scan recursively
         required: false
         default: "1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5"
+      target_file_id:
+        description: Optional single Drive file ID to ingest for a bounded test
+        required: false
       target_text_files:
         description: Stop after this many PDFs with extractable text are indexed
         required: false
@@ -48,6 +51,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Office document converter
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libreoffice
+
       - name: Verify Vectorize metadata indexes
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -84,6 +90,7 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
           DRIVE_FOLDER_ID: ${{ inputs.folder_id || '1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5' }}
+          TARGET_FILE_ID: ${{ inputs.target_file_id || '' }}
           TARGET_TEXT_FILES: ${{ inputs.target_text_files || '2' }}
           MAX_SCAN_FILES: ${{ inputs.max_scan_files || '20' }}
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch

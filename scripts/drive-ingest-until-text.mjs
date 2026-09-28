@@ -45,6 +45,7 @@ function runOne() {
 
       const chunkMatches = [
         ...output.matchAll(/Extracted (\d+) chunks from (\d+) pages/g),
+        ...output.matchAll(/Indexed (\d+) text chunks from /g),
       ];
 
       const chunks = chunkMatches.reduce(
@@ -66,14 +67,14 @@ async function main() {
   let textFiles = 0;
 
   console.log(
-    `Smart scan: looking for ${TARGET_TEXT_FILES} text-bearing PDF(s), scanning at most ${MAX_SCAN_FILES} file(s).`
+    `Smart scan: looking for ${TARGET_TEXT_FILES} text-bearing document(s), scanning at most ${MAX_SCAN_FILES} file(s).`
   );
 
   while (scanned < MAX_SCAN_FILES && textFiles < TARGET_TEXT_FILES) {
     const result = await runOne();
 
     if (result.processed === 0) {
-      console.log("No changed PDFs remain. Stopping scan.");
+      console.log("No changed documents remain. Stopping scan.");
       break;
     }
 

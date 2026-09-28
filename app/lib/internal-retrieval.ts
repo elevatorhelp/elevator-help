@@ -116,11 +116,16 @@ export async function retrieveInternalEvidence(
   const vector = (embedding as any)?.data?.[0];
   if (!Array.isArray(vector)) throw new Error("Internal retrieval embedding failed");
   const filter = buildFilter(route);
-  const result = await vectorize.query(vector, {
-    topK: 12,
-    returnMetadata: "all",
-    ...(Object.keys(filter).length ? { filter } : {}),
-  });
+  const options = { topK: 12, returnMetadata: "all" };
+  let result: any;
+  if (Object.keys(filter).length) {
+    try {
+      result = await vectorize.query(vector, { ...options, filter });
+    } catch (error) {
+      console.warn("Filtered internal retrieval unavailable; retrying broad retrieval", error);
+    }
+  }
+  if (!result?.matches?.length) result = await vectorize.query(vector, options);
   const candidates = (result.matches || [])
     .filter(authoritativeCandidate)
     .map((match: any) => ({
