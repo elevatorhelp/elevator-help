@@ -1,5 +1,5 @@
 export type EvidenceNeed = "direct" | "internal" | "standard" | "web_current";
-import { canonicalManufacturer, extractFaultCode, isBareFaultCodeQuestion } from "./fault-context";
+import { canonicalManufacturer, extractFaultCode, isBareFaultCodeQuestion, manufacturerClarificationQuestion } from "./fault-context";
 export type RouterResult = {
   intent: "troubleshooting" | "documentation" | "standard" | "planning" | "general_technical" | "unknown";
   evidenceNeed: EvidenceNeed;
@@ -61,13 +61,6 @@ Return ONLY valid JSON:
 RECENT CONVERSATION:\n${recent||"(none)"}\nCURRENT USER MESSAGE:\n${question}`; }
 
 function parseRouterJson(text: string): any { const t=text.trim(); try{return JSON.parse(t)}catch{} const f=t.replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/i,"").trim(); try{return JSON.parse(f)}catch{} const a=f.indexOf("{"); const b=f.lastIndexOf("}"); if(a>=0&&b>a)return JSON.parse(f.slice(a,b+1)); throw new Error("Router returned invalid JSON"); }
-
-function manufacturerClarificationQuestion(question: string) {
-  const language = /[؀-ۿ]/.test(question) ? "fa" : /\b(what|which|from|manufacturer|controller|mean|does)\b/i.test(question) ? "en" : "de";
-  if (language === "fa") return "برای بررسی دقیق‌تر، سازنده یا نوع تابلو فرمان (مثلاً Newlift، Weber، Sigma و ...) را می‌فرمایید؟";
-  if (language === "de") return "Um Ihnen weiterhelfen zu können: Können Sie angeben, von welchem Hersteller oder Steuerungstyp (z. B. Newlift, Weber, Sigma ....) die Meldung stammt?";
-  return "To help further, which elevator manufacturer or controller type (e.g. Newlift, Weber, Sigma ....) produced this message?";
-}
 
 async function callRouterModel(question:string, apiKey:string, context:RouterContextItem[]=[]){ const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:buildRouterPrompt(question,context)}]}],generationConfig:{responseMimeType:"application/json",temperature:0}})}); if(!response.ok)throw new Error(`Gemini router error: ${await response.text()}`); const data:any=await response.json(); const text=data?.candidates?.[0]?.content?.parts?.[0]?.text; if(!text)throw new Error("Gemini router returned no content"); return text as string; }
 

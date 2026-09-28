@@ -69,6 +69,22 @@ export function isBareFaultCodeQuestion(value: string) {
   return remainder.length === 0;
 }
 
+export function manufacturerClarificationQuestion(question: string) {
+  const language = /[؀-ۿ]/.test(question)
+    ? "fa"
+    : /\b(what|which|from|manufacturer|controller|mean|does)\b/i.test(question)
+      ? "en"
+      : "de";
+
+  if (language === "fa") {
+    return "برای بررسی دقیق‌تر، سازنده یا نوع تابلو فرمان (مثلاً Newlift، Weber، Sigma و ...) را می‌فرمایید؟";
+  }
+  if (language === "de") {
+    return "Um Ihnen weiterhelfen zu können: Können Sie angeben, von welchem Hersteller oder Steuerungstyp (z. B. Newlift, Weber, Sigma ....) die Meldung stammt?";
+  }
+  return "To help further, which elevator manufacturer or controller type (e.g. Newlift, Weber, Sigma ....) produced this message?";
+}
+
 export function resolveManufacturerClarification(
   reply: string,
   history: ConversationHistoryItem[]

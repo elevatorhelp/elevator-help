@@ -7,6 +7,7 @@ import {
   extractFaultCode,
   historyEvidenceLabel,
   isBareFaultCodeQuestion,
+  manufacturerClarificationQuestion,
   resolveManufacturerClarification,
 } from "../app/lib/fault-context.ts";
 
@@ -21,6 +22,13 @@ test("extracts long alphanumeric fault codes without truncating them", () => {
 test("recognizes a code-only question that needs manufacturer context", () => {
   assert.equal(isBareFaultCodeQuestion("Was bedeutet code 22455A?"), true);
   assert.equal(isBareFaultCodeQuestion("code 22455A NEW LIFT"), false);
+});
+
+test("uses the requested German manufacturer clarification", () => {
+  assert.equal(
+    manufacturerClarificationQuestion("Was bedeutet code 22455A?"),
+    "Um Ihnen weiterhelfen zu können: Können Sie angeben, von welchem Hersteller oder Steuerungstyp (z. B. Newlift, Weber, Sigma ....) die Meldung stammt?"
+  );
 });
 
 test("resolves a manufacturer reply into the previous fault question", () => {

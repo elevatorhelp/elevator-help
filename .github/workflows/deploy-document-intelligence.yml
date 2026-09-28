@@ -31,38 +31,6 @@ jobs:
       - name: Build Cloudflare Worker
         run: npm run cf:build
 
-      - name: Restore preview deployment when needed
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-          health_json=$(curl --silent --show-error \
-            https://document-intelligence-elevator-help.baharmand.workers.dev/api/health/gemini \
-            || true)
-          if jq -e '.ok == true' <<<"$health_json" >/dev/null 2>&1; then
-            echo "Preview runtime variables are healthy."
-            exit 0
-          fi
-
-          npx wrangler deployments list \
-            --name document-intelligence-elevator-help \
-            --json > /tmp/preview-deployments.json
-          jq -r '.[] | [.created_on, (.versions[].version_id)] | @tsv' \
-            /tmp/preview-deployments.json
-          healthy_version=$(jq -r '
-            map(select(.created_on < "2026-09-28T21:17:30Z"))
-            | sort_by(.created_on)
-            | reverse
-            | .[0].versions[0].version_id // empty
-          ' /tmp/preview-deployments.json)
-          test -n "$healthy_version"
-          npx wrangler rollback "$healthy_version" \
-            --name document-intelligence-elevator-help \
-            --yes \
-            --message "Restore preview runtime configuration"
-
       - name: Deploy preview Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
