@@ -77,13 +77,12 @@ export function resolveManufacturerClarification(
   const prior = history[history.length - 2];
   const assistant = itemText(last);
   const user = itemText(prior);
+  const isClarification = last?.mode === "clarification" || /(hersteller|manufacturer|steuerungstyp|controller|سازنده|برند|تابلو\s*فرمان|مدل)/i.test(assistant);
 
   if (
     last?.role !== "assistant" ||
     prior?.role !== "user" ||
-    !/(hersteller|manufacturer|steuerungstyp|controller|سازنده|برند|تابلو\s*فرمان|مدل)/i.test(
-      assistant
-    ) ||
+    !isClarification ||
     !extractFaultCode(user) ||
     reply.length > 80
   ) {
