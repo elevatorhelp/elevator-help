@@ -1,6 +1,7 @@
 import { RouterResult } from "./router";
 
 export type InternalEvidence = {
+  id: string;
   text: string;
   score: number;
   manufacturer: string | null;
@@ -123,6 +124,7 @@ export async function retrieveInternalEvidence(
   const candidates = (result.matches || [])
     .filter(authoritativeCandidate)
     .map((match: any) => ({
+      id: String(match?.id || ""),
       text: String(match?.metadata?.text || match?.metadata?.content || "").trim(),
       score: Number(match?.score || 0),
       manufacturer: match?.metadata?.manufacturer ?? null,
