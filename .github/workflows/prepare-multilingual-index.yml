@@ -1,0 +1,45 @@
+name: Prepare multilingual Vectorize index
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/prepare-multilingual-index.yml'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Create multilingual index if missing
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          if ! npx --yes wrangler@latest vectorize get elevator-help-multilingual-v2 >/dev/null 2>&1; then
+            npx --yes wrangler@latest vectorize create elevator-help-multilingual-v2 --dimensions=768 --metric=cosine
+          fi
+
+      - name: Ensure metadata indexes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          current=$(npx --yes wrangler@latest vectorize list-metadata-index elevator-help-multilingual-v2 --json)
+          for property in contentType language documentGroup manufacturer controller faultFamily faultCode sourceFingerprint status; do
+            if ! printf '%s' "$current" | grep -q "\"propertyName\"[[:space:]]*:[[:space:]]*\"$property\""; then
+              npx --yes wrangler@latest vectorize create-metadata-index elevator-help-multilingual-v2 --property-name "$property" --type string
+            fi
+          done
+          if ! printf '%s' "$current" | grep -q '"propertyName"[[:space:]]*:[[:space:]]*"embeddingVersion"'; then
+            npx --yes wrangler@latest vectorize create-metadata-index elevator-help-multilingual-v2 --property-name embeddingVersion --type number
+          fi
