@@ -25,6 +25,10 @@ function buildFilterAttempts(route: RouterResult) {
   const full = buildFilter(route);
   const attempts: Record<string, string>[] = [];
   if (Object.keys(full).length) attempts.push(full);
+  // A manufacturer-qualified fault lookup must never broaden to another
+  // manufacturer's same-numbered fault. That would turn a missing match into
+  // a confident answer grounded in the wrong product family.
+  if (route.manufacturer && route.faultCode) return attempts;
   if (route.faultCode) attempts.push({ faultCode: String(route.faultCode) });
   if (route.manufacturer) attempts.push({ manufacturer: route.manufacturer });
   return attempts.filter(
@@ -138,7 +142,10 @@ export async function retrieveInternalEvidence(
       console.warn("Filtered internal retrieval attempt unavailable", { filter, error });
     }
   }
-  if (!result?.matches?.length) result = await vectorize.query(vector, options);
+  if (!result?.matches?.length) {
+    if (route.manufacturer && route.faultCode) return [];
+    result = await vectorize.query(vector, options);
+  }
   const candidates = (result.matches || [])
     .filter(authoritativeCandidate)
     .map((match: any) => ({
