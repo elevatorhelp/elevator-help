@@ -35,8 +35,10 @@ function parseGroundedAnswer(raw: string, evidence: { id: string; text: string }
   for (const item of parsed.evidence) {
     const index = item?.index;
     const quote = typeof item?.quote === "string" ? item.quote.trim() : "";
-    if (!Number.isInteger(index) || index < 1 || index > evidence.length || quote.length < 12 || !evidence[index - 1].text.includes(quote)) return null;
-    citations.push({ index, quote });
+    const normalizedQuote = quote.replace(/\s+/g, " ").trim();
+    const normalizedSource = evidence[index - 1]?.text.replace(/\s+/g, " ").trim() || "";
+    if (!Number.isInteger(index) || index < 1 || index > evidence.length || normalizedQuote.length < 12 || !normalizedSource.includes(normalizedQuote)) return null;
+    citations.push({ index, quote: normalizedQuote });
   }
   const faultCode = extractFaultCode(question);
   if (faultCode && !citations.some(({ quote }) => quote.toLowerCase().includes(faultCode.toLowerCase()))) return null;
