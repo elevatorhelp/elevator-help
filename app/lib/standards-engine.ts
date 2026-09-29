@@ -17,7 +17,7 @@ type StandardTopic =
   | "separation"
   | "general";
 
-type VerifiedStandardClaim = {
+export type VerifiedStandardClaim = {
   standard: CoreStandardCode;
   clause: string;
   text: string;
@@ -1078,7 +1078,7 @@ function clauseLabel(language?: string | null) {
 function presentationLabels(language?: string | null) {
   switch (language) {
     case "de":
-      return { summary: "Kurz gesagt", details: "Was die Norm konkret sagt" };
+      return { summary: "Kurz gesagt – das schreibt die Norm vor", details: "Was die Norm konkret sagt" };
     case "fa":
       return { summary: "خلاصهٔ فنی", details: "آنچه Norm دقیقاً می‌گوید" };
     case "tr":
@@ -1091,6 +1091,7 @@ function presentationLabels(language?: string | null) {
 function cleanHumanSummary(summary: string) {
   const normalized = String(summary || "").replace(/\s+/g, " ").trim();
   if (!normalized) return "";
+  if (/^[\\/]/.test(normalized) || /\\b(?:page numbers?|sources?|references?|clause numbers?|section numbers?)\\b/i.test(normalized)) return "";
 
   const cut = normalized.search(
     /(?:\bEN\s*81\s*[-–]|\bAbschnitt\s+\d|\bClause\s+\d|\bMadde\s+\d|\bпункт\s+\d|\bالبند\s+\d)/i
@@ -1170,12 +1171,17 @@ function formatClaimDetails(
     .join("\n");
 }
 
+export function formatGermanStandardsAnswer(claims: VerifiedStandardClaim[]) {
+  return `Kurz gesagt – das schreibt die Norm vor:\n${formatClaimDetails(claims, "de")}`;
+}
+
 async function formatAnswer(
   question: string,
   claims: VerifiedStandardClaim[],
   language: string | null | undefined,
   apiKey: string
 ) {
+  if (language === "de") return formatGermanStandardsAnswer(claims);
   const labels = presentationLabels(language);
   const summary = await buildHumanSummary(question, claims, language, apiKey);
   const details = formatClaimDetails(claims, language);

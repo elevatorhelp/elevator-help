@@ -25,5 +25,8 @@ jobs:
       - name: Test German compound language
         run: npm run test:language
 
+      - name: Test standards presentation
+        run: npm run test:standards-presentation
+
       - name: Build
         run: npm run build

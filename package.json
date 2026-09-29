@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "test:language": "node --experimental-strip-types scripts/test-german-language.ts",
+    "test:standards-presentation": "node --experimental-strip-types scripts/test-standards-presentation.ts",
     "build": "next build",
     "cf:build": "opennextjs-cloudflare build",
     "deploy": "opennextjs-cloudflare build && wrangler deploy"
