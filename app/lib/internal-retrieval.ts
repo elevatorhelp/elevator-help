@@ -150,7 +150,7 @@ export async function retrieveInternalEvidence(
 ): Promise<InternalEvidence[]> {
   if (!shouldTryInternalRetrieval(route)) return [];
   const retrievalQuery = route.manufacturer && route.faultCode
-    ? `${String(route.faultCode)} ${String(route.faultCode)} ${route.manufacturer}`
+    ? `${String(route.faultCode)} ${route.manufacturer}`
     : buildRetrievalQuery(query, route);
   const embedding = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [retrievalQuery] });
   const vector = (embedding as any)?.data?.[0];
