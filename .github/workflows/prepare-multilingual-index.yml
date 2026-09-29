@@ -24,8 +24,8 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-          if ! npx --yes wrangler@latest vectorize get elevator-help-multilingual-v2 >/dev/null 2>&1; then
-            npx --yes wrangler@latest vectorize create elevator-help-multilingual-v2 --dimensions=768 --metric=cosine
+          if ! npx --yes wrangler@4.125.0 vectorize get elevator-help-multilingual-v2 >/dev/null 2>&1; then
+            npx --yes wrangler@4.125.0 vectorize create elevator-help-multilingual-v2 --dimensions=768 --metric=cosine
           fi
 
       - name: Ensure metadata indexes
@@ -34,12 +34,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          current=$(npx --yes wrangler@latest vectorize list-metadata-index elevator-help-multilingual-v2 --json)
+          current=$(npx --yes wrangler@4.125.0 vectorize list-metadata-index elevator-help-multilingual-v2 --json)
           for property in contentType language documentGroup manufacturer controller faultFamily faultCode sourceFingerprint status; do
             if ! printf '%s' "$current" | grep -q "\"propertyName\"[[:space:]]*:[[:space:]]*\"$property\""; then
-              npx --yes wrangler@latest vectorize create-metadata-index elevator-help-multilingual-v2 --property-name "$property" --type string
+              npx --yes wrangler@4.125.0 vectorize create-metadata-index elevator-help-multilingual-v2 --property-name "$property" --type string
             fi
           done
           if ! printf '%s' "$current" | grep -q '"propertyName"[[:space:]]*:[[:space:]]*"embeddingVersion"'; then
-            npx --yes wrangler@latest vectorize create-metadata-index elevator-help-multilingual-v2 --property-name embeddingVersion --type number
+            npx --yes wrangler@4.125.0 vectorize create-metadata-index elevator-help-multilingual-v2 --property-name embeddingVersion --type number
           fi
