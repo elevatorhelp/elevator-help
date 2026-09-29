@@ -556,6 +556,12 @@ const EXACT_CLAUSE_VECTOR_CANDIDATES: Record<string, string[]> = {
     "drv-d73c7eed34f2294bd1e353e9a38dea838ef488f1",
     "drv-02dbfe89dedf5fd302e7343b203a6085356a92b2",
     "drv-70a511353fd594a0351d63814fb3bbd233fbd5fb",
+    "drv-545db0653fefc232516246dcf6d39f81d27303be",
+    "drv-d244dd823855b3661bfac7f6e53d0d15fc1ed0a2",
+    "drv-248b0a8d7111a7cfe266d4ec5b84bf4f6b263b0f",
+    "drv-f1762f395ec6e6d6669351a3f8bceeb52e702e72",
+    "drv-5741368f566a81848da877cdf06e6bf5d83fccf8",
+    "drv-f0ef38c9dc6fbb5e60d940818e2967aba8c208e5",
   ],
   "EN 81-20|5.3.4.1": [
     "drv-d34ec1f027752381729f91cefcee003281735f59",
@@ -564,6 +570,12 @@ const EXACT_CLAUSE_VECTOR_CANDIDATES: Record<string, string[]> = {
     "drv-d68f9ec2edeb66960b2afc4159fe5d3cfe38c1eb",
     "drv-ad65861df3fe10eb7954958211948ffdd5ee4e16",
     "drv-6c42248faadc9d10707d4c73527a7ff976bb7074",
+    "drv-1b7669ba3a5b70c15d9238deb61d8108512f58f3",
+    "drv-053c306a5e05f78a0398d479010e45150334d6b6",
+    "drv-bd47a4a03210198b372f770d1dc7d749d93ac5da",
+    "drv-1534a701baabac87cd594eadc24910e05262caf4",
+    "drv-32ece01c9967edaa24e92a4779796cd723c9b690",
+    "drv-c2ab916efc9d27dd54a0fbcb66b9c96446a83feb",
   ],
 };
 
