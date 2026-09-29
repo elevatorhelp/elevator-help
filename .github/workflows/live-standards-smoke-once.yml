@@ -1,4 +1,5 @@
 name: One-shot standards production smoke
+# Rerun after authoritative EN 81-20 ingestion
 
 on:
   push:
