@@ -68,7 +68,7 @@ function normalized(value: unknown) {
 }
 
 function compactIdentifier(value: unknown) {
-  return normalized(value).replace(/[^\\p{L}\\p{N}]+/gu, "");
+  return normalized(value).replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function exactFaultCandidate(item: InternalEvidence, route: RouterResult) {
