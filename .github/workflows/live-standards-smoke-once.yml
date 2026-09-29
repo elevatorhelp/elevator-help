@@ -1,5 +1,5 @@
 name: One-shot standards production smoke
-# Rerun after authoritative EN 81-20 ingestion
+# Rerun after standards routing deployment
 
 on:
   push:
