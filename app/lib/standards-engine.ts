@@ -703,6 +703,81 @@ async function rawMatchesForQuery(
   return queryWithFilter();
 }
 
+function deterministicClearanceClaims(
+  question: string,
+  evidence: any[],
+  language?: string | null
+): VerifiedStandardClaim[] {
+  const asksClearance =
+    /(abstand|mindestabstand|maximalabstand|minimum|maximum|\\bmin\\.?\\b|\\bmax\\.?\\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(question);
+  const hasRelevantComponents =
+    /(schachtwand|schacht|fahrkorb|kabin|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(question);
+  if (!asksClearance || !hasRelevantComponents) return [];
+
+  const findEvidence = (clause: string, value: RegExp) =>
+    evidence.find((match: any) => {
+      const text = normalizeEvidenceText(match?.metadata?.text);
+      return (
+        match?.standardCode === "EN 81-20" &&
+        excerptContainsClause(text, clause) &&
+        value.test(text)
+      );
+    });
+
+  const wall = findEvidence("5.2.5.3.1", /0[,.]15\\s*m\\b/i);
+  const sill = findEvidence("5.3.4.1", /35\\s*mm\\b/i);
+  if (!wall || !sill) return [];
+
+  if (language === "de") {
+    return [
+      {
+        standard: "EN 81-20",
+        clause: "5.2.5.3.1",
+        topic: "structure",
+        text: "Der horizontale Abstand von der inneren Schachtwand zur Fahrkorbschwelle, zum Türrahmen oder zur Schließkante einer Fahrkorb-Schiebetür darf grundsätzlich 0,15 m nicht überschreiten; die in diesem Abschnitt genannten Ausnahmen sind gesondert zu prüfen.",
+      },
+      {
+        standard: "EN 81-20",
+        clause: "5.3.4.1",
+        topic: "access",
+        text: "Der horizontale Abstand zwischen der Schwelle des Fahrkorbzugangs und der Schachttürschwelle darf 35 mm nicht überschreiten.",
+      },
+    ];
+  }
+
+  if (language === "fa") {
+    return [
+      {
+        standard: "EN 81-20",
+        clause: "5.2.5.3.1",
+        topic: "structure",
+        text: "فاصله افقی از دیواره داخلی چاه تا آستانه یا قاب درِ کابین یا لبه بسته‌شونده درِ کشویی کابین اصولاً نباید از 0.15 m بیشتر باشد؛ استثناهای همین بند باید جداگانه بررسی شوند.",
+      },
+      {
+        standard: "EN 81-20",
+        clause: "5.3.4.1",
+        topic: "access",
+        text: "فاصله افقی بین آستانه ورودی کابین و آستانه درِ طبقه نباید از 35 mm بیشتر باشد.",
+      },
+    ];
+  }
+
+  return [
+    {
+      standard: "EN 81-20",
+      clause: "5.2.5.3.1",
+      topic: "structure",
+      text: "The horizontal distance from the inner shaft wall to the car sill, door frame or closing edge of a car sliding door must generally not exceed 0.15 m; the exceptions in that clause must be checked separately.",
+    },
+    {
+      standard: "EN 81-20",
+      clause: "5.3.4.1",
+      topic: "access",
+      text: "The horizontal distance between the car-entrance sill and the landing-door sill must not exceed 35 mm.",
+    },
+  ];
+}
+
 async function queryOneStandard(
   question: string,
   route: any,
@@ -1137,6 +1212,20 @@ export async function answerStandardsQuestion(
       }\nEXCERPT:\n${metadata.text}`;
     })
     .join("\n\n");
+
+  const deterministicClaims = deterministicClearanceClaims(
+    question,
+    evidence,
+    route.questionLanguage
+  );
+  if (deterministicClaims.length) {
+    return {
+      sufficient: true,
+      answer: await formatAnswer(question, deterministicClaims, route.questionLanguage, apiKey),
+      checkedStandards,
+      verifiedClaims: deterministicClaims,
+    };
+  }
 
   const prompt = `
 You are the standards evidence layer of elevator.help.
