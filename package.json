@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "test:language": "node --experimental-strip-types scripts/test-german-language.ts",
+    "test:incremental-ingestion": "node scripts/test-incremental-ingestion.mjs",
     "test:multilingual-retrieval": "node --experimental-strip-types scripts/test-multilingual-retrieval.ts",
     "test:standards-presentation": "node --experimental-strip-types scripts/test-standards-presentation.ts",
     "build": "next build",
