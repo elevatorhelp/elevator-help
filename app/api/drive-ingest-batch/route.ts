@@ -1,6 +1,13 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
-import { canonicalManufacturer, extractFaultCode } from "../../lib/fault-context";
+import {
+  canonicalManufacturer,
+  extractFaultCode,
+} from "../../lib/fault-context";
+import {
+  MULTILINGUAL_EMBEDDING_VERSION,
+  embedRetrievalDocuments,
+} from "../../lib/multilingual-embedding";
 
 type IncomingChunk = {
   id: string;
@@ -11,6 +18,7 @@ type IncomingChunk = {
   page: number;
   chunkIndex: number;
   modifiedTime?: string;
+  sourceFingerprint?: string;
   languageHint?: string | null;
   documentGroupHint?: string | null;
 };
@@ -31,10 +39,13 @@ type EnrichedMetadata = {
 const MAX_BATCH_SIZE = 8;
 const MAX_TEXT_LENGTH = 5000;
 const MAX_RETRIEVAL_CONTEXT_LENGTH = 700;
-const RAW_EMBEDDING_VERSION = 2;
+const RAW_EMBEDDING_VERSION = MULTILINGUAL_EMBEDDING_VERSION;
 
 function unauthorized() {
-  return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  return NextResponse.json(
+    { ok: false, error: "Unauthorized" },
+    { status: 401 },
+  );
 }
 
 function parseJsonObject(text: string) {
@@ -65,7 +76,11 @@ function parseJsonObject(text: string) {
 function normalizeNullable(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "unknown") {
+  if (
+    !trimmed ||
+    trimmed.toLowerCase() === "null" ||
+    trimmed.toLowerCase() === "unknown"
+  ) {
     return null;
   }
   return trimmed;
@@ -90,7 +105,8 @@ function normalizeContentType(value: unknown) {
     "general",
   ]);
 
-  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "general";
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase() : "general";
   return allowed.has(normalized) ? normalized : "general";
 }
 
@@ -155,7 +171,7 @@ ${JSON.stringify(payload)}
           maxOutputTokens: 3200,
         },
       }),
-    }
+    },
   );
 
   if (!response.ok) {
@@ -172,33 +188,43 @@ ${JSON.stringify(payload)}
 
   const parsed = parseJsonObject(raw);
   const items = Array.isArray(parsed?.items) ? parsed.items : [];
-  const byId = new Map<string, any>(items.map((item: any) => [String(item?.id || ""), item]));
+  const byId = new Map<string, any>(
+    items.map((item: any) => [String(item?.id || ""), item]),
+  );
 
   return chunks.map((chunk): EnrichedMetadata => {
     const item = byId.get(chunk.id) || {};
     const faultDocument = /(?:fault|error|fehler|code|خطا|کد)/i.test(
-      `${chunk.sourcePath} ${chunk.fileName}`
+      `${chunk.sourcePath} ${chunk.fileName}`,
     );
     const deterministicFaultCode = extractFaultCode(chunk.text, faultDocument);
     const deterministicManufacturer = canonicalManufacturer(
-      `${chunk.sourcePath} ${chunk.fileName} ${chunk.text.slice(0, 500)}`
+      `${chunk.sourcePath} ${chunk.fileName} ${chunk.text.slice(0, 500)}`,
     );
     const retrievalContext = normalizeRetrievalContext(item.retrievalContext);
 
     return {
       id: chunk.id,
-      manufacturer: normalizeNullable(item.manufacturer) || deterministicManufacturer,
+      manufacturer:
+        normalizeNullable(item.manufacturer) || deterministicManufacturer,
       controller: normalizeNullable(item.controller),
-      contentType: deterministicFaultCode ? "fault" : normalizeContentType(item.contentType),
+      contentType: deterministicFaultCode
+        ? "fault"
+        : normalizeContentType(item.contentType),
       faultFamily: normalizeNullable(item.faultFamily),
       faultCode: normalizeNullable(item.faultCode) || deterministicFaultCode,
       faultName: normalizeNullable(item.faultName),
-      language: normalizeNullable(item.language) || normalizeNullable(chunk.languageHint),
+      language:
+        normalizeNullable(item.language) ||
+        normalizeNullable(chunk.languageHint),
       documentGroup:
-        normalizeNullable(item.documentGroup) || normalizeNullable(chunk.documentGroupHint),
-      retrievalContext: deterministicFaultCode && !retrievalContext?.includes(deterministicFaultCode)
-        ? `Exact fault code ${deterministicFaultCode}. ${retrievalContext || ""}`.trim()
-        : retrievalContext,
+        normalizeNullable(item.documentGroup) ||
+        normalizeNullable(chunk.documentGroupHint),
+      retrievalContext:
+        deterministicFaultCode &&
+        !retrievalContext?.includes(deterministicFaultCode)
+          ? `Exact fault code ${deterministicFaultCode}. ${retrievalContext || ""}`.trim()
+          : retrievalContext,
     };
   });
 }
@@ -216,26 +242,47 @@ export async function POST(request: NextRequest) {
     const action = body?.action || "upsert";
     const { env } = getCloudflareContext();
     const vectorize = (env as any).VECTORIZE;
+    const vectorizeV2 = (env as any).VECTORIZE_V2;
+
+    if (action === "status") {
+      return NextResponse.json({
+        ok: true,
+        rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
+        legacyConfigured: Boolean(vectorize),
+        multilingualConfigured: Boolean(vectorizeV2),
+      });
+    }
+
+    if (!vectorize || !vectorizeV2) {
+      throw new Error("Vectorize ingestion bindings are not configured");
+    }
 
     if (action === "delete") {
       const ids = Array.isArray(body?.ids)
-        ? body.ids.filter((id: unknown) => typeof id === "string" && id.length > 0).slice(0, 500)
+        ? body.ids
+            .filter((id: unknown) => typeof id === "string" && id.length > 0)
+            .slice(0, 500)
         : [];
 
       if (!ids.length) {
         return NextResponse.json({ ok: true, deleted: 0 });
       }
 
-      await vectorize.deleteByIds(ids);
+      await Promise.all([
+        vectorize.deleteByIds(ids),
+        vectorizeV2.deleteByIds(ids),
+      ]);
       return NextResponse.json({ ok: true, deleted: ids.length });
     }
 
-    const chunks: IncomingChunk[] = Array.isArray(body?.chunks) ? body.chunks : [];
+    const chunks: IncomingChunk[] = Array.isArray(body?.chunks)
+      ? body.chunks
+      : [];
 
     if (!chunks.length || chunks.length > MAX_BATCH_SIZE) {
       return NextResponse.json(
         { ok: false, error: `chunks must contain 1-${MAX_BATCH_SIZE} items` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -250,18 +297,24 @@ export async function POST(request: NextRequest) {
         !Number.isInteger(chunk.page) ||
         !Number.isInteger(chunk.chunkIndex)
       ) {
-        return NextResponse.json({ ok: false, error: "Invalid chunk payload" }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: "Invalid chunk payload" },
+          { status: 400 },
+        );
       }
 
       if (chunk.text.length > MAX_TEXT_LENGTH) {
-        return NextResponse.json({ ok: false, error: "Chunk text is too large" }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: "Chunk text is too large" },
+          { status: 400 },
+        );
       }
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     const ai = (env as any).AI;
 
-    if (!apiKey || !ai || !vectorize) {
+    if (!apiKey || !ai) {
       throw new Error("Ingestion dependencies are not configured");
     }
 
@@ -277,12 +330,16 @@ export async function POST(request: NextRequest) {
     });
 
     const embeddings = (embeddingResult as any).data;
+    const multilingualEmbeddings = await embedRetrievalDocuments(
+      chunks.map((chunk) => chunk.text),
+      apiKey,
+    );
 
     if (!Array.isArray(embeddings) || embeddings.length !== chunks.length) {
       throw new Error("Embedding count does not match chunk count");
     }
 
-    const vectors = chunks.map((chunk, index) => {
+    const vectorRecords = chunks.map((chunk, index) => {
       const meta = enriched[index];
       const metadata: Record<string, string | number> = {
         // Final standards evidence must remain the exact raw source text. The
@@ -294,9 +351,12 @@ export async function POST(request: NextRequest) {
         sourcePath: chunk.sourcePath,
         page: chunk.page,
         chunkIndex: chunk.chunkIndex,
+        status: "active",
       };
 
       if (chunk.modifiedTime) metadata.modifiedTime = chunk.modifiedTime;
+      if (chunk.sourceFingerprint)
+        metadata.sourceFingerprint = chunk.sourceFingerprint;
       if (meta.manufacturer) metadata.manufacturer = meta.manufacturer;
       if (meta.controller) metadata.controller = meta.controller;
       if (meta.contentType) metadata.contentType = meta.contentType;
@@ -306,21 +366,33 @@ export async function POST(request: NextRequest) {
       if (meta.language) metadata.language = meta.language;
       if (meta.documentGroup) metadata.documentGroup = meta.documentGroup;
 
-      return {
-        id: chunk.id,
-        values: embeddings[index],
-        metadata,
-      };
+      return { chunk, metadata, index };
     });
 
-    await vectorize.upsert(vectors);
+    const legacyVectors = vectorRecords.map(({ chunk, metadata, index }) => ({
+      id: chunk.id,
+      values: embeddings[index],
+      metadata: { ...metadata, embeddingVersion: 2 },
+    }));
+    const multilingualVectors = vectorRecords.map(
+      ({ chunk, metadata, index }) => ({
+        id: chunk.id,
+        values: multilingualEmbeddings[index],
+        metadata: { ...metadata, embeddingVersion: RAW_EMBEDDING_VERSION },
+      }),
+    );
+
+    await vectorize.upsert(legacyVectors);
+    await vectorizeV2.upsert(multilingualVectors);
 
     return NextResponse.json({
       ok: true,
-      upserted: vectors.length,
+      upserted: multilingualVectors.length,
       rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
-      ids: vectors.map((vector) => vector.id),
-      enrichment: enriched.map(({ retrievalContext: _retrievalContext, ...metadata }) => metadata),
+      ids: multilingualVectors.map((vector) => vector.id),
+      enrichment: enriched.map(
+        ({ retrievalContext: _retrievalContext, ...metadata }) => metadata,
+      ),
     });
   } catch (error) {
     console.error("Drive ingestion error:", error);
@@ -329,7 +401,7 @@ export async function POST(request: NextRequest) {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
