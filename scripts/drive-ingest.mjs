@@ -1,9 +1,28 @@
 import { createHash, createSign } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, basename, extname } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
 
+const execFileAsync = promisify(execFile);
+const OFFICE_EXTENSIONS = new Set([
+  ".doc", ".docx", ".docm", ".dot", ".dotx", ".dotm", ".rtf",
+  ".xls", ".xlsx", ".xlsm", ".xlsb", ".xlt", ".xltx", ".xltm", ".xlam",
+  ".ppt", ".pptx", ".pptm", ".pot", ".potx", ".potm", ".pps", ".ppsx", ".ppsm",
+]);
+const TEXT_EXTENSIONS = new Set([".txt", ".md", ".csv", ".tsv", ".log"]);
+const GOOGLE_WORKSPACE_MIME_TYPES = new Set([
+  "application/vnd.google-apps.document",
+  "application/vnd.google-apps.spreadsheet",
+  "application/vnd.google-apps.presentation",
+]);
+
 const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "1GAuMp6D99K9kqLkUMJZM-iHoIS319Loo";
+const TARGET_FILE_ID = process.env.TARGET_FILE_ID || "";
 const MAX_FILES = Number(process.env.MAX_FILES || "1");
 const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/api/drive-ingest-batch";
 const DOCUMENT_MAP_ENDPOINT =
@@ -12,7 +31,7 @@ const STATE_PATH = process.env.STATE_PATH || ".ingestion-state/drive.json";
 const BATCH_SIZE = 8;
 const CHUNK_SIZE = 2200;
 const CHUNK_OVERLAP = 250;
-const MIN_CHUNK_LENGTH = 80;
+const MIN_CHUNK_LENGTH = 20;
 const MAP_PAGES_PER_BATCH = 6;
 const MAX_MAP_PAGE_TEXT = 7000;
 const DOCUMENT_MAP_VERSION = 3;
@@ -82,7 +101,10 @@ async function listFolder(folderId, accessToken, pathPrefix = "") {
       const currentPath = pathPrefix ? `${pathPrefix}/${file.name}` : file.name;
       if (file.mimeType === "application/vnd.google-apps.folder") {
         entries.push(...(await listFolder(file.id, accessToken, currentPath)));
-      } else if (file.mimeType === "application/pdf") {
+      } else if (file.mimeType === "application/pdf" || file.mimeType === "text/plain" ||
+        TEXT_EXTENSIONS.has(extname(file.name).toLowerCase()) ||
+        OFFICE_EXTENSIONS.has(extname(file.name).toLowerCase()) ||
+        GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType)) {
         entries.push({ ...file, sourcePath: currentPath });
       }
     }
@@ -93,12 +115,41 @@ async function listFolder(folderId, accessToken, pathPrefix = "") {
   return entries;
 }
 
-async function downloadPdf(fileId, accessToken) {
+async function downloadDocument(file, accessToken) {
+  const googleWorkspace = GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType);
+  const url = googleWorkspace
+    ? `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=application%2Fpdf`
+    : `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) throw new Error(`Document download error: ${await response.text()}`);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function downloadText(fileId, accessToken) {
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!response.ok) throw new Error(`PDF download error: ${await response.text()}`);
-  return new Uint8Array(await response.arrayBuffer());
+  if (!response.ok) throw new Error(`Text download error: ${await response.text()}`);
+  return response.text();
+}
+
+async function officeToPdf(file, bytes) {
+  const directory = await mkdtemp(join(tmpdir(), "elevator-office-"));
+  const name = basename(file.name).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const input = join(directory, name);
+  const output = join(directory, `${name.slice(0, -extname(name).length)}.pdf`);
+  try {
+    await writeFile(input, bytes);
+    await execFileAsync("soffice", [
+      "-env:UserInstallation=file://" + join(directory, "profile"),
+      "--headless", "--convert-to", "pdf", "--outdir", directory, input,
+    ], { timeout: 120000, maxBuffer: 1024 * 1024 });
+    return new Uint8Array(await readFile(output));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 function detectLanguageHint(fileName) {
@@ -113,7 +164,7 @@ function detectLanguageHint(fileName) {
 
 function documentGroupHint(fileName) {
   return fileName
-    .replace(/\.pdf$/i, "")
+    .replace(/\.[^.]+$/i, "")
     .replace(/(?:^|[_\-.])(de[_\-.]?en|en[_\-.]?de|de|en)(?:[_\-.]|$)/gi, "-")
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-+|-+$/g, "")
@@ -302,7 +353,10 @@ async function processPdf(
   } = {}
 ) {
   console.log(`Downloading ${file.sourcePath}`);
-  const bytes = await downloadPdf(file.id, accessToken);
+  const original = await downloadDocument(file, accessToken);
+  const bytes = file.mimeType === "application/pdf" || GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType)
+    ? original
+    : await officeToPdf(file, original);
   const pdf = await getDocumentProxy(bytes, { maxImageSize: 16_777_216 });
   const { totalPages, text } = await extractText(pdf, { mergePages: false });
   const pages = Array.isArray(text) ? text : [text];
@@ -360,6 +414,30 @@ async function processPdf(
   };
 }
 
+async function processText(file, accessToken, ingestToken) {
+  const text = await downloadText(file.id, accessToken);
+  const chunks = splitIntoChunks(text).map((part, chunkIndex) => ({
+    id: vectorId(file.id, 1, chunkIndex),
+    text: part,
+    sourceFileId: file.id,
+    fileName: file.name,
+    sourcePath: file.sourcePath,
+    page: 1,
+    chunkIndex,
+    modifiedTime: file.modifiedTime || undefined,
+    languageHint: detectLanguageHint(file.name),
+    documentGroupHint: documentGroupHint(file.name),
+  }));
+  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+    const result = await callIngest({ action: "upsert", chunks: chunks.slice(i, i + BATCH_SIZE) }, ingestToken);
+    if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
+      throw new Error("Ingestion endpoint raw embedding version mismatch");
+    }
+  }
+  console.log(`Indexed ${chunks.length} text chunks from ${file.sourcePath}`);
+  return { ids: chunks.map((chunk) => chunk.id), mapIds: [] };
+}
+
 async function main() {
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
@@ -369,17 +447,19 @@ async function main() {
 
   const serviceAccount = JSON.parse(serviceAccountRaw);
   const accessToken = await getGoogleAccessToken(serviceAccount);
-  const files = await listFolder(DRIVE_FOLDER_ID, accessToken);
+  const allFiles = await listFolder(DRIVE_FOLDER_ID, accessToken);
+  const files = TARGET_FILE_ID ? allFiles.filter((file) => file.id === TARGET_FILE_ID) : allFiles;
+  if (TARGET_FILE_ID && !files.length) throw new Error("Target file not found in Drive scope");
   const state = await loadState();
   state.version = 2;
   state.scopes ||= {};
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
 
-  console.log(`Found ${files.length} PDF files in Drive scope ${DRIVE_FOLDER_ID}`);
+  console.log(`Found ${files.length} supported documents in Drive scope ${DRIVE_FOLDER_ID}`);
 
-  const foundIds = new Set(files.map((file) => file.id));
-  for (const [fileId, old] of Object.entries(scope.files)) {
+  const foundIds = new Set(allFiles.map((file) => file.id));
+  for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : scope.files)) {
     if (!foundIds.has(fileId)) {
       const oldIds = Array.from(
         new Set([
@@ -401,7 +481,7 @@ async function main() {
     const currentFingerprint = fingerprint(file);
     const rawFingerprint = previous?.rawFingerprint ?? previous?.fingerprint;
     const mapFingerprint = previous?.mapFingerprint ?? previous?.fingerprint;
-    return (
+    return Boolean(TARGET_FILE_ID) || (
       rawFingerprint !== currentFingerprint ||
       previous?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION ||
       !Array.isArray(previous?.ids) ||
@@ -421,11 +501,12 @@ async function main() {
     const currentFingerprint = fingerprint(file);
     const previousRawFingerprint = previous.rawFingerprint ?? previous.fingerprint;
     const previousMapFingerprint = previous.mapFingerprint ?? previous.fingerprint;
-    const needsRaw =
+    const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
+    const needsRaw = Boolean(TARGET_FILE_ID) ||
       previousRawFingerprint !== currentFingerprint ||
       previous.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION ||
       !Array.isArray(previous.ids);
-    const needsMap =
+    const needsMap = Boolean(TARGET_FILE_ID) ||
       previousMapFingerprint !== currentFingerprint ||
       previous.mapVersion !== DOCUMENT_MAP_VERSION ||
       !Array.isArray(previous.mapIds);
@@ -439,10 +520,12 @@ async function main() {
 
     if (needsRaw) {
       console.log(`Raw-vector backfill required for ${file.name}`);
-      const indexedRaw = await processPdf(file, accessToken, ingestToken, {
+      const indexedRaw = await (isText
+        ? processText(file, accessToken, ingestToken)
+        : processPdf(file, accessToken, ingestToken, {
         ingestRaw: true,
         ingestMap: false,
-      });
+      }));
       const newIds = Array.isArray(indexedRaw.ids) ? indexedRaw.ids : [];
       const newIdSet = new Set(newIds);
       const staleRawIds = (Array.isArray(previous.ids) ? previous.ids : []).filter(
@@ -461,6 +544,18 @@ async function main() {
     }
 
     if (needsMap) {
+      if (isText) {
+        next.mapIds = [];
+        next.mapVersion = DOCUMENT_MAP_VERSION;
+        next.mapFingerprint = currentFingerprint;
+        next.mapIndexedAt = new Date().toISOString();
+        next.fingerprint = currentFingerprint;
+        next.indexedAt = new Date().toISOString();
+        scope.files[file.id] = next;
+        state.scopes[DRIVE_FOLDER_ID] = scope;
+        await saveState(state);
+        continue;
+      }
       console.log(`Document-map backfill required for ${file.name}`);
       const canResumeMap =
         previous.partialMapVersion === DOCUMENT_MAP_VERSION &&

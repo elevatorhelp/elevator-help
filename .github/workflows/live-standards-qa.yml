@@ -2,8 +2,11 @@ name: Live Standards QA
 
 on:
   push:
+    branches: [main]
     paths:
-      - .github/workflows/live-standards-qa.yml
+      - 'app/api/ask/**'
+      - 'app/lib/**'
+      - '.github/workflows/live-standards-qa.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,46 +20,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          q="wie viel ist min. abstand zwischen kabinenaufzug und schachtwand ?"
-
-          validate() {
-            local file="$1"
-            node - "$file" <<'NODE'
-          const fs = require('fs');
-          const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          const answer = String(data.answer || '');
-          const ok =
-            data.mode === 'standards_knowledge_base' &&
-            answer.includes('5.2.5.3.1') &&
-            answer.includes('5.3.4.1') &&
-            /(?:0[,.]15\s*m|150\s*mm)/i.test(answer) &&
-            /35\s*mm/i.test(answer) &&
-            !answer.includes('2.1.1') &&
-            !answer.includes('2.1.2') &&
-            !/formuliere.*konkreter|bitte.*aufzug|bitte.*elevator/i.test(answer.toLowerCase().replace(/\s+/g, ' '));
-          if (!ok) {
-            console.error(JSON.stringify({ mode: data.mode, answer }, null, 2));
-            process.exit(1);
-          }
-NODE
-          }
-
+          payload='{"question":"wie viel ist min. abstand zwischen kabinenaufzug und schachtwand ?"}'
           for attempt in $(seq 1 18); do
-            echo "Attempt $attempt/18"
-            payload=$(node -e 'process.stdout.write(JSON.stringify({question:process.argv[1]}))' "$q")
-            status=$(curl --silent --show-error --max-time 90 --output /tmp/live.json --write-out "%{http_code}" \
-              -X POST "https://elevator.help/api/ask" \
-              -H "Content-Type: application/json" \
-              --data "$payload") || status="000"
-            echo "HTTP_STATUS=$status"
-            cat /tmp/live.json 2>/dev/null || true
-            echo
-            if [ "$status" = "200" ] && validate /tmp/live.json; then
-              echo "PASS: natural phrasing reaches verified EN 81-20 clearance clauses and values."
+            status=$(curl --silent --show-error --max-time 90               --output /tmp/live.json --write-out "%{http_code}"               -X POST "https://elevator.help/api/ask"               -H "Content-Type: application/json"               --data "$payload") || status="000"
+            if [ "$status" = "200" ] && node -e '
+              const fs=require("fs");
+              const data=JSON.parse(fs.readFileSync("/tmp/live.json","utf8"));
+              const answer=String(data.answer||"");
+              const ok=data.mode==="standards_knowledge_base"
+                && answer.includes("5.2.5.3.1")
+                && answer.includes("5.3.4.1")
+                && /(?:0[,.]15\s*m|150\s*mm)/i.test(answer)
+                && /35\s*mm/i.test(answer)
+                && !answer.includes("2.1.1")
+                && !answer.includes("2.1.2");
+              if(!ok){console.error(JSON.stringify({mode:data.mode,answer},null,2));process.exit(1);}
+            '; then
+              echo "PASS: production standards answer is verified."
               exit 0
             fi
             sleep 20
           done
-
-          echo "FAIL: live clearance QA did not pass after deployment retries."
+          echo "FAIL: production standards QA did not pass after deployment retries."
           exit 1

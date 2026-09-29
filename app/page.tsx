@@ -3,6 +3,7 @@
 import {
   FormEvent,
   ReactNode,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -20,6 +21,7 @@ type ChatMessage = {
   text: string;
   references?: ReferenceItem[];
   disclosure?: string;
+  mode?: string;
 };
 
 const quickPrompts = [
@@ -327,12 +329,17 @@ function SourceList({
 function Bubble({
   children,
   role,
+  anchorId,
 }: {
   children: ReactNode;
   role: "user" | "assistant";
+  anchorId?: string;
 }) {
   return (
-    <div className={`messageRow ${role}`}>
+    <div
+      id={anchorId}
+      className={`messageRow ${role}`}
+    >
       <div className="messageInner">
         {role === "assistant" && (
           <div className="assistantAvatar">
@@ -375,6 +382,23 @@ export default function HomePage() {
 
   const hasConversation = messages.length > 0;
 
+  useEffect(() => {
+    const latestMessage = messages[messages.length - 1];
+
+    if (!latestMessage || latestMessage.role !== "user") return;
+
+    const frame = requestAnimationFrame(() => {
+      document
+        .getElementById(`message-${latestMessage.id}`)
+        ?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [messages]);
+
   async function ask(customQuestion?: string) {
     const finalQuestion = (
       customQuestion ?? question
@@ -408,6 +432,7 @@ export default function HomePage() {
           history: messages.slice(-10).map((message) => ({
             role: message.role,
             content: message.text,
+            mode: message.mode,
           })),
         }),
       });
@@ -468,6 +493,7 @@ export default function HomePage() {
           typeof data?.disclosure === "string"
             ? data.disclosure
             : undefined,
+        mode: typeof data?.mode === "string" ? data.mode : undefined,
       };
 
       setMessages((current) => [
@@ -604,6 +630,11 @@ export default function HomePage() {
               <Bubble
                 key={message.id}
                 role={message.role}
+                anchorId={
+                  message.role === "user"
+                    ? `message-${message.id}`
+                    : undefined
+                }
               >
                 <div className="messageText">
                   {message.text}
@@ -1077,6 +1108,7 @@ export default function HomePage() {
         .messageRow {
           width: 100%;
           padding: 20px 22px;
+          scroll-margin-top: 14px;
         }
 
         .messageInner {
