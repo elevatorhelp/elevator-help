@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, basename, extname } from "node:path";
+import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
@@ -34,8 +35,8 @@ const CHUNK_OVERLAP = 250;
 const MIN_CHUNK_LENGTH = 20;
 const MAP_PAGES_PER_BATCH = 6;
 const MAX_MAP_PAGE_TEXT = 7000;
-const DOCUMENT_MAP_VERSION = 3;
-const RAW_EMBEDDING_VERSION = 2;
+const DOCUMENT_MAP_VERSION = 4;
+const RAW_EMBEDDING_VERSION = 3;
 
 function base64Url(input) {
   return Buffer.from(input).toString("base64url");
@@ -244,8 +245,28 @@ async function loadState() {
   try {
     return JSON.parse(await readFile(STATE_PATH, "utf8"));
   } catch {
-    return { version: 2, scopes: {} };
+    return { version: 3, scopes: {} };
   }
+}
+
+function needsRawBackfill(previous, currentFingerprint, force = false) {
+  const rawFingerprint = previous?.rawFingerprint ?? previous?.fingerprint;
+  return Boolean(
+    force ||
+      rawFingerprint !== currentFingerprint ||
+      previous?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION ||
+      !Array.isArray(previous?.ids)
+  );
+}
+
+function needsMapBackfill(previous, currentFingerprint, force = false) {
+  const mapFingerprint = previous?.mapFingerprint ?? previous?.fingerprint;
+  return Boolean(
+    force ||
+      mapFingerprint !== currentFingerprint ||
+      previous?.mapVersion !== DOCUMENT_MAP_VERSION ||
+      !Array.isArray(previous?.mapIds)
+  );
 }
 
 async function saveState(state) {
@@ -316,6 +337,7 @@ async function buildDocumentMap(
     fileName: file.name,
     sourcePath: file.sourcePath,
     modifiedTime: file.modifiedTime || undefined,
+    sourceFingerprint: fingerprint(file),
     languageHint,
     documentGroupHint: groupHint,
   };
@@ -376,6 +398,7 @@ async function processPdf(
         page: pageIndex + 1,
         chunkIndex,
         modifiedTime: file.modifiedTime || undefined,
+        sourceFingerprint: fingerprint(file),
         languageHint,
         documentGroupHint: groupHint,
       });
@@ -425,6 +448,7 @@ async function processText(file, accessToken, ingestToken) {
     page: 1,
     chunkIndex,
     modifiedTime: file.modifiedTime || undefined,
+    sourceFingerprint: fingerprint(file),
     languageHint: detectLanguageHint(file.name),
     documentGroupHint: documentGroupHint(file.name),
   }));
@@ -451,7 +475,7 @@ async function main() {
   const files = TARGET_FILE_ID ? allFiles.filter((file) => file.id === TARGET_FILE_ID) : allFiles;
   if (TARGET_FILE_ID && !files.length) throw new Error("Target file not found in Drive scope");
   const state = await loadState();
-  state.version = 2;
+  state.version = 3;
   state.scopes ||= {};
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
@@ -479,15 +503,9 @@ async function main() {
   const changed = prioritizeChangedFiles(files.filter((file) => {
     const previous = scope.files[file.id];
     const currentFingerprint = fingerprint(file);
-    const rawFingerprint = previous?.rawFingerprint ?? previous?.fingerprint;
-    const mapFingerprint = previous?.mapFingerprint ?? previous?.fingerprint;
-    return Boolean(TARGET_FILE_ID) || (
-      rawFingerprint !== currentFingerprint ||
-      previous?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION ||
-      !Array.isArray(previous?.ids) ||
-      mapFingerprint !== currentFingerprint ||
-      previous?.mapVersion !== DOCUMENT_MAP_VERSION ||
-      !Array.isArray(previous?.mapIds)
+    return (
+      needsRawBackfill(previous, currentFingerprint, Boolean(TARGET_FILE_ID)) ||
+      needsMapBackfill(previous, currentFingerprint, Boolean(TARGET_FILE_ID))
     );
   }));
   console.log(
@@ -499,17 +517,17 @@ async function main() {
   for (const file of selected) {
     const previous = scope.files[file.id] || {};
     const currentFingerprint = fingerprint(file);
-    const previousRawFingerprint = previous.rawFingerprint ?? previous.fingerprint;
-    const previousMapFingerprint = previous.mapFingerprint ?? previous.fingerprint;
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
-    const needsRaw = Boolean(TARGET_FILE_ID) ||
-      previousRawFingerprint !== currentFingerprint ||
-      previous.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION ||
-      !Array.isArray(previous.ids);
-    const needsMap = Boolean(TARGET_FILE_ID) ||
-      previousMapFingerprint !== currentFingerprint ||
-      previous.mapVersion !== DOCUMENT_MAP_VERSION ||
-      !Array.isArray(previous.mapIds);
+    const needsRaw = needsRawBackfill(
+      previous,
+      currentFingerprint,
+      Boolean(TARGET_FILE_ID)
+    );
+    const needsMap = needsMapBackfill(
+      previous,
+      currentFingerprint,
+      Boolean(TARGET_FILE_ID)
+    );
 
     const next = {
       ...previous,
@@ -641,7 +659,17 @@ async function main() {
   console.log(`Done. Processed ${selected.length} file(s); ${Math.max(0, changed.length - selected.length)} changed file(s) remain.`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  DOCUMENT_MAP_VERSION,
+  RAW_EMBEDDING_VERSION,
+  fingerprint,
+  needsMapBackfill,
+  needsRawBackfill,
+};
