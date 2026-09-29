@@ -30,11 +30,11 @@ function buildFilterAttempts(route: RouterResult) {
   // manufacturer's same-numbered fault. That would turn a missing match into
   // a confident answer grounded in the wrong product family.
   if (route.manufacturer && route.faultCode) {
-    // Structured/enriched vectors may have the exact code but a legacy or
-    // absent manufacturer field. Use the code as a candidate pool, then apply
-    // deterministic manufacturer + code checks before returning evidence.
-    attempts.push({ faultCode: String(route.faultCode) });
-    return attempts;
+    // Use the exact code as the candidate pool. Some legacy raw vectors have
+    // manufacturer evidence only in file/path metadata, while generated map
+    // nodes may satisfy the fully structured filter first. Deterministic
+    // manufacturer + code checks below still prevent cross-brand answers.
+    return [{ faultCode: String(route.faultCode) }];
   }
   if (route.faultCode) attempts.push({ faultCode: String(route.faultCode) });
   if (route.manufacturer) attempts.push({ manufacturer: route.manufacturer });
