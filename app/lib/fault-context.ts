@@ -59,7 +59,7 @@ export function isBareFaultCodeQuestion(value: string) {
   const remainder = value
     .replace(FAULT_CODE_PREFIX, " ")
     .replace(
-      /\b(?:what|does|do|is|the|mean|meaning|was|bedeutet|ist|bedeutung|bitte|please|tell|me)\b/gi,
+      /\b(?:what|does|do|is|the|mean|meaning|was|bedeutet|ist|bedeutung|der|die|das|den|bitte|please|tell|me)\b/gi,
       " "
     )
     .replace(/(?:یعنی|معنی|چیست|چیه|لطفاً|لطفا|بگو|میشه|می‌شود)/g, " ")
