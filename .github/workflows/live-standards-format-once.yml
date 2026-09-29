@@ -1,0 +1,41 @@
+name: Live standards format smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-standards-format-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify exact German standards format
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload='{"question":"wie viel ist min. abstand zwischen kabinenaufzug und schachtwand ?"}'
+          for attempt in $(seq 1 12); do
+            status=$(curl --silent --show-error --max-time 90               --output /tmp/live.json --write-out "%{http_code}"               -X POST "https://elevator.help/api/ask"               -H "Content-Type: application/json"               --data "$payload") || status="000"
+            if [ "$status" = "200" ] && node -e '
+              const fs=require("fs");
+              const data=JSON.parse(fs.readFileSync("/tmp/live.json","utf8"));
+              const answer=String(data.answer||"");
+              const expected="Kurz gesagt – das schreibt die Norm vor:\n• EN 81-20, Abschnitt 5.2.5.3.1";
+              const ok=data.mode==="standards_verified"
+                && answer.startsWith(expected)
+                && answer.includes("• EN 81-20, Abschnitt 5.3.4.1")
+                && !/Was die Norm konkret sagt|page numbers?|sources?|references?/i.test(answer);
+              if(!ok){console.error(JSON.stringify({mode:data.mode,answer},null,2));process.exit(1);}
+              console.log(JSON.stringify({mode:data.mode,answer},null,2));
+            '; then
+              echo "PASS: production German standards format is exact."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "FAIL: production German standards format did not pass."
+          exit 1
