@@ -30,11 +30,10 @@ function buildFilterAttempts(route: RouterResult) {
   // manufacturer's same-numbered fault. That would turn a missing match into
   // a confident answer grounded in the wrong product family.
   if (route.manufacturer && route.faultCode) {
-    // Use the exact code as the candidate pool. Some legacy raw vectors have
-    // manufacturer evidence only in file/path metadata, while generated map
-    // nodes may satisfy the fully structured filter first. Deterministic
-    // manufacturer + code checks below still prevent cross-brand answers.
-    return [{ faultCode: String(route.faultCode) }];
+    // Legacy vectors are not guaranteed to normalize either structured field.
+    // Retrieve a broad exact-code candidate pool and enforce both identities
+    // deterministically after the query.
+    return [];
   }
   if (route.faultCode) attempts.push({ faultCode: String(route.faultCode) });
   if (route.manufacturer) attempts.push({ manufacturer: route.manufacturer });
@@ -150,11 +149,16 @@ export async function retrieveInternalEvidence(
   vectorize: any
 ): Promise<InternalEvidence[]> {
   if (!shouldTryInternalRetrieval(route)) return [];
-  const retrievalQuery = buildRetrievalQuery(query, route);
+  const retrievalQuery = route.manufacturer && route.faultCode
+    ? `${String(route.faultCode)} ${String(route.faultCode)} ${route.manufacturer}`
+    : buildRetrievalQuery(query, route);
   const embedding = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [retrievalQuery] });
   const vector = (embedding as any)?.data?.[0];
   if (!Array.isArray(vector)) throw new Error("Internal retrieval embedding failed");
-  const options = { topK: 12, returnMetadata: "all" };
+  const options = {
+    topK: route.manufacturer && route.faultCode ? 50 : 12,
+    returnMetadata: "all",
+  };
   let result: any;
   for (const filter of buildFilterAttempts(route)) {
     try {
