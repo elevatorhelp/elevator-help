@@ -29,7 +29,13 @@ function buildFilterAttempts(route: RouterResult) {
   // A manufacturer-qualified fault lookup must never broaden to another
   // manufacturer's same-numbered fault. That would turn a missing match into
   // a confident answer grounded in the wrong product family.
-  if (route.manufacturer && route.faultCode) return attempts;
+  if (route.manufacturer && route.faultCode) {
+    // Structured/enriched vectors may have the exact code but a legacy or
+    // absent manufacturer field. Use the code as a candidate pool, then apply
+    // deterministic manufacturer + code checks before returning evidence.
+    attempts.push({ faultCode: String(route.faultCode) });
+    return attempts;
+  }
   if (route.faultCode) attempts.push({ faultCode: String(route.faultCode) });
   if (route.manufacturer) attempts.push({ manufacturer: route.manufacturer });
   return attempts.filter(
