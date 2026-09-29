@@ -43,9 +43,12 @@ export async function createQueryBackend(
 }
 
 export function multilingualRetrievalFromEnv(env: any, apiKey: string) {
+  const configuredFlag =
+    env?.MULTILINGUAL_RETRIEVAL_ENABLED ??
+    process.env.MULTILINGUAL_RETRIEVAL_ENABLED;
   return {
     apiKey,
     vectorize: env?.VECTORIZE_V2,
-    enabled: process.env.MULTILINGUAL_RETRIEVAL_ENABLED === "true",
+    enabled: String(configuredFlag).toLowerCase() === "true",
   } satisfies MultilingualRetrieval;
 }
