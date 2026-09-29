@@ -9,6 +9,7 @@ export type InternalEvidence = {
   faultCode: string | null;
   faultName: string | null;
   contentType: string | null;
+  sourceName: string | null;
 };
 
 function buildFilter(route: RouterResult) {
@@ -59,6 +60,21 @@ export function shouldTryInternalRetrieval(route: RouterResult) {
 
 function normalized(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function compactIdentifier(value: unknown) {
+  return normalized(value).replace(/[^\\p{L}\\p{N}]+/gu, "");
+}
+
+function exactFaultCandidate(item: InternalEvidence, route: RouterResult) {
+  if (!route.manufacturer || !route.faultCode) return true;
+  const code = normalized(String(route.faultCode));
+  const hasCode = normalized(item.faultCode) === code || normalized(item.text).includes(code);
+  const manufacturer = compactIdentifier(route.manufacturer);
+  const manufacturerHaystack = compactIdentifier(
+    [item.manufacturer, item.sourceName, item.text].filter(Boolean).join(" ")
+  );
+  return hasCode && Boolean(manufacturer) && manufacturerHaystack.includes(manufacturer);
 }
 
 function buildRetrievalQuery(query: string, route: RouterResult) {
@@ -143,7 +159,9 @@ export async function retrieveInternalEvidence(
     }
   }
   if (!result?.matches?.length) {
-    if (route.manufacturer && route.faultCode) return [];
+    // Older/raw Drive vectors may not yet carry structured fault metadata.
+    // A semantic fallback is allowed only with deterministic post-filtering
+    // for both the exact code and manufacturer identity.
     result = await vectorize.query(vector, options);
   }
   const candidates = (result.matches || [])
@@ -157,7 +175,11 @@ export async function retrieveInternalEvidence(
       faultCode: match?.metadata?.faultCode ?? null,
       faultName: match?.metadata?.faultName ?? null,
       contentType: match?.metadata?.contentType ?? null,
+      sourceName: [match?.metadata?.fileName, match?.metadata?.sourcePath]
+        .filter(Boolean)
+        .join(" ") || null,
     }))
+    .filter((item: InternalEvidence) => exactFaultCandidate(item, route))
     .filter((item: InternalEvidence) => item.text.length > 0)
     .map((item: InternalEvidence) => ({ ...item, score: item.score + routeBoost(item, route) }))
     .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score);
