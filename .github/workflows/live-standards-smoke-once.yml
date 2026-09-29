@@ -1,5 +1,4 @@
-name: One-shot standards production smoke
-# Rerun after standards routing deployment
+name: One-shot standards vector diagnostic
 
 on:
   push:
@@ -11,21 +10,16 @@ permissions:
   contents: read
 
 jobs:
-  smoke:
+  diagnostic:
     runs-on: ubuntu-latest
     steps:
-      - name: Test verified clearance answer
+      - name: Inspect live standards retrieval
         shell: bash
         run: |
           set -euo pipefail
-          curl --silent --show-error --max-time 90 -X POST https://elevator.help/api/ask \
+          curl --silent --show-error --max-time 90 -X POST https://elevator.help/api/retrieve-test \
             -H 'Content-Type: application/json' \
-            --data '{"question":"wie viel ist min. abstand zwischen kabinenaufzug und schachtwand ?"}' > /tmp/live.json
-          node - <<'NODE'
-          const fs=require('fs');
-          const data=JSON.parse(fs.readFileSync('/tmp/live.json','utf8'));
-          const answer=String(data.answer||'');
-          const ok=data.mode==='standards_verified' && answer.includes('5.2.5.3.1') && answer.includes('5.3.4.1') && /(?:0[,.]15\\s*m|150\\s*mm)/i.test(answer) && /35\\s*mm/i.test(answer) && !/(?:20\\s*mm|20–50\\s*mm)/i.test(answer) && !answer.includes('Web-based');
-          if(!ok){console.error(JSON.stringify(data,null,2)); process.exit(1);}
-          console.log('PASS: verified standards answer is live.');
-          NODE
+            --data '{"question":"EN 81-20 5.2.5.3.1 horizontaler Abstand innere Schachtwand Fahrkorbschwelle"}'
+          curl --silent --show-error --max-time 90 -X POST https://elevator.help/api/retrieve-test \
+            -H 'Content-Type: application/json' \
+            --data '{"question":"EN 81-20 5.3.4.1 horizontaler Abstand Schwellen Fahrkorbzugang Schachttür 35 mm"}'
