@@ -1,4 +1,5 @@
 import { RouterResult } from "./router";
+import { germanElevatorSearchTerms } from "./german-language";
 
 export type InternalEvidence = {
   id: string;
@@ -101,6 +102,7 @@ function buildRetrievalQuery(query: string, route: RouterResult) {
     route.faultName,
     ...(route.components || []),
     ...(route.topics || []),
+    ...germanElevatorSearchTerms(query),
   ]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .map((value) => value.trim());

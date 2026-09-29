@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "test:language": "node --experimental-strip-types scripts/test-german-language.ts",
     "build": "next build",
     "cf:build": "opennextjs-cloudflare build",
     "deploy": "opennextjs-cloudflare build && wrangler deploy"
