@@ -1,5 +1,9 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  MULTILINGUAL_EMBEDDING_VERSION,
+  embedRetrievalDocuments,
+} from "../../lib/multilingual-embedding";
 
 type PageInput = {
   page: number;
@@ -12,6 +16,7 @@ type DocumentInput = {
   sourcePath: string;
   mapVersion?: number;
   modifiedTime?: string;
+  sourceFingerprint?: string;
   languageHint?: string | null;
   documentGroupHint?: string | null;
 };
@@ -32,14 +37,20 @@ const MAX_TOTAL_TEXT = 45000;
 const MAX_MAP_NODES = 12;
 
 function unauthorized() {
-  return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  return NextResponse.json(
+    { ok: false, error: "Unauthorized" },
+    { status: 401 },
+  );
 }
 
 function parseJsonObject(text: string) {
   const trimmed = String(text || "").trim();
   const candidates = [
     trimmed,
-    trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(),
+    trimmed
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim(),
   ];
 
   for (const candidate of candidates) {
@@ -51,7 +62,8 @@ function parseJsonObject(text: string) {
   const cleaned = candidates[candidates.length - 1];
   const first = cleaned.indexOf("{");
   const last = cleaned.lastIndexOf("}");
-  if (first >= 0 && last > first) return JSON.parse(cleaned.slice(first, last + 1));
+  if (first >= 0 && last > first)
+    return JSON.parse(cleaned.slice(first, last + 1));
   throw new Error("Could not parse document-map JSON");
 }
 
@@ -69,8 +81,8 @@ function cleanTopics(value: unknown) {
         .filter((item) => typeof item === "string")
         .map((item) => item.trim().toLowerCase())
         .filter(Boolean)
-        .map((item) => item.slice(0, 80))
-    )
+        .map((item) => item.slice(0, 80)),
+    ),
   ).slice(0, 10);
 }
 
@@ -133,7 +145,7 @@ async function requestDocumentMap(prompt: string, apiKey: string) {
           maxOutputTokens: 5000,
         },
       }),
-    }
+    },
   );
 
   if (!response.ok) {
@@ -152,7 +164,7 @@ async function requestDocumentMap(prompt: string, apiKey: string) {
 async function analyzeDocumentWindow(
   document: DocumentInput,
   pages: PageInput[],
-  apiKey: string
+  apiKey: string,
 ): Promise<MapNode[]> {
   const firstPage = pages[0]?.page || 1;
   const lastPage = pages[pages.length - 1]?.page || firstPage;
@@ -205,22 +217,31 @@ ${JSON.stringify(pages)}
       break;
     } catch (error) {
       lastError = error;
-      console.error(`Document-map Gemini attempt ${attempt + 1} failed:`, error);
+      console.error(
+        `Document-map Gemini attempt ${attempt + 1} failed:`,
+        error,
+      );
     }
   }
 
   if (!parsed) {
-    throw lastError instanceof Error ? lastError : new Error("Could not parse document-map JSON");
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Could not parse document-map JSON");
   }
 
   const items = Array.isArray(parsed?.items) ? parsed.items : [];
 
   return items
     .map((item: any): MapNode | null => {
-      const summary = typeof item?.summary === "string" ? item.summary.trim() : "";
+      const summary =
+        typeof item?.summary === "string" ? item.summary.trim() : "";
       if (!summary) return null;
       const pageStart = clampPage(item.pageStart, firstPage, lastPage);
-      const pageEnd = Math.max(pageStart, clampPage(item.pageEnd, pageStart, lastPage));
+      const pageEnd = Math.max(
+        pageStart,
+        clampPage(item.pageEnd, pageStart, lastPage),
+      );
       const nodeType =
         typeof item?.nodeType === "string" && item.nodeType.trim()
           ? item.nodeType.trim().toLowerCase().slice(0, 80)
@@ -245,7 +266,8 @@ export async function POST(request: NextRequest) {
   try {
     const expectedToken = process.env.INGESTION_TOKEN;
     const auth = request.headers.get("authorization") || "";
-    if (!expectedToken || auth !== `Bearer ${expectedToken}`) return unauthorized();
+    if (!expectedToken || auth !== `Bearer ${expectedToken}`)
+      return unauthorized();
 
     const body: any = await request.json();
     const document: DocumentInput = body?.document;
@@ -257,39 +279,53 @@ export async function POST(request: NextRequest) {
       typeof document.fileName !== "string" ||
       typeof document.sourcePath !== "string"
     ) {
-      return NextResponse.json({ ok: false, error: "Invalid document payload" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Invalid document payload" },
+        { status: 400 },
+      );
     }
 
-    const mapVersion = Number.isInteger(document.mapVersion) && Number(document.mapVersion) > 0
-      ? Number(document.mapVersion)
-      : 1;
+    const mapVersion =
+      Number.isInteger(document.mapVersion) && Number(document.mapVersion) > 0
+        ? Number(document.mapVersion)
+        : 1;
 
     if (!pages.length || pages.length > MAX_PAGES) {
       return NextResponse.json(
         { ok: false, error: `pages must contain 1-${MAX_PAGES} items` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     let totalText = 0;
     for (const page of pages) {
       if (!Number.isInteger(page?.page) || typeof page?.text !== "string") {
-        return NextResponse.json({ ok: false, error: "Invalid page payload" }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: "Invalid page payload" },
+          { status: 400 },
+        );
       }
       totalText += page.text.length;
     }
     if (totalText > MAX_TOTAL_TEXT) {
-      return NextResponse.json({ ok: false, error: "Document window is too large" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Document window is too large" },
+        { status: 400 },
+      );
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     const { env } = getCloudflareContext();
     const ai = (env as any).AI;
     const vectorize = (env as any).VECTORIZE;
-    if (!apiKey || !ai || !vectorize) throw new Error("Document-map dependencies are not configured");
+    const vectorizeV2 = (env as any).VECTORIZE_V2;
+    if (!apiKey || !ai || !vectorize || !vectorizeV2) {
+      throw new Error("Document-map dependencies are not configured");
+    }
 
     const nodes = await analyzeDocumentWindow(document, pages, apiKey);
-    if (!nodes.length) return NextResponse.json({ ok: true, upserted: 0, ids: [], nodes: [] });
+    if (!nodes.length)
+      return NextResponse.json({ ok: true, upserted: 0, ids: [], nodes: [] });
 
     const mapTexts = nodes.map((node) => {
       const lines = [
@@ -306,8 +342,14 @@ export async function POST(request: NextRequest) {
       return lines.filter(Boolean).join("\n");
     });
 
-    const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", { text: mapTexts });
+    const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
+      text: mapTexts,
+    });
     const embeddings = (embeddingResult as any).data;
+    const multilingualEmbeddings = await embedRetrievalDocuments(
+      mapTexts,
+      apiKey,
+    );
     if (!Array.isArray(embeddings) || embeddings.length !== nodes.length) {
       throw new Error("Document-map embedding count mismatch");
     }
@@ -337,33 +379,56 @@ export async function POST(request: NextRequest) {
           contentType: "document-map",
           mapVersion,
           mapNodeType: node.nodeType,
+          status: "active",
         };
-        if (document.modifiedTime) metadata.modifiedTime = document.modifiedTime;
+        if (document.modifiedTime)
+          metadata.modifiedTime = document.modifiedTime;
+        if (document.sourceFingerprint)
+          metadata.sourceFingerprint = document.sourceFingerprint;
         if (document.languageHint) metadata.language = document.languageHint;
-        if (document.documentGroupHint) metadata.documentGroup = document.documentGroupHint;
+        if (document.documentGroupHint)
+          metadata.documentGroup = document.documentGroupHint;
         if (node.sectionId) metadata.sectionId = node.sectionId;
         if (node.parentSection) metadata.parentSection = node.parentSection;
         if (node.title) metadata.sectionTitle = node.title;
         if (node.topics.length) metadata.topics = node.topics.join(",");
 
-        return { id, values: embeddings[index], metadata };
-      })
+        return { id, metadata, index };
+      }),
     );
 
-    await vectorize.upsert(vectors);
+    const legacyVectors = vectors.map(({ id, metadata, index }) => ({
+      id,
+      values: embeddings[index],
+      metadata: { ...metadata, embeddingVersion: 2 },
+    }));
+    const multilingualVectors = vectors.map(({ id, metadata, index }) => ({
+      id,
+      values: multilingualEmbeddings[index],
+      metadata: {
+        ...metadata,
+        embeddingVersion: MULTILINGUAL_EMBEDDING_VERSION,
+      },
+    }));
+
+    await vectorize.upsert(legacyVectors);
+    await vectorizeV2.upsert(multilingualVectors);
 
     return NextResponse.json({
       ok: true,
       mapVersion,
-      upserted: vectors.length,
-      ids: vectors.map((vector) => vector.id),
+      upserted: multilingualVectors.length,
+      ids: multilingualVectors.map((vector) => vector.id),
       nodes,
     });
   } catch (error) {
     console.error("Document-map ingestion error:", error);
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
     );
   }
 }

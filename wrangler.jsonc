@@ -13,6 +13,9 @@
 	"observability": {
 		"enabled": true
 	},
+	"vars": {
+		"MULTILINGUAL_RETRIEVAL_ENABLED": "false"
+	},
 	"ai": {
 		"binding": "AI"
 	},
@@ -20,6 +23,10 @@
 		{
 			"binding": "VECTORIZE",
 			"index_name": "elevator-help-index"
+		},
+		{
+			"binding": "VECTORIZE_V2",
+			"index_name": "elevator-help-multilingual-v2"
 		}
 	]
 }

@@ -8,7 +8,10 @@ import {
   buildRetrievalQuery,
 } from "../app/lib/internal-retrieval.ts";
 import { requiresStandardSafetyCheck } from "../app/lib/query-policy.ts";
-import { createQueryBackend } from "../app/lib/retrieval-backend.ts";
+import {
+  createQueryBackend,
+  multilingualRetrievalFromEnv,
+} from "../app/lib/retrieval-backend.ts";
 import {
   deterministicStandardsRoute,
   type RouterResult,
@@ -166,6 +169,17 @@ try {
     throw new Error(
       "Disabled multilingual retrieval did not preserve the legacy path",
     );
+  }
+
+  const workerConfig = multilingualRetrievalFromEnv(
+    {
+      VECTORIZE_V2: multilingualIndex,
+      MULTILINGUAL_RETRIEVAL_ENABLED: "true",
+    },
+    "test",
+  );
+  if (!workerConfig.enabled || workerConfig.vectorize !== multilingualIndex) {
+    throw new Error("Cloudflare Worker feature flag was not read from env bindings");
   }
 } finally {
   globalThis.fetch = originalFetch;

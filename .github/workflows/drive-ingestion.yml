@@ -1,6 +1,8 @@
 name: Drive ingestion
 
 on:
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       folder_id:
@@ -25,6 +27,8 @@ on:
       - 'scripts/drive-ingest.mjs'
       - 'scripts/drive-ingest-until-text.mjs'
       - 'app/api/document-map-ingest/route.ts'
+      - 'app/api/drive-ingest-batch/route.ts'
+      - 'app/lib/multilingual-embedding.ts'
 
 concurrency:
   group: elevator-help-drive-ingestion
@@ -71,6 +75,27 @@ jobs:
             fi
           done
           echo "Required Vectorize metadata indexes are available or have been requested."
+
+      - name: Wait for multilingual ingestion endpoint
+        env:
+          ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            curl -sS -o /tmp/ingest-readiness.json \
+              -X POST https://elevator.help/api/drive-ingest-batch \
+              -H "Authorization: Bearer $ELEVATOR_INGESTION_TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data '{"action":"status"}'
+            if grep -q '"rawEmbeddingVersion":3' /tmp/ingest-readiness.json && \
+               grep -q '"legacyConfigured":true' /tmp/ingest-readiness.json && \
+               grep -q '"multilingualConfigured":true' /tmp/ingest-readiness.json; then
+              exit 0
+            fi
+            sleep 20
+          done
+          cat /tmp/ingest-readiness.json
+          exit 1
 
       - name: Restore ingestion state
         uses: actions/cache/restore@v6
