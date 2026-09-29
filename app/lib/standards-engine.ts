@@ -721,7 +721,7 @@ function deterministicClearanceClaims(
   language?: string | null
 ): VerifiedStandardClaim[] {
   const asksClearance =
-    /(abstand|mindestabstand|maximalabstand|minimum|maximum|\\bmin\\.?\\b|\\bmax\\.?\\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(question);
+    /(abstand|mindestabstand|maximalabstand|minimum|maximum|\bmin\.?\b|\bmax\.?\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(question);
   const hasRelevantComponents =
     /(schachtwand|schacht|fahrkorb|kabin|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(question);
   if (!asksClearance || !hasRelevantComponents) return [];
@@ -736,8 +736,8 @@ function deterministicClearanceClaims(
       );
     });
 
-  const wall = findEvidence("5.2.5.3.1", /0[,.]15\\s*m\\b/i);
-  const sill = findEvidence("5.3.4.1", /35\\s*mm\\b/i);
+  const wall = findEvidence("5.2.5.3.1", /0[,.]15\s*m\b/i);
+  const sill = findEvidence("5.3.4.1", /35\s*mm\b/i);
   if (!wall || !sill) return [];
 
   if (language === "de") {
