@@ -1,4 +1,9 @@
-const MIN_STANDARD_SCORE = 0.20;
+import {
+  createQueryBackend,
+  type MultilingualRetrieval,
+} from "./retrieval-backend.ts";
+
+const MIN_STANDARD_SCORE = 0.2;
 const ACTIVE_DOCUMENT_MAP_VERSION = 3;
 
 const CORE_STANDARDS = [
@@ -46,7 +51,10 @@ function parseModelJson(text: string) {
   const trimmed = String(text || "").trim();
   const attempts = [
     trimmed,
-    trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(),
+    trimmed
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim(),
   ];
 
   for (const candidate of attempts) {
@@ -80,7 +88,7 @@ function explicitlyNamedCoreStandards(question: string) {
     const number = standard.code.endsWith("20") ? "20" : "50";
     return new RegExp(
       `(?:EN\\s*81\\s*[-–]?\\s*${number}|81\\s*[-–]\\s*${number})`,
-      "i"
+      "i",
     ).test(question);
   }).map((standard) => standard.code);
 }
@@ -94,7 +102,7 @@ function isBroadShaftQuestion(question: string) {
 
   const specific =
     /(schachtwand|schachtwänd|wand|festigkeit|verform|glas|grube|pit|schachtkopf|headroom|schutzraum|refuge|beleuchtung|lighting|licht|zugang|tür|door|trenn|separation|gegengewicht|counterweight)/i.test(
-      question
+      question,
     ) || /(دیواره|چاهک|بالاسری|روشنایی|درِ|درب|فضای حفاظتی)/i.test(question);
 
   return !specific;
@@ -103,11 +111,11 @@ function isBroadShaftQuestion(question: string) {
 async function translateQuery(
   question: string,
   sourceLanguage: string,
-  apiKey: string
+  apiKey: string,
 ) {
   const prompt = `
 Translate the following elevator standards search query into concise technical ${languageName(
-    sourceLanguage
+    sourceLanguage,
   )}.
 
 Rules:
@@ -129,7 +137,7 @@ ${question}
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0, maxOutputTokens: 250 },
       }),
-    }
+    },
   );
 
   if (!response.ok) return question;
@@ -151,19 +159,23 @@ function deterministicQueryPlan(question: string, sourceLanguage: string) {
       plan.push(
         {
           topic: "structure",
-          query: "Aufzugsschacht Schachtwände Festigkeit Wände Böden Decken mechanische Festigkeit",
+          query:
+            "Aufzugsschacht Schachtwände Festigkeit Wände Böden Decken mechanische Festigkeit",
         },
         {
           topic: "structure",
-          query: "Schachtwand mechanische Festigkeit Verformung Kraft Glas Verbundsicherheitsglas",
+          query:
+            "Schachtwand mechanische Festigkeit Verformung Kraft Glas Verbundsicherheitsglas",
         },
         {
           topic: "structure",
-          query: "EN 81-20 5.2.1.8.2 Schachtwände mechanische Festigkeit Verformung",
+          query:
+            "EN 81-20 5.2.1.8.2 Schachtwände mechanische Festigkeit Verformung",
         },
         {
           topic: "pit",
-          query: "Schachtgrube Grubenboden Festigkeit Schutzraum freier Bereich",
+          query:
+            "Schachtgrube Grubenboden Festigkeit Schutzraum freier Bereich",
         },
         {
           topic: "headroom",
@@ -171,7 +183,8 @@ function deterministicQueryPlan(question: string, sourceLanguage: string) {
         },
         {
           topic: "lighting",
-          query: "Schachtbeleuchtung elektrische Beleuchtung Beleuchtungsstärke",
+          query:
+            "Schachtbeleuchtung elektrische Beleuchtung Beleuchtungsstärke",
         },
         {
           topic: "access",
@@ -179,8 +192,9 @@ function deterministicQueryPlan(question: string, sourceLanguage: string) {
         },
         {
           topic: "separation",
-          query: "mehrere Aufzüge gemeinsamer Schacht Trennwand Trennung Gegengewicht",
-        }
+          query:
+            "mehrere Aufzüge gemeinsamer Schacht Trennwand Trennung Gegengewicht",
+        },
       );
     } else {
       plan.push(
@@ -190,7 +204,8 @@ function deterministicQueryPlan(question: string, sourceLanguage: string) {
         },
         {
           topic: "structure",
-          query: "shaft wall mechanical strength deformation force laminated safety glass",
+          query:
+            "shaft wall mechanical strength deformation force laminated safety glass",
         },
         {
           topic: "pit",
@@ -210,16 +225,21 @@ function deterministicQueryPlan(question: string, sourceLanguage: string) {
         },
         {
           topic: "separation",
-          query: "multiple lifts common shaft partition counterweight separation",
-        }
+          query:
+            "multiple lifts common shaft partition counterweight separation",
+        },
       );
     }
   } else {
     const q = question.toLowerCase();
     const asksClearance =
-      /(abstand|mindestabstand|maximalabstand|minimum|maximum|\bmin\.?\b|\bmax\.?\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(q);
+      /(abstand|mindestabstand|maximalabstand|minimum|maximum|\bmin\.?\b|\bmax\.?\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(
+        q,
+      );
     const clearanceComponents =
-      /(schachtwand|schacht|fahrkorb|kabin(?:e|en)?|kabin\b|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(q);
+      /(schachtwand|schacht|fahrkorb|kabin(?:e|en)?|kabin\b|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(
+        q,
+      );
 
     if (asksClearance && clearanceComponents) {
       plan.push(
@@ -236,12 +256,14 @@ function deterministicQueryPlan(question: string, sourceLanguage: string) {
             sourceLanguage === "de"
               ? "EN 81-20 5.3.4.1 Horizontale Türabstände Schwellen Fahrkorbzugang Schachttür"
               : "EN 81-20 5.3.4.1 horizontal door clearances car entrance sill landing door sill",
-        }
+        },
       );
     }
 
     if (
-      /festigkeit|verform|glass|glas|mechanisch|strength|deformation|دیواره/i.test(q) ||
+      /festigkeit|verform|glass|glas|mechanisch|strength|deformation|دیواره/i.test(
+        q,
+      ) ||
       (!asksClearance && /schachtwand|wand/i.test(q))
     ) {
       plan.push({
@@ -306,7 +328,7 @@ async function expandQueryPlan(
   question: string,
   route: any,
   sourceLanguage: string,
-  apiKey: string
+  apiKey: string,
 ) {
   const translated =
     route.questionLanguage === sourceLanguage
@@ -350,7 +372,7 @@ Rules:
             maxOutputTokens: 550,
           },
         }),
-      }
+      },
     );
 
     if (response.ok) {
@@ -362,13 +384,20 @@ Rules:
       const parsed = raw ? parseModelJson(raw) : null;
       if (Array.isArray(parsed?.queries)) {
         for (const item of parsed.queries) {
-          const query = typeof item?.query === "string" ? item.query.trim() : "";
+          const query =
+            typeof item?.query === "string" ? item.query.trim() : "";
           const topic = String(item?.topic || "general") as StandardTopic;
           if (
             query.length > 3 &&
-            ["structure", "pit", "headroom", "lighting", "access", "separation", "general"].includes(
-              topic
-            )
+            [
+              "structure",
+              "pit",
+              "headroom",
+              "lighting",
+              "access",
+              "separation",
+              "general",
+            ].includes(topic)
           ) {
             plan.push({ topic, query });
           }
@@ -380,12 +409,14 @@ Rules:
   }
 
   const seen = new Set<string>();
-  return plan.filter((item) => {
-    const key = `${item.topic}:${item.query.toLowerCase()}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, 10);
+  return plan
+    .filter((item) => {
+      const key = `${item.topic}:${item.query.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 10);
 }
 
 function compactStandardMetadata(metadata: any) {
@@ -406,42 +437,65 @@ function matchKey(match: any) {
     match?.id ||
       `${metadata.sourceFileId || metadata.fileName || "file"}:${
         metadata.page || "p"
-      }:${metadata.chunkIndex || "c"}`
+      }:${metadata.chunkIndex || "c"}`,
   );
 }
 
 function matchRank(match: any) {
   const text = String(match?.metadata?.text || "");
   const clauseBonus = /\b\d+(?:\.\d+){2,6}\b/.test(text) ? 0.18 : 0;
-  const headingBonus = /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength|abstand|clearance|schwelle|sill)/i.test(
-    text
-  )
-    ? 0.05
-    : 0;
+  const headingBonus =
+    /(schacht|shaft|grube|pit|schachtkopf|headroom|beleuchtung|lighting|zugang|access|festigkeit|strength|abstand|clearance|schwelle|sill)/i.test(
+      text,
+    )
+      ? 0.05
+      : 0;
   return Number(match?.score || 0) + clauseBonus + headingBonus;
 }
 
 function inferTopicFromMapMetadata(metadata: any): StandardTopic {
-  const text = `${metadata?.topics || ""} ${metadata?.sectionTitle || ""} ${metadata?.text || ""}`.toLowerCase();
-  if (/(schachtwand|shaft wall|festigkeit|strength|structure|wand|wall)/i.test(text)) return "structure";
+  const text =
+    `${metadata?.topics || ""} ${metadata?.sectionTitle || ""} ${metadata?.text || ""}`.toLowerCase();
+  if (
+    /(schachtwand|shaft wall|festigkeit|strength|structure|wand|wall)/i.test(
+      text,
+    )
+  )
+    return "structure";
   if (/(schachtgrube|pit|grube)/i.test(text)) return "pit";
   if (/(schachtkopf|headroom|schutzraum|refuge)/i.test(text)) return "headroom";
-  if (/(beleuchtung|lighting|illumination|licht)/i.test(text)) return "lighting";
-  if (/(zugang|access|wartungstür|nottür|inspection door|emergency door)/i.test(text)) return "access";
-  if (/(trenn|separation|partition|gegengewicht|counterweight)/i.test(text)) return "separation";
+  if (/(beleuchtung|lighting|illumination|licht)/i.test(text))
+    return "lighting";
+  if (
+    /(zugang|access|wartungstür|nottür|inspection door|emergency door)/i.test(
+      text,
+    )
+  )
+    return "access";
+  if (/(trenn|separation|partition|gegengewicht|counterweight)/i.test(text))
+    return "separation";
   return "general";
 }
 
-function mapMatchToQuery(match: any, standard: (typeof CORE_STANDARDS)[number]): PlannedQuery | null {
+function mapMatchToQuery(
+  match: any,
+  standard: (typeof CORE_STANDARDS)[number],
+): PlannedQuery | null {
   const metadata = match?.metadata || {};
   if (metadata.contentType !== "document-map") return null;
   // New map nodes are schema-versioned. Keep legacy unversioned nodes readable
   // during backfill, but never let an explicitly stale schema guide retrieval.
-  if (metadata.mapVersion && Number(metadata.mapVersion) !== ACTIVE_DOCUMENT_MAP_VERSION) return null;
+  if (
+    metadata.mapVersion &&
+    Number(metadata.mapVersion) !== ACTIVE_DOCUMENT_MAP_VERSION
+  )
+    return null;
   if (!matchBelongsToStandard(match, standard.compact)) return null;
 
   const parts = [
-    metadata.sectionId ? `${standard.code} ${metadata.sectionId}` : standard.code,
+    metadata.sectionId
+      ? `${standard.code} ${metadata.sectionId}`
+      : standard.code,
     metadata.sectionTitle || "",
     metadata.topics || "",
   ]
@@ -456,7 +510,8 @@ async function discoverMapQueries(
   question: string,
   standard: (typeof CORE_STANDARDS)[number],
   ai: any,
-  vectorize: any
+  vectorize: any,
+  multilingual?: MultilingualRetrieval,
 ) {
   try {
     // The active Vectorize index uses the English BGE embedding model. Search the
@@ -466,45 +521,50 @@ async function discoverMapQueries(
     const discoveryTexts = [`${question}\n${standard.code}`];
     if (isBroadShaftQuestion(question)) {
       discoveryTexts.push(
-        `elevator shaft walls structural strength ${standard.code}` ,
-        `elevator shaft pit refuge space clearances ${standard.code}` ,
-        `elevator shaft headroom car roof refuge space ${standard.code}` ,
-        `elevator shaft lighting illumination ${standard.code}` ,
-        `elevator shaft access inspection emergency doors ${standard.code}` ,
-        `multiple lifts common shaft partition separation ${standard.code}`
+        `elevator shaft walls structural strength ${standard.code}`,
+        `elevator shaft pit refuge space clearances ${standard.code}`,
+        `elevator shaft headroom car roof refuge space ${standard.code}`,
+        `elevator shaft lighting illumination ${standard.code}`,
+        `elevator shaft access inspection emergency doors ${standard.code}`,
+        `multiple lifts common shaft partition separation ${standard.code}`,
       );
     }
 
-    const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
-      text: discoveryTexts,
-    });
-    const queryVectors = (embeddingResult as any).data;
-    if (!Array.isArray(queryVectors) || !queryVectors.length) return [] as PlannedQuery[];
+    const queryBackends = await Promise.all(
+      discoveryTexts.map((text) =>
+        createQueryBackend(text, ai, vectorize, multilingual),
+      ),
+    );
+    if (!queryBackends.length) return [] as PlannedQuery[];
 
     const seenMatchIds = new Set<string>();
     const matches: any[] = [];
 
-    for (const queryVector of queryVectors) {
-      if (!queryVector) continue;
+    for (const backend of queryBackends) {
+      const queryVector = backend.vector;
+      const searchIndex = backend.vectorize;
       let currentMatches: any[] = [];
       try {
-        const filtered = await vectorize.query(queryVector, {
+        const filtered = await searchIndex.query(queryVector, {
           topK: 30,
           returnMetadata: "all",
           filter: { contentType: "document-map" },
         });
         currentMatches = filtered.matches || [];
       } catch (error) {
-        console.error("Standards document-map metadata filter failed; using local filtering", {
-          standard: standard.code,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        const unfiltered = await vectorize.query(queryVector, {
+        console.error(
+          "Standards document-map metadata filter failed; using local filtering",
+          {
+            standard: standard.code,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        );
+        const unfiltered = await searchIndex.query(queryVector, {
           topK: 50,
           returnMetadata: "all",
         });
         currentMatches = (unfiltered.matches || []).filter(
-          (match: any) => match?.metadata?.contentType === "document-map"
+          (match: any) => match?.metadata?.contentType === "document-map",
         );
       }
 
@@ -591,7 +651,7 @@ function textContainsExactClause(text: string, clause: string) {
 async function exactClauseMatchesForQuery(
   item: PlannedQuery,
   standard: (typeof CORE_STANDARDS)[number],
-  vectorize: any
+  vectorize: any,
 ) {
   const clauses = clauseTokensFromQuery(item.query);
   if (!clauses.length || typeof vectorize?.getByIds !== "function") return [];
@@ -599,9 +659,10 @@ async function exactClauseMatchesForQuery(
   const ids = Array.from(
     new Set(
       clauses.flatMap(
-        (clause) => EXACT_CLAUSE_VECTOR_CANDIDATES[`${standard.code}|${clause}`] || []
-      )
-    )
+        (clause) =>
+          EXACT_CLAUSE_VECTOR_CANDIDATES[`${standard.code}|${clause}`] || [],
+      ),
+    ),
   );
   if (!ids.length) return [];
 
@@ -644,20 +705,32 @@ async function rawMatchesForQuery(
   standard: (typeof CORE_STANDARDS)[number],
   sourceLanguage: string,
   ai: any,
-  vectorize: any
+  vectorize: any,
+  multilingual?: MultilingualRetrieval,
 ) {
   // Exact clause locators bypass embedding generation entirely. This keeps
   // verified standards answers working even when an embedding provider is
   // temporarily quota-limited.
-  const exactClauseMatches = await exactClauseMatchesForQuery(item, standard, vectorize);
+  const exactIndex =
+    multilingual?.enabled && multilingual.vectorize
+      ? multilingual.vectorize
+      : vectorize;
+  const exactClauseMatches = await exactClauseMatchesForQuery(
+    item,
+    standard,
+    exactIndex,
+  );
   if (exactClauseMatches.length) return exactClauseMatches;
 
   const retrievalQuery = `${item.query}\n${standard.code}`;
-  const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
-    text: [retrievalQuery],
-  });
-  const queryVector = (embeddingResult as any).data?.[0];
-  if (!queryVector) return [];
+  const backend = await createQueryBackend(
+    retrievalQuery,
+    ai,
+    vectorize,
+    multilingual,
+  );
+  const queryVector = backend.vector;
+  vectorize = backend.vectorize;
 
   const exactClauseQuery = /\b\d+(?:\.\d+){2,6}\b/.test(item.query);
   const minimumScore = exactClauseQuery ? 0.12 : MIN_STANDARD_SCORE;
@@ -677,7 +750,7 @@ async function rawMatchesForQuery(
             typeof match?.metadata?.text === "string" &&
             match.metadata.text.trim().length > 0 &&
             matchBelongsToStandard(match, standard.compact) &&
-            Number(match?.score || 0) >= minimumScore
+            Number(match?.score || 0) >= minimumScore,
         )
         .sort((a: any, b: any) => matchRank(b) - matchRank(a))
         .slice(0, 6)
@@ -688,11 +761,14 @@ async function rawMatchesForQuery(
         }));
     } catch (error) {
       if (filter) {
-        console.error("Standards metadata-filter query failed; falling back safely", {
-          filter,
-          standard: standard.code,
-          message: error instanceof Error ? error.message : String(error),
-        });
+        console.error(
+          "Standards metadata-filter query failed; falling back safely",
+          {
+            filter,
+            standard: standard.code,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        );
         return [];
       }
       throw error;
@@ -718,12 +794,16 @@ async function rawMatchesForQuery(
 function deterministicClearanceClaims(
   question: string,
   evidence: any[],
-  language?: string | null
+  language?: string | null,
 ): VerifiedStandardClaim[] {
   const asksClearance =
-    /(abstand|mindestabstand|maximalabstand|minimum|maximum|\bmin\.?\b|\bmax\.?\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(question);
+    /(abstand|mindestabstand|maximalabstand|minimum|maximum|\bmin\.?\b|\bmax\.?\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(
+      question,
+    );
   const hasRelevantComponents =
-    /(schachtwand|schacht|fahrkorb|kabin|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(question);
+    /(schachtwand|schacht|fahrkorb|kabin|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(
+      question,
+    );
   if (!asksClearance || !hasRelevantComponents) return [];
 
   const findEvidence = (clause: string, value: RegExp) =>
@@ -796,30 +876,56 @@ async function queryOneStandard(
   standard: (typeof CORE_STANDARDS)[number],
   apiKey: string,
   ai: any,
-  vectorize: any
+  vectorize: any,
+  multilingual?: MultilingualRetrieval,
 ) {
   const preferredLanguage =
     route.preferredSourceLanguage || route.questionLanguage || "de";
   const languages = Array.from(
-    new Set([preferredLanguage, "de", "de-en", "en"].filter(Boolean))
+    new Set([preferredLanguage, "de", "de-en", "en"].filter(Boolean)),
   );
-  const mapQueries = await discoverMapQueries(question, standard, ai, vectorize);
+  const mapQueries = await discoverMapQueries(
+    question,
+    standard,
+    ai,
+    vectorize,
+    multilingual,
+  );
 
   for (const sourceLanguage of languages) {
-    const basePlan = await expandQueryPlan(question, route, sourceLanguage, apiKey);
+    const basePlan = await expandQueryPlan(
+      question,
+      route,
+      sourceLanguage,
+      apiKey,
+    );
     // Deterministic intent queries come first. Map-derived hints are useful expansion,
-// but must never consume the bounded plan before exact-clause candidates such as
-// 5.2.5.3.1 / 5.3.4.1 can reach raw-evidence verification.
-const plan = [...basePlan, ...mapQueries].filter((item, index, all) => {
-      const key = `${item.topic}:${item.query.toLowerCase()}`;
-      return all.findIndex((candidate) => `${candidate.topic}:${candidate.query.toLowerCase()}` === key) === index;
-    }).slice(0, 14);
+    // but must never consume the bounded plan before exact-clause candidates such as
+    // 5.2.5.3.1 / 5.3.4.1 can reach raw-evidence verification.
+    const plan = [...basePlan, ...mapQueries]
+      .filter((item, index, all) => {
+        const key = `${item.topic}:${item.query.toLowerCase()}`;
+        return (
+          all.findIndex(
+            (candidate) =>
+              `${candidate.topic}:${candidate.query.toLowerCase()}` === key,
+          ) === index
+        );
+      })
+      .slice(0, 14);
     const perTopic = new Map<StandardTopic, any[]>();
 
     for (const item of plan) {
       let valid: any[] = [];
       try {
-        valid = await rawMatchesForQuery(item, standard, sourceLanguage, ai, vectorize);
+        valid = await rawMatchesForQuery(
+          item,
+          standard,
+          sourceLanguage,
+          ai,
+          vectorize,
+          multilingual,
+        );
       } catch (error) {
         console.error("Standards query item failed; continuing", {
           standard: standard.code,
@@ -829,24 +935,43 @@ const plan = [...basePlan, ...mapQueries].filter((item, index, all) => {
       }
 
       const current = perTopic.get(item.topic) || [];
-      const byKey = new Map(current.map((match: any) => [matchKey(match), match]));
+      const byKey = new Map(
+        current.map((match: any) => [matchKey(match), match]),
+      );
       for (const match of valid) {
         const key = matchKey(match);
         const existing = byKey.get(key);
-        if (!existing || matchRank(match) > matchRank(existing)) byKey.set(key, match);
+        if (!existing || matchRank(match) > matchRank(existing))
+          byKey.set(key, match);
       }
       perTopic.set(
         item.topic,
         [...byKey.values()]
           .sort((a: any, b: any) => matchRank(b) - matchRank(a))
-          .slice(0, 4)
+          .slice(0, 4),
       );
     }
 
     const broad = isBroadShaftQuestion(question);
     const topicOrder: StandardTopic[] = broad
-      ? ["structure", "pit", "headroom", "lighting", "access", "separation", "general"]
-      : ["general", "structure", "pit", "headroom", "lighting", "access", "separation"];
+      ? [
+          "structure",
+          "pit",
+          "headroom",
+          "lighting",
+          "access",
+          "separation",
+          "general",
+        ]
+      : [
+          "general",
+          "structure",
+          "pit",
+          "headroom",
+          "lighting",
+          "access",
+          "separation",
+        ];
 
     const selected: any[] = [];
     const used = new Set<string>();
@@ -884,7 +1009,8 @@ async function retrieveStandards(
   route: any,
   apiKey: string,
   ai: any,
-  vectorize: any
+  vectorize: any,
+  multilingual?: MultilingualRetrieval,
 ) {
   const checked = await Promise.all(
     CORE_STANDARDS.map(async (standard) => {
@@ -895,7 +1021,8 @@ async function retrieveStandards(
           standard,
           apiKey,
           ai,
-          vectorize
+          vectorize,
+          multilingual,
         );
       } catch (error) {
         console.error("Standards retrieval error:", {
@@ -909,7 +1036,7 @@ async function retrieveStandards(
           matches: [],
         };
       }
-    })
+    }),
   );
 
   return {
@@ -920,7 +1047,7 @@ async function retrieveStandards(
       entry.matches.map((match: any) => ({
         ...match,
         standardCode: entry.standard,
-      }))
+      })),
     ),
   };
 }
@@ -936,9 +1063,15 @@ function normalizeStandardCode(value: unknown): CoreStandardCode | null {
 
 function normalizeTopic(value: unknown): StandardTopic {
   const topic = String(value || "general") as StandardTopic;
-  return ["structure", "pit", "headroom", "lighting", "access", "separation", "general"].includes(
-    topic
-  )
+  return [
+    "structure",
+    "pit",
+    "headroom",
+    "lighting",
+    "access",
+    "separation",
+    "general",
+  ].includes(topic)
     ? topic
     : "general";
 }
@@ -960,21 +1093,24 @@ function escapeRegExp(value: string) {
 }
 
 function excerptContainsClause(excerpt: string, clause: string) {
-  return new RegExp(
-    `(?:^|[^0-9.])${escapeRegExp(clause)}(?:[^0-9.]|$)`
-  ).test(excerpt);
+  return new RegExp(`(?:^|[^0-9.])${escapeRegExp(clause)}(?:[^0-9.]|$)`).test(
+    excerpt,
+  );
 }
 
 function normalizedNumberTokens(value: string) {
   const withoutStandardNames = value.replace(
     /EN\s*81\s*[-–]\s*(?:20|50)/gi,
-    ""
+    "",
   );
   const tokens = withoutStandardNames.match(/\d+(?:[.,]\d+)?/g) || [];
   return tokens.map((token) => token.replace(",", "."));
 }
 
-function evidenceContainsAllClaimNumbers(claimText: string, evidenceText: string) {
+function evidenceContainsAllClaimNumbers(
+  claimText: string,
+  evidenceText: string,
+) {
   const claimNumbers = normalizedNumberTokens(claimText);
   if (!claimNumbers.length) return true;
   const evidenceNumbers = new Set(normalizedNumberTokens(evidenceText));
@@ -991,7 +1127,9 @@ function verifyClaims(parsed: any, evidence: any[]): VerifiedStandardClaim[] {
     const clause = normalizeClause(claim?.clause);
     const text = typeof claim?.text === "string" ? claim.text.trim() : "";
     const evidenceQuote =
-      typeof claim?.evidenceQuote === "string" ? claim.evidenceQuote.trim() : "";
+      typeof claim?.evidenceQuote === "string"
+        ? claim.evidenceQuote.trim()
+        : "";
     const evidenceId = Number(claim?.evidenceId);
     const topic = normalizeTopic(claim?.topic);
 
@@ -1028,7 +1166,7 @@ function verifyClaims(parsed: any, evidence: any[]): VerifiedStandardClaim[] {
 
 function selectClaimsForAnswer(
   claims: VerifiedStandardClaim[],
-  broad: boolean
+  broad: boolean,
 ) {
   if (!broad) return claims.slice(0, 8);
 
@@ -1046,7 +1184,9 @@ function selectClaimsForAnswer(
 
   for (const topic of topicOrder) {
     const claim = claims.find(
-      (item) => item.topic === topic && !usedClauses.has(`${item.standard}:${item.clause}`)
+      (item) =>
+        item.topic === topic &&
+        !usedClauses.has(`${item.standard}:${item.clause}`),
     );
     if (!claim) continue;
     selected.push(claim);
@@ -1078,23 +1218,37 @@ function clauseLabel(language?: string | null) {
 function presentationLabels(language?: string | null) {
   switch (language) {
     case "de":
-      return { summary: "Kurz gesagt – das schreibt die Norm vor", details: "Was die Norm konkret sagt" };
+      return {
+        summary: "Kurz gesagt – das schreibt die Norm vor",
+        details: "Was die Norm konkret sagt",
+      };
     case "fa":
       return { summary: "خلاصهٔ فنی", details: "آنچه Norm دقیقاً می‌گوید" };
     case "tr":
       return { summary: "Kısaca", details: "Standardın tam olarak söylediği" };
     default:
-      return { summary: "In practical terms", details: "What the standard says exactly" };
+      return {
+        summary: "In practical terms",
+        details: "What the standard says exactly",
+      };
   }
 }
 
 function cleanHumanSummary(summary: string) {
-  const normalized = String(summary || "").replace(/\s+/g, " ").trim();
+  const normalized = String(summary || "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!normalized) return "";
-  if (/^[\\/]/.test(normalized) || /\\b(?:page numbers?|sources?|references?|clause numbers?|section numbers?)\\b/i.test(normalized)) return "";
+  if (
+    /^[\\/]/.test(normalized) ||
+    /\\b(?:page numbers?|sources?|references?|clause numbers?|section numbers?)\\b/i.test(
+      normalized,
+    )
+  )
+    return "";
 
   const cut = normalized.search(
-    /(?:\bEN\s*81\s*[-–]|\bAbschnitt\s+\d|\bClause\s+\d|\bMadde\s+\d|\bпункт\s+\d|\bالبند\s+\d)/i
+    /(?:\bEN\s*81\s*[-–]|\bAbschnitt\s+\d|\bClause\s+\d|\bMadde\s+\d|\bпункт\s+\d|\bالبند\s+\d)/i,
   );
   const cleaned = (cut >= 0 ? normalized.slice(0, cut) : normalized)
     .replace(/[\s:;,-]+$/g, "")
@@ -1107,7 +1261,7 @@ async function buildHumanSummary(
   question: string,
   claims: VerifiedStandardClaim[],
   language: string | null | undefined,
-  apiKey: string
+  apiKey: string,
 ) {
   const factsOnly = claims.map((claim) => claim.text).join("\n");
   const prompt = `
@@ -1142,7 +1296,7 @@ ${factsOnly}
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.12, maxOutputTokens: 260 },
         }),
-      }
+      },
     );
 
     if (response.ok) {
@@ -1158,16 +1312,22 @@ ${factsOnly}
     console.error("Standards summary error:", error);
   }
 
-  return claims.slice(0, 2).map((claim) => claim.text).join(" ");
+  return claims
+    .slice(0, 2)
+    .map((claim) => claim.text)
+    .join(" ");
 }
 
 function formatClaimDetails(
   claims: VerifiedStandardClaim[],
-  language?: string | null
+  language?: string | null,
 ) {
   const label = clauseLabel(language);
   return claims
-    .map((claim) => `• ${claim.standard}, ${label} ${claim.clause} — ${claim.text}`)
+    .map(
+      (claim) =>
+        `• ${claim.standard}, ${label} ${claim.clause} — ${claim.text}`,
+    )
     .join("\n");
 }
 
@@ -1179,7 +1339,7 @@ async function formatAnswer(
   question: string,
   claims: VerifiedStandardClaim[],
   language: string | null | undefined,
-  apiKey: string
+  apiKey: string,
 ) {
   if (language === "de") return formatGermanStandardsAnswer(claims);
   const labels = presentationLabels(language);
@@ -1204,9 +1364,17 @@ export async function answerStandardsQuestion(
   route: any,
   apiKey: string,
   ai: any,
-  vectorize: any
+  vectorize: any,
+  multilingual?: MultilingualRetrieval,
 ) {
-  const retrieval = await retrieveStandards(question, route, apiKey, ai, vectorize);
+  const retrieval = await retrieveStandards(
+    question,
+    route,
+    apiKey,
+    ai,
+    vectorize,
+    multilingual,
+  );
   const checkedStandards = retrieval.checkedStandards;
 
   if (!retrieval.matches.length) {
@@ -1234,12 +1402,17 @@ export async function answerStandardsQuestion(
   const deterministicClaims = deterministicClearanceClaims(
     question,
     evidence,
-    route.questionLanguage
+    route.questionLanguage,
   );
   if (deterministicClaims.length) {
     return {
       sufficient: true,
-      answer: await formatAnswer(question, deterministicClaims, route.questionLanguage, apiKey),
+      answer: await formatAnswer(
+        question,
+        deterministicClaims,
+        route.questionLanguage,
+        apiKey,
+      ),
       checkedStandards,
       verifiedClaims: deterministicClaims,
     };
@@ -1309,7 +1482,7 @@ ${excerpts}
           maxOutputTokens: 3000,
         },
       }),
-    }
+    },
   );
 
   if (!response.ok) {
@@ -1340,7 +1513,12 @@ ${excerpts}
 
   return {
     sufficient: true,
-    answer: await formatAnswer(question, selected, route.questionLanguage, apiKey),
+    answer: await formatAnswer(
+      question,
+      selected,
+      route.questionLanguage,
+      apiKey,
+    ),
     checkedStandards,
     verifiedClaims: selected,
   };

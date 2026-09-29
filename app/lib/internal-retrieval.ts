@@ -1,5 +1,8 @@
-import { RouterResult } from "./router";
-import { germanElevatorSearchTerms } from "./german-language";
+import type { RouterResult } from "./router";
+import {
+  createQueryBackend,
+  type MultilingualRetrieval,
+} from "./retrieval-backend.ts";
 
 export type InternalEvidence = {
   id: string;
@@ -19,7 +22,8 @@ function buildFilter(route: RouterResult) {
   if (route.controller) filter.controller = route.controller;
   if (route.faultFamily) filter.faultFamily = route.faultFamily;
   if (route.faultCode) filter.faultCode = String(route.faultCode);
-  if (route.faultFamily || route.faultCode || route.faultName) filter.contentType = "fault";
+  if (route.faultFamily || route.faultCode || route.faultName)
+    filter.contentType = "fault";
   return filter;
 }
 
@@ -40,12 +44,15 @@ function buildFilterAttempts(route: RouterResult) {
   if (route.manufacturer) attempts.push({ manufacturer: route.manufacturer });
   return attempts.filter(
     (filter, index, all) =>
-      all.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(filter)) === index
+      all.findIndex(
+        (candidate) => JSON.stringify(candidate) === JSON.stringify(filter),
+      ) === index,
   );
 }
 
 export function shouldTryInternalRetrieval(route: RouterResult) {
-  if (route.needsClarification || route.searchStrategy === "clarify_first") return false;
+  if (route.needsClarification || route.searchStrategy === "clarify_first")
+    return false;
   if (route.intent === "standard") return false;
   if (route.evidenceNeed === "internal") return true;
   const hasSourceSpecificEntity = Boolean(
@@ -54,13 +61,15 @@ export function shouldTryInternalRetrieval(route: RouterResult) {
     route.controller ||
     route.faultCode ||
     route.faultFamily ||
-    route.faultName
+    route.faultName,
   );
   if (route.intent === "unknown" && !hasSourceSpecificEntity) return false;
   return Boolean(
     hasSourceSpecificEntity ||
     route.intent === "documentation" ||
-    route.intent === "troubleshooting"
+    route.intent === "troubleshooting" ||
+    route.intent === "general_technical" ||
+    route.intent === "planning",
   );
 }
 
@@ -74,7 +83,9 @@ function compactIdentifier(value: unknown) {
 
 function exactSourceCandidate(item: InternalEvidence, route: RouterResult) {
   const sourceHaystack = compactIdentifier(
-    [item.manufacturer, item.controller, item.sourceName, item.text].filter(Boolean).join(" ")
+    [item.manufacturer, item.controller, item.sourceName, item.text]
+      .filter(Boolean)
+      .join(" "),
   );
   if (route.manufacturer) {
     const manufacturer = compactIdentifier(route.manufacturer);
@@ -86,13 +97,15 @@ function exactSourceCandidate(item: InternalEvidence, route: RouterResult) {
   }
   if (route.faultCode) {
     const code = normalized(String(route.faultCode));
-    const hasCode = normalized(item.faultCode) === code || normalized(item.text).includes(code);
+    const hasCode =
+      normalized(item.faultCode) === code ||
+      normalized(item.text).includes(code);
     if (!hasCode) return false;
   }
   return true;
 }
 
-function buildRetrievalQuery(query: string, route: RouterResult) {
+export function buildRetrievalQuery(query: string, route: RouterResult) {
   const entities = [
     route.manufacturer,
     route.productFamily,
@@ -102,23 +115,47 @@ function buildRetrievalQuery(query: string, route: RouterResult) {
     route.faultName,
     ...(route.components || []),
     ...(route.topics || []),
-    ...germanElevatorSearchTerms(query),
   ]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .filter(
+      (value): value is string =>
+        typeof value === "string" && value.trim().length > 0,
+    )
     .map((value) => value.trim());
 
-  const uniqueEntities = [...new Set(entities.map((value) => value.toLowerCase()))];
+  const uniqueEntities = [
+    ...new Set(entities.map((value) => value.toLowerCase())),
+  ];
   const entityText = uniqueEntities.join(" ");
   return entityText ? `${query}\nTechnical entities: ${entityText}` : query;
 }
 
 function routeBoost(item: InternalEvidence, route: RouterResult) {
   let boost = 0;
-  if (route.manufacturer && normalized(item.manufacturer) === normalized(route.manufacturer)) boost += 0.08;
-  if (route.controller && normalized(item.controller) === normalized(route.controller)) boost += 0.08;
-  if (route.faultCode && normalized(item.faultCode) === normalized(String(route.faultCode))) boost += 0.12;
-  if (route.faultCode && normalized(item.text).includes(normalized(String(route.faultCode)))) boost += 0.5;
-  if (route.faultName && normalized(item.faultName).includes(normalized(route.faultName))) boost += 0.05;
+  if (
+    route.manufacturer &&
+    normalized(item.manufacturer) === normalized(route.manufacturer)
+  )
+    boost += 0.08;
+  if (
+    route.controller &&
+    normalized(item.controller) === normalized(route.controller)
+  )
+    boost += 0.08;
+  if (
+    route.faultCode &&
+    normalized(item.faultCode) === normalized(String(route.faultCode))
+  )
+    boost += 0.12;
+  if (
+    route.faultCode &&
+    normalized(item.text).includes(normalized(String(route.faultCode)))
+  )
+    boost += 0.5;
+  if (
+    route.faultName &&
+    normalized(item.faultName).includes(normalized(route.faultName))
+  )
+    boost += 0.05;
   return boost;
 }
 
@@ -144,9 +181,17 @@ function dedupeEvidence(items: InternalEvidence[]) {
 }
 
 function authoritativeCandidate(item: any) {
-  const kind = normalized(item?.metadata?.contentType || item?.metadata?.kind || item?.metadata?.type);
-  const source = normalized(item?.metadata?.source || item?.metadata?.sourceType || item?.metadata?.documentType);
-  const generated = item?.metadata?.generated === true || normalized(item?.metadata?.generated) === "true";
+  const kind = normalized(
+    item?.metadata?.contentType || item?.metadata?.kind || item?.metadata?.type,
+  );
+  const source = normalized(
+    item?.metadata?.source ||
+      item?.metadata?.sourceType ||
+      item?.metadata?.documentType,
+  );
+  const generated =
+    item?.metadata?.generated === true ||
+    normalized(item?.metadata?.generated) === "true";
   if (generated) return false;
   if (/document[-_ ]?map|summary|metadata|index/.test(kind)) return false;
   if (/document[-_ ]?map|summary|metadata|index/.test(source)) return false;
@@ -157,15 +202,22 @@ export async function retrieveInternalEvidence(
   query: string,
   route: RouterResult,
   ai: any,
-  vectorize: any
+  vectorize: any,
+  multilingual?: MultilingualRetrieval,
 ): Promise<InternalEvidence[]> {
   if (!shouldTryInternalRetrieval(route)) return [];
-  const retrievalQuery = route.manufacturer && route.faultCode
-    ? `${String(route.faultCode)} ${route.manufacturer}`
-    : buildRetrievalQuery(query, route);
-  const embedding = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [retrievalQuery] });
-  const vector = (embedding as any)?.data?.[0];
-  if (!Array.isArray(vector)) throw new Error("Internal retrieval embedding failed");
+  const retrievalQuery =
+    route.manufacturer && route.faultCode
+      ? `${String(route.faultCode)} ${route.manufacturer}`
+      : buildRetrievalQuery(query, route);
+  const backend = await createQueryBackend(
+    retrievalQuery,
+    ai,
+    vectorize,
+    multilingual,
+  );
+  const vector = backend.vector;
+  vectorize = backend.vectorize;
   const options = {
     topK: route.manufacturer ? 50 : 12,
     returnMetadata: "all",
@@ -176,7 +228,10 @@ export async function retrieveInternalEvidence(
       result = await vectorize.query(vector, { ...options, filter });
       if (result?.matches?.length) break;
     } catch (error) {
-      console.warn("Filtered internal retrieval attempt unavailable", { filter, error });
+      console.warn("Filtered internal retrieval attempt unavailable", {
+        filter,
+        error,
+      });
     }
   }
   if (!result?.matches?.length) {
@@ -189,20 +244,26 @@ export async function retrieveInternalEvidence(
     .filter(authoritativeCandidate)
     .map((match: any) => ({
       id: String(match?.id || ""),
-      text: String(match?.metadata?.text || match?.metadata?.content || "").trim(),
+      text: String(
+        match?.metadata?.text || match?.metadata?.content || "",
+      ).trim(),
       score: Number(match?.score || 0),
       manufacturer: match?.metadata?.manufacturer ?? null,
       controller: match?.metadata?.controller ?? null,
       faultCode: match?.metadata?.faultCode ?? null,
       faultName: match?.metadata?.faultName ?? null,
       contentType: match?.metadata?.contentType ?? null,
-      sourceName: [match?.metadata?.fileName, match?.metadata?.sourcePath]
-        .filter(Boolean)
-        .join(" ") || null,
+      sourceName:
+        [match?.metadata?.fileName, match?.metadata?.sourcePath]
+          .filter(Boolean)
+          .join(" ") || null,
     }))
     .filter((item: InternalEvidence) => exactSourceCandidate(item, route))
     .filter((item: InternalEvidence) => item.text.length > 0)
-    .map((item: InternalEvidence) => ({ ...item, score: item.score + routeBoost(item, route) }))
+    .map((item: InternalEvidence) => ({
+      ...item,
+      score: item.score + routeBoost(item, route),
+    }))
     .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score);
   return dedupeEvidence(candidates).slice(0, 5);
 }
