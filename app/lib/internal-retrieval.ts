@@ -29,9 +29,9 @@ function buildFilterAttempts(route: RouterResult) {
   // A manufacturer-qualified fault lookup must never broaden to another
   // manufacturer's same-numbered fault. That would turn a missing match into
   // a confident answer grounded in the wrong product family.
-  if (route.manufacturer && route.faultCode) {
-    // Legacy vectors are not guaranteed to normalize either structured field.
-    // Retrieve a broad exact-code candidate pool and enforce both identities
+  if (route.manufacturer) {
+    // Manufacturer/controller metadata in legacy vectors is not normalized.
+    // Retrieve a broad candidate pool and enforce the source identity
     // deterministically after the query.
     return [];
   }
@@ -71,15 +71,24 @@ function compactIdentifier(value: unknown) {
   return normalized(value).replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
-function exactFaultCandidate(item: InternalEvidence, route: RouterResult) {
-  if (!route.manufacturer || !route.faultCode) return true;
-  const code = normalized(String(route.faultCode));
-  const hasCode = normalized(item.faultCode) === code || normalized(item.text).includes(code);
-  const manufacturer = compactIdentifier(route.manufacturer);
-  const manufacturerHaystack = compactIdentifier(
-    [item.manufacturer, item.sourceName, item.text].filter(Boolean).join(" ")
+function exactSourceCandidate(item: InternalEvidence, route: RouterResult) {
+  const sourceHaystack = compactIdentifier(
+    [item.manufacturer, item.controller, item.sourceName, item.text].filter(Boolean).join(" ")
   );
-  return hasCode && Boolean(manufacturer) && manufacturerHaystack.includes(manufacturer);
+  if (route.manufacturer) {
+    const manufacturer = compactIdentifier(route.manufacturer);
+    if (!manufacturer || !sourceHaystack.includes(manufacturer)) return false;
+  }
+  if (route.controller) {
+    const controller = compactIdentifier(route.controller);
+    if (!controller || !sourceHaystack.includes(controller)) return false;
+  }
+  if (route.faultCode) {
+    const code = normalized(String(route.faultCode));
+    const hasCode = normalized(item.faultCode) === code || normalized(item.text).includes(code);
+    if (!hasCode) return false;
+  }
+  return true;
 }
 
 function buildRetrievalQuery(query: string, route: RouterResult) {
@@ -156,7 +165,7 @@ export async function retrieveInternalEvidence(
   const vector = (embedding as any)?.data?.[0];
   if (!Array.isArray(vector)) throw new Error("Internal retrieval embedding failed");
   const options = {
-    topK: route.manufacturer && route.faultCode ? 50 : 12,
+    topK: route.manufacturer ? 50 : 12,
     returnMetadata: "all",
   };
   let result: any;
@@ -189,7 +198,7 @@ export async function retrieveInternalEvidence(
         .filter(Boolean)
         .join(" ") || null,
     }))
-    .filter((item: InternalEvidence) => exactFaultCandidate(item, route))
+    .filter((item: InternalEvidence) => exactSourceCandidate(item, route))
     .filter((item: InternalEvidence) => item.text.length > 0)
     .map((item: InternalEvidence) => ({ ...item, score: item.score + routeBoost(item, route) }))
     .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score);
