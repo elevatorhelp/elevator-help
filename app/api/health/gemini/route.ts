@@ -19,7 +19,7 @@ export async function GET() {
         },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: "Return exactly: OK" }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 8 },
+          generationConfig: { temperature: 0, maxOutputTokens: 128 },
         }),
         cache: "no-store",
       }
