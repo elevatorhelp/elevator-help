@@ -1,0 +1,68 @@
+name: Live multilingual archive QA
+
+on:
+  workflow_run:
+    workflows: ["Deploy production"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  archive-first:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Verify cross-language internal standards retrieval
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          questions=(
+            'What is the minimum diameter of steel wire suspension ropes under EN 81-20?'
+            'Wie groß ist der Mindestdurchmesser von Tragseilen aus Stahldraht nach EN 81-20?'
+            'حداقل قطر سیم‌بکسل‌های تعلیق فولادی طبق EN 81-20 چقدر است؟'
+            '¿Cuál es el diámetro mínimo de los cables de suspensión de acero según EN 81-20?'
+          )
+
+          for question in "${questions[@]}"; do
+            passed=0
+            for attempt in $(seq 1 6); do
+              response=$(curl -sS --fail-with-body --max-time 90                 -H 'content-type: application/json'                 --data "$(jq -nc --arg q "$question" '{question:$q}')"                 https://elevator.help/api/ask || true)
+              mode=$(printf '%s' "$response" | jq -r '.mode // empty' 2>/dev/null || true)
+              answer=$(printf '%s' "$response" | jq -r '.answer // empty' 2>/dev/null || true)
+              if [[ "$mode" == "standards_verified" ]] &&                  grep -Eqi '8[[:space:]]*mm' <<<"$answer" &&                  ! grep -qi 'Web-based' <<<"$answer"; then
+                passed=1
+                break
+              fi
+              sleep 15
+            done
+            if [[ "$passed" -ne 1 ]]; then
+              echo "FAIL: archive-first standards answer was not verified for: $question"
+              printf '%s\n' "$response" | jq -c '{mode,answer,error}' 2>/dev/null || true
+              exit 1
+            fi
+          done
+
+      - name: Verify cross-language manufacturer fault retrieval
+        shell: bash
+        run: |
+          set -euo pipefail
+          question='¿Qué significa el código de error 14 de Newlift?'
+          for attempt in $(seq 1 6); do
+            response=$(curl -sS --fail-with-body --max-time 90               -H 'content-type: application/json'               --data "$(jq -nc --arg q "$question" '{question:$q}')"               https://elevator.help/api/ask || true)
+            mode=$(printf '%s' "$response" | jq -r '.mode // empty' 2>/dev/null || true)
+            answer=$(printf '%s' "$response" | jq -r '.answer // empty' 2>/dev/null || true)
+            if [[ "$mode" == "internal_evidence" ]] &&                grep -Eqi '14|anfahr|arranque|iniciar' <<<"$answer" &&                ! grep -qi 'Web-based' <<<"$answer"; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo 'FAIL: Spanish Newlift fault answer did not come from internal evidence.'
+          printf '%s\n' "$response" | jq -c '{mode,answer,error}' 2>/dev/null || true
+          exit 1
