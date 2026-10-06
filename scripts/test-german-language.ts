@@ -2,6 +2,10 @@ import {
   analyzeGermanElevatorLanguage,
   germanElevatorSearchTerms,
 } from "../app/lib/german-language.ts";
+import {
+  addWebSourceLabel,
+  webSourceLabel,
+} from "../app/lib/source-label.ts";
 
 const cases: Array<[string, boolean, string[]]> = [
   ["Kabinengeländer", true, ["Kabine", "Geländer"]],
@@ -34,3 +38,22 @@ for (const [question, expectedTechnical, expectedTerms] of cases) {
 }
 
 console.log(`PASS: ${cases.length} German compound-language cases`);
+
+const sourceLabels = {
+  de: "Quelle: Web-Recherche",
+  en: "Source: Web research",
+  es: "Fuente: búsqueda web",
+  fa: "منبع: جست‌وجوی وب",
+};
+
+for (const [language, expected] of Object.entries(sourceLabels)) {
+  if (webSourceLabel(language) !== expected) {
+    throw new Error(`${language}: expected source label ${expected}`);
+  }
+  const answer = addWebSourceLabel("Antwort\n\nWeb-based", language);
+  if (answer !== `Antwort\n\n${expected}`) {
+    throw new Error(`${language}: unexpected formatted answer ${answer}`);
+  }
+}
+
+console.log("PASS: localized web source labels");
