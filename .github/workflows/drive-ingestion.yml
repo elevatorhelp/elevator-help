@@ -15,11 +15,11 @@ on:
       target_text_files:
         description: Stop after this many PDFs with extractable text are indexed
         required: false
-        default: "2"
+        default: "10"
       max_scan_files:
         description: Maximum PDFs to inspect in one run while looking for text-bearing files
         required: false
-        default: "20"
+        default: "100"
   push:
     branches: [main]
     paths:
@@ -67,11 +67,16 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
 
-          current=$(npx --yes wrangler@latest vectorize list-metadata-index elevator-help-index --json)
-          for property in contentType language documentGroup manufacturer controller faultFamily faultCode; do
-            if ! printf '%s' "$current" | grep -q "\"propertyName\"[[:space:]]*:[[:space:]]*\"$property\""; then
-              echo "Creating missing metadata index: $property"
-              npx --yes wrangler@latest vectorize create-metadata-index elevator-help-index --propertyName "$property" --type string
+          for index in elevator-help-index elevator-help-multilingual-v2; do
+            current=$(npx --yes wrangler@4.125.0 vectorize list-metadata-index "$index" --json)
+            for property in contentType language documentGroup manufacturer controller faultFamily faultCode sourceFingerprint status; do
+              if ! printf '%s' "$current" | grep -q "\"propertyName\"[[:space:]]*:[[:space:]]*\"$property\""; then
+                echo "Creating missing metadata index: $index.$property"
+                npx --yes wrangler@4.125.0 vectorize create-metadata-index "$index" --property-name "$property" --type string
+              fi
+            done
+            if ! printf '%s' "$current" | grep -q '"propertyName"[[:space:]]*:[[:space:]]*"embeddingVersion"'; then
+              npx --yes wrangler@4.125.0 vectorize create-metadata-index "$index" --property-name embeddingVersion --type number
             fi
           done
           echo "Required Vectorize metadata indexes are available or have been requested."
@@ -116,8 +121,8 @@ jobs:
           ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
           DRIVE_FOLDER_ID: ${{ inputs.folder_id || '1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5' }}
           TARGET_FILE_ID: ${{ inputs.target_file_id || '' }}
-          TARGET_TEXT_FILES: ${{ inputs.target_text_files || '2' }}
-          MAX_SCAN_FILES: ${{ inputs.max_scan_files || '20' }}
+          TARGET_TEXT_FILES: ${{ inputs.target_text_files || '10' }}
+          MAX_SCAN_FILES: ${{ inputs.max_scan_files || '100' }}
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
         run: node scripts/drive-ingest-until-text.mjs

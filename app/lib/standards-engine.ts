@@ -4,7 +4,7 @@ import {
 } from "./retrieval-backend.ts";
 
 const MIN_STANDARD_SCORE = 0.2;
-const ACTIVE_DOCUMENT_MAP_VERSION = 3;
+export const ACTIVE_DOCUMENT_MAP_VERSION = 4;
 
 const CORE_STANDARDS = [
   { code: "EN 81-20", compact: "EN8120" },
@@ -43,6 +43,7 @@ function languageName(code: string) {
     ru: "Russian",
     ar: "Arabic",
     tr: "Turkish",
+    es: "Spanish",
   };
   return names[code] || `language code ${code}`;
 }
@@ -78,7 +79,7 @@ export function isStandardsQuestion(question: string, route?: any) {
   if (route?.intent === "standard") return true;
   return (
     /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
-    /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) ||
+    /\b(DIN\s*)?(norm|normen|standard|standards|norma|normas)\b/i.test(question) ||
     /(استاندارد|نورم|نُرم)/i.test(question)
   );
 }
@@ -797,11 +798,11 @@ function deterministicClearanceClaims(
   language?: string | null,
 ): VerifiedStandardClaim[] {
   const asksClearance =
-    /(abstand|mindestabstand|maximalabstand|minimum|maximum|\bmin\.?\b|\bmax\.?\b|clearance|distance|spacing|فاصله|حداقل|حداکثر)/i.test(
+    /(abstand|mindestabstand|maximalabstand|minimum|maximum|mínim[oa]|máxim[oa]|\bmin\.?\b|\bmax\.?\b|clearance|distance|spacing|distancia|separación|فاصله|حداقل|حداکثر)/i.test(
       question,
     );
   const hasRelevantComponents =
-    /(schachtwand|schacht|fahrkorb|kabin|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|کابین|دیواره|چاه)/i.test(
+    /(schachtwand|schacht|fahrkorb|kabin|schwelle|türrahmen|fahrkorbtür|schachttür|shaft|wall|car|cabin|sill|door|ascensor|cabina|hueco|umbral|puerta|کابین|دیواره|چاه)/i.test(
       question,
     );
   if (!asksClearance || !hasRelevantComponents) return [];
@@ -853,6 +854,8 @@ function deterministicClearanceClaims(
       },
     ];
   }
+
+  if (language !== "en") return [];
 
   return [
     {
@@ -1210,6 +1213,8 @@ function clauseLabel(language?: string | null) {
       return "البند";
     case "hr":
       return "odjeljak";
+    case "es":
+      return "apartado";
     default:
       return "Clause";
   }
@@ -1226,6 +1231,11 @@ function presentationLabels(language?: string | null) {
       return { summary: "خلاصهٔ فنی", details: "آنچه Norm دقیقاً می‌گوید" };
     case "tr":
       return { summary: "Kısaca", details: "Standardın tam olarak söylediği" };
+    case "es":
+      return {
+        summary: "En resumen",
+        details: "Lo que establece exactamente la norma",
+      };
     default:
       return {
         summary: "In practical terms",
@@ -1354,6 +1364,8 @@ function unverifiedMessage(language?: string | null) {
       return "Ich habe EN 81-20 und EN 81-50 in der internen technischen Bibliothek geprüft, konnte für diese Formulierung aber noch keinen ausreichend sicheren Abschnittstreffer verifizieren. Formuliere den Punkt bitte etwas konkreter, z. B. Schachtwand, Schachtgrube, Schachtkopf oder Beleuchtung.";
     case "fa":
       return "EN 81-20 و EN 81-50 را در کتابخانهٔ فنی داخلی بررسی کردم، اما برای این عبارت هنوز نتوانستم بند دقیقی را با اطمینان کافی تأیید کنم. موضوع را کمی دقیق‌تر بگو؛ مثلاً دیوارهٔ چاه، چاهک، بالاسری یا روشنایی چاه.";
+    case "es":
+      return "He consultado EN 81-20 y EN 81-50 en la biblioteca técnica interna, pero todavía no he podido verificar un apartado exacto con suficiente fiabilidad para esta formulación. Concreta un poco el tema, por ejemplo pared del hueco, foso, espacio superior o iluminación del hueco.";
     default:
       return "I checked EN 81-20 and EN 81-50 in the internal technical library, but I could not verify a sufficiently reliable exact clause for this wording. Please narrow the point slightly, for example shaft wall, pit, headroom or shaft lighting.";
   }

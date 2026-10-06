@@ -28,5 +28,14 @@ jobs:
       - name: Test standards presentation
         run: npm run test:standards-presentation
 
+      - name: Test multilingual retrieval contract
+        run: npm run test:multilingual-retrieval
+
+      - name: Test incremental archive ingestion
+        run: npm run test:incremental-ingestion
+
       - name: Build
         run: npm run build
+
+      - name: Build Cloudflare Worker
+        run: npm run cf:build

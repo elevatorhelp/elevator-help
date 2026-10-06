@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   MULTILINGUAL_EMBEDDING_DIMENSIONS,
   embedRetrievalDocuments,
@@ -9,6 +10,11 @@ import {
 } from "../app/lib/internal-retrieval.ts";
 import { requiresStandardSafetyCheck } from "../app/lib/query-policy.ts";
 import {
+  isBareFaultCodeQuestion,
+  manufacturerClarificationQuestion,
+} from "../app/lib/fault-context.ts";
+import { ACTIVE_DOCUMENT_MAP_VERSION } from "../app/lib/standards-engine.ts";
+import {
   createQueryBackend,
   multilingualRetrievalFromEnv,
 } from "../app/lib/retrieval-backend.ts";
@@ -16,6 +22,19 @@ import {
   deterministicStandardsRoute,
   type RouterResult,
 } from "../app/lib/router.ts";
+const ingestionSource = readFileSync(
+  new URL("./drive-ingest.mjs", import.meta.url),
+  "utf8",
+);
+const DOCUMENT_MAP_VERSION = Number(
+  ingestionSource.match(/const DOCUMENT_MAP_VERSION = (\d+);/)?.[1],
+);
+
+if (ACTIVE_DOCUMENT_MAP_VERSION !== DOCUMENT_MAP_VERSION) {
+  throw new Error(
+    `Standards retrieval expects document-map v${ACTIVE_DOCUMENT_MAP_VERSION}, but ingestion writes v${DOCUMENT_MAP_VERSION}`,
+  );
+}
 
 function route(overrides: Partial<RouterResult> = {}): RouterResult {
   return {
@@ -60,6 +79,7 @@ for (const question of [
   "Was wäre min Seil Durchmesser?",
   "قطر بکسل گاورنر چقدر باید باشه؟",
   "What is the minimum rope diameter?",
+  "¿Cuál es el diámetro mínimo del cable del limitador?",
 ]) {
   if (!requiresStandardSafetyCheck(question)) {
     throw new Error(
@@ -70,11 +90,22 @@ for (const question of [
   if (routed?.intent !== "standard" || routed.evidenceNeed !== "standard") {
     throw new Error(`Multilingual standards fallback misrouted: ${question}`);
   }
+  if (question.startsWith("¿") && routed.questionLanguage !== "es") {
+    throw new Error("Spanish standards question language was not preserved");
+  }
 }
 if (requiresStandardSafetyCheck("Hallo, wie geht es dir?")) {
   throw new Error(
     "Ordinary conversation must not enter standards verification",
   );
+}
+
+const spanishFaultQuestion = "¿Qué significa el código de error 14?";
+if (!isBareFaultCodeQuestion(spanishFaultQuestion)) {
+  throw new Error("Spanish bare fault code must request manufacturer context");
+}
+if (!manufacturerClarificationQuestion(spanishFaultQuestion).includes("fabricante")) {
+  throw new Error("Spanish fault clarification must be written in Spanish");
 }
 
 const query = buildRetrievalQuery("قطر بکسل گاورنر چقدر باید باشد؟", route());

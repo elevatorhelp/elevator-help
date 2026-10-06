@@ -6,7 +6,7 @@ export type ConversationHistoryItem = {
 };
 
 const FAULT_CODE_PREFIX =
-  /(?:fehler(?:code)?|fault(?:\s*code)?|error(?:\s*code)?|code|کد(?:\s*خطا)?|خطای?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9._-]{0,15})/i;
+  /(?:fehler(?:code)?|fault(?:\s*code)?|error(?:\s*code)?|c[oó]digo(?:\s+de)?\s+error|code|کد(?:\s*خطا)?|خطای?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9._-]{0,15})/i;
 
 function itemText(item: ConversationHistoryItem | undefined) {
   return typeof item?.content === "string"
@@ -59,9 +59,10 @@ export function isBareFaultCodeQuestion(value: string) {
   const remainder = value
     .replace(FAULT_CODE_PREFIX, " ")
     .replace(
-      /\b(?:what|does|do|is|the|mean|meaning|was|bedeutet|ist|bedeutung|der|die|das|den|bitte|please|tell|me)\b/gi,
+      /\b(?:what|does|do|is|the|mean|meaning|was|bedeutet|ist|bedeutung|der|die|das|den|bitte|please|tell|me|qu[eé]|significa|cu[aá]l|es|el|la|los|las|un|una|por|favor|dime)\b/gi,
       " "
     )
+    .replace(/(?:qué|cuál|significa|código)/gi, " ")
     .replace(/(?:یعنی|معنی|چیست|چیه|لطفاً|لطفا|بگو|میشه|می‌شود)/g, " ")
     .replace(/[^\p{L}\p{N}]+/gu, "")
     .trim();
@@ -72,6 +73,8 @@ export function isBareFaultCodeQuestion(value: string) {
 export function manufacturerClarificationQuestion(question: string) {
   const language = /[؀-ۿ]/.test(question)
     ? "fa"
+    : /[¿¡]|\b(?:qu[eé]|cu[aá]l|significa|c[oó]digo|error|fabricante|controlador)\b/i.test(question)
+      ? "es"
     : /\b(what|which|from|manufacturer|controller|mean|does)\b/i.test(question)
       ? "en"
       : "de";
@@ -81,6 +84,9 @@ export function manufacturerClarificationQuestion(question: string) {
   }
   if (language === "de") {
     return "Um Ihnen weiterhelfen zu können: Können Sie angeben, von welchem Hersteller oder Steuerungstyp (z. B. Newlift, Weber, Sigma ....) die Meldung stammt?";
+  }
+  if (language === "es") {
+    return "Para poder ayudarle: ¿puede indicar de qué fabricante o tipo de controlador (p. ej., Newlift, Weber, Sigma...) procede el mensaje?";
   }
   return "To help further, which elevator manufacturer or controller type (e.g. Newlift, Weber, Sigma ....) produced this message?";
 }
