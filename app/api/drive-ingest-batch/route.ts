@@ -70,7 +70,10 @@ function parseJsonObject(text: string) {
     return JSON.parse(withoutFence.slice(first, last + 1));
   }
 
-  throw new Error("Could not parse enrichment JSON");
+  // Enrichment is optional metadata. If Gemini emits malformed JSON, keep the
+  // raw chunk ingestible instead of failing the entire batch; deterministic
+  // manufacturer/fault extraction below still preserves exact identifiers.
+  return { items: [] };
 }
 
 function normalizeNullable(value: unknown) {
