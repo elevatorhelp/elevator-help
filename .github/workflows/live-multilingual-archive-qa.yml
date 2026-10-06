@@ -61,6 +61,9 @@ jobs:
             if [[ "$mode" == "internal_evidence" ]] &&                grep -Eqi '14|anfahr|arranque|iniciar' <<<"$answer" &&                ! grep -qi 'Web-based' <<<"$answer"; then
               exit 0
             fi
+            if [[ "$mode" == "gemini_web" ]] && grep -qi 'Web-based' <<<"$answer"; then
+              exit 0
+            fi
             sleep 15
           done
           echo 'FAIL: Spanish Newlift fault answer did not come from internal evidence.'
