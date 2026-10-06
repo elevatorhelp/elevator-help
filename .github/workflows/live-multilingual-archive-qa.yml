@@ -36,7 +36,7 @@ jobs:
               response=$(curl -sS --fail-with-body --max-time 90                 -H 'content-type: application/json'                 --data "$(jq -nc --arg q "$question" '{question:$q}')"                 https://elevator.help/api/ask || true)
               mode=$(printf '%s' "$response" | jq -r '.mode // empty' 2>/dev/null || true)
               answer=$(printf '%s' "$response" | jq -r '.answer // empty' 2>/dev/null || true)
-              if [[ "$mode" == "standards_verified" ]] &&                  grep -Eqi '8[[:space:]]*(mm|millimeter)|۸[[:space:]]*(میلی.?متر|mm)' <<<"$answer" &&                  ! grep -qi 'Web-based' <<<"$answer"; then
+              if [[ "$mode" == "standards_verified" ]] &&                  grep -Eqi '8[[:space:]]*(mm|millimeter)|۸[[:space:]]*(میلی.?متر|mm)' <<<"$answer" &&                  ! grep -Eqi 'Web-based|Source: Web research|Quelle: Web-Recherche|Fuente: búsqueda web|منبع: جست‌وجوی وب' <<<"$answer"; then
                 passed=1
                 break
               fi
@@ -61,7 +61,7 @@ jobs:
             if [[ "$mode" == "internal_evidence" ]] &&                grep -Eqi '14|anfahr|arranque|iniciar' <<<"$answer" &&                ! grep -qi 'Web-based' <<<"$answer"; then
               exit 0
             fi
-            if [[ "$mode" == "gemini_web" ]] && grep -qi 'Web-based' <<<"$answer"; then
+            if [[ "$mode" == "gemini_web" ]] && grep -Eqi 'Web-based|Fuente: búsqueda web' <<<"$answer"; then
               exit 0
             fi
             sleep 15
