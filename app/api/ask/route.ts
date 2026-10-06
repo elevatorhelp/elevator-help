@@ -11,6 +11,7 @@ import {
 } from "../../lib/internal-retrieval";
 import { requiresStandardSafetyCheck } from "../../lib/query-policy";
 import { multilingualRetrievalFromEnv } from "../../lib/retrieval-backend";
+import { addWebSourceLabel } from "../../lib/source-label";
 import {
   asksResponseProvenance,
   canonicalManufacturer,
@@ -185,11 +186,15 @@ async function safeDirectAnswer(
     throw new Error("GEMINI_OUTPUT_UNSAFE");
   return clean;
 }
-async function safeWebAnswer(prompt: string, key: string) {
+async function safeWebAnswer(
+  prompt: string,
+  key: string,
+  language?: string | null,
+) {
   const clean = sanitizeUserAnswer(await callGemini(prompt, key, true));
   if (!clean || isObviouslyIncomplete(clean))
     throw new Error("GEMINI_WEB_OUTPUT_UNSAFE");
-  return clean;
+  return addWebSourceLabel(clean, language);
 }
 type GroundedAnswer = {
   answer: string;
@@ -403,7 +408,7 @@ export async function POST(request: NextRequest) {
             });
           const p = `${basePrompt(effective, history, false)}\n\nSTANDARD WEB FALLBACK:\n- First form the best technical candidate answer from your elevator knowledge. Then use Google Search to verify the exact normative claim against credible public sources.\n- Do not mention any internal library, archive, retrieval, index, database, missing document, or search mechanics.\n- If public evidence supports the exact claim, answer naturally and append exactly: Web-based\n- If public evidence is insufficient or conflicting, give the likely answer only as explicitly uncertain, say that sufficient evidence was not found to confirm it, and append exactly: Web-based\n- Never turn an unverified normative number into a certain fact.\n- Reply in the user's language.`;
           return NextResponse.json({
-            answer: await safeWebAnswer(p, key),
+            answer: await safeWebAnswer(p, key, route?.questionLanguage),
             sources: [],
             mode: "standards_web_fallback",
             standardsChecked: result.checkedStandards,
@@ -415,7 +420,7 @@ export async function POST(request: NextRequest) {
           );
           const p = `${basePrompt(effective, history, false)}\n\nSTANDARD WEB FALLBACK:\n- Give your best technical candidate, then use Google Search to verify the exact normative claim.\n- Do not mention internal systems or search mechanics.\n- If verified, answer naturally and append exactly: Web-based\n- If not sufficiently verified, state the likely answer as uncertain and say sufficient evidence was not found, then append exactly: Web-based\n- Reply in the user's language.`;
           return NextResponse.json({
-            answer: await safeWebAnswer(p, key),
+            answer: await safeWebAnswer(p, key, route?.questionLanguage),
             sources: [],
             mode: "standards_web_fallback",
           });
@@ -462,7 +467,7 @@ export async function POST(request: NextRequest) {
               });
             const p = `${basePrompt(effective, history, false)}\n\nSTANDARD WEB FALLBACK:\n- First form the best technical candidate answer, then use Google Search to verify the exact normative claim.\n- Never mention internal library/archive/retrieval/index mechanics.\n- If verified, answer naturally. If not, mark the likely answer explicitly uncertain and say sufficient evidence was not found.\n- Append exactly: Web-based\n- Reply in the user's language.`;
             return NextResponse.json({
-              answer: await safeWebAnswer(p, key),
+              answer: await safeWebAnswer(p, key, route?.questionLanguage),
               sources: [],
               mode: "standards_web_fallback",
               standardsChecked: result.checkedStandards,
@@ -544,7 +549,7 @@ export async function POST(request: NextRequest) {
         try {
           const p = `${basePrompt(effective, history, false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because current/public evidence is required or internal evidence was unavailable or insufficient. Prefer manufacturer/official primary sources. Do not expose internal retrieval mechanics, citations, or a routine source list. Public web evidence is not a substitute for deterministic standards verification. Never state normative numerical limits, standard clauses, mandatory safety values, or exact test values from public-web mode; omit the number and say the exact value requires standards verification. For manufacturer-specific model numbers, parameters, connector/pin details, or procedures, state them only when directly supported by an authoritative manufacturer primary source; otherwise do not guess or list candidate models, and say the exact manufacturer detail could not be verified. For manufacturer-specific technical information, calibrate certainty to the evidence: if authoritative manufacturer primary evidence directly supports a claim, state it normally. If public evidence supports a common/typical configuration but not the exact installation, keep the useful information but qualify it naturally (for example: typically, commonly, depending on configuration) and say the exact installed type must be verified from the unit identification or manufacturer documentation. Do not turn plausible public-web details into guaranteed facts. For safety-relevant replacement, adjustment or parameterization, add one concise caution in the user's language to verify against the applicable manufacturer documentation or manufacturer service. Omit unnecessary caution only when authoritative manufacturer evidence directly supports the exact answer. Append exactly: Web-based`;
           return NextResponse.json({
-            answer: await safeWebAnswer(p, key),
+            answer: await safeWebAnswer(p, key, route?.questionLanguage),
             sources: [],
             mode: "gemini_web",
           });
@@ -597,7 +602,17 @@ export async function POST(request: NextRequest) {
       try {
         const p = `${basePrompt(question, history, false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because this turn explicitly needs current/online evidence. Prefer official primary sources. Do not expose a routine source list.`;
         return NextResponse.json({
-          answer: await safeWebAnswer(p, key),
+          answer: await safeWebAnswer(
+            p,
+            key,
+            /[؀-ۿ]/.test(question)
+              ? "fa"
+              : /[¿¡]|\b(?:qué|cuál|cómo|código)\b/i.test(question)
+                ? "es"
+                : /\b(?:was|wie|fehler|aufzug|quelle)\b/i.test(question)
+                  ? "de"
+                  : "en",
+          ),
           sources: [],
           mode: "gemini_web",
         });
