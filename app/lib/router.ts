@@ -72,7 +72,7 @@ SEMANTIC RESCUE RULES:
 6. Clarification is a LAST RESORT. Ask only when two or more materially different interpretations would lead to different or safety-relevant answers, or essential project/manufacturer/model/configuration data is genuinely required. Do not ask merely because spelling is poor.
 7. Never invent a manufacturer, controller, component, fault code, fault name, standard clause or numeric value.
 8. A fault number alone is not enough to identify a manufacturer/controller.
-9. Detect question language (de, en, fa, hr, ru, ar, tr). Final answers must use that language.
+9. Detect the question's language using its BCP 47 language code (for example de, en, fa, es, hr, ru, ar, tr). Final answers must use that language, regardless of the source-document language.
 10. Prefer source documentation in the same language, with de/en fallback when needed.
 11. topics/components are retrieval concepts, not guesses about facts.
 12. Treat Kabine/Kabin, Fahrkorb, Schacht, Schachtwand, Schachttür, Schwelle, Schachtgrube, Schachtkopf, Führungsschiene, Gegengewicht, Puffer, Geländer, car, cabin, shaft, sill, guide rail and similar terms as elevator context.
@@ -295,7 +295,7 @@ export function deterministicStandardsRoute(
 ): RouterResult | null {
   const explicit =
     /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
-    /\b(DIN\s*)?(norm|normen|standard|standards)\b/i.test(question) ||
+    /\b(DIN\s*)?(norm|normen|standard|standards|norma|normas)\b/i.test(question) ||
     /(استاندارد|نورم|نُرم)/i.test(question);
   const planning =
     /(architect|architecture|planung|planen|projekt|project|design|designen|auslegen|dimensionieren|suitable|geeignet|empfehl|recommend|what\s+(shaft|cabin|door)\s+size|which\s+(shaft|cabin|door)\s+size|ابعاد\s+مناسب|طراحی|پروژه|معمار)/i.test(
@@ -303,19 +303,23 @@ export function deterministicStandardsRoute(
     );
   if (planning && !explicit) return null;
   const domain =
-    /(aufzug|fahrkorb|kabin(?:e|en)?|kabin\b|schacht(?:wand|tür|grube|kopf)?|schwelle|führungsschiene|gegengewicht|puffer|seil|tragseil|begrenzerseil|landing\s+door|shaft(?:\s+wall)?|car\s+sill|cabin|guide\s+rail|counterweight|rope|governor)/i.test(
+    /(aufzug|fahrkorb|kabin(?:e|en)?|kabin\b|schacht(?:wand|tür|grube|kopf)?|schwelle|führungsschiene|gegengewicht|puffer|seil|tragseil|begrenzerseil|landing\s+door|shaft(?:\s+wall)?|car\s+sill|cabin|guide\s+rail|counterweight|rope|governor|ascensor|cabina|hueco|foso|umbral|puerta|cable|cuerda|limitador|gobernador)/i.test(
       question,
     ) ||
     /(آسانسور|کابین|چاه(?:\s*آسانسور)?|دیواره\s*چاه|ریل|وزنه\s*تعادل|بکسل|سیم.?بکسل|گاورنر)/i.test(
       question,
     );
   const bindingDim =
-    /(\bmin(?:imum)?\.?\b|\bmax(?:imum)?\.?\b|mindest|höchst|maximal|zulässig|permissible|allowed|abstand|durchmesser|diameter|clearance|distance|فاصله|قطر|حداقل|حداکثر|چقدر\s+باید)/i.test(
+    /(\bmin(?:imum)?\.?\b|\bmax(?:imum)?\.?\b|mínim[oa]|máxim[oa]|mindest|höchst|maximal|zulässig|permissible|allowed|permitid[oa]|abstand|durchmesser|diameter|diámetro|clearance|distance|distancia|separación|فاصله|قطر|حداقل|حداکثر|چقدر\s+باید)/i.test(
       question,
     );
   if (!(explicit || (domain && bindingDim))) return null;
   const ql = /[؀-ۿ]/.test(question)
     ? "fa"
+    : /[¿¡]|\b(?:ascensor|cabina|hueco|foso|cable|cuerda|diámetro|distancia|separación|mínim[oa]|máxim[oa]|norma|limitador)\b/i.test(
+          question,
+        )
+      ? "es"
     : /\b(wer|was|warum|wie|wieviel|wie\s+viel|min|max|abstand|durchmesser|aufzug|fahrkorb|kabin|schacht|schwelle|seil|norm|normen)\b/i.test(
           question,
         )
@@ -372,6 +376,10 @@ export async function routeQuestion(
   if (fallback) return fallback;
   const ql = /[؀-ۿ]/.test(question)
     ? "fa"
+    : /[¿¡]|\b(?:ascensor|cabina|hueco|foso|cable|cuerda|diámetro|distancia|separación|mínim[oa]|máxim[oa]|norma|limitador)\b/i.test(
+          question,
+        )
+      ? "es"
     : /\b(wer|was|warum|wie|wann|welch|für|ist|sind|öl|schiene|geländer|kabin|schacht|tür|bremse|seil)\b/i.test(
           question,
         )
