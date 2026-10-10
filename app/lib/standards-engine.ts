@@ -2,7 +2,6 @@ import {
   createQueryBackend,
   type MultilingualRetrieval,
 } from "./retrieval-backend.ts";
-import type { FetchLike } from "./gemini-cost-control.ts";
 
 const MIN_STANDARD_SCORE = 0.2;
 export const ACTIVE_DOCUMENT_MAP_VERSION = 4;
@@ -114,7 +113,6 @@ async function translateQuery(
   question: string,
   sourceLanguage: string,
   apiKey: string,
-  fetchImpl: FetchLike = fetch,
 ) {
   const prompt = `
 Translate the following elevator standards search query into concise technical ${languageName(
@@ -131,7 +129,7 @@ Query:
 ${question}
 `;
 
-  const response = await fetchImpl(
+  const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
     {
       method: "POST",
@@ -332,12 +330,11 @@ async function expandQueryPlan(
   route: any,
   sourceLanguage: string,
   apiKey: string,
-  fetchImpl: FetchLike = fetch,
 ) {
   const translated =
     route.questionLanguage === sourceLanguage
       ? question
-      : await translateQuery(question, sourceLanguage, apiKey, fetchImpl);
+      : await translateQuery(question, sourceLanguage, apiKey);
 
   const plan = deterministicQueryPlan(translated, sourceLanguage);
   const topicHints = [...(route.topics || []), ...(route.components || [])]
@@ -363,7 +360,7 @@ Rules:
 `;
 
   try {
-    const response = await fetchImpl(
+    const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
@@ -884,7 +881,6 @@ async function queryOneStandard(
   ai: any,
   vectorize: any,
   multilingual?: MultilingualRetrieval,
-  fetchImpl: FetchLike = fetch,
 ) {
   const preferredLanguage =
     route.preferredSourceLanguage || route.questionLanguage || "de";
@@ -905,7 +901,6 @@ async function queryOneStandard(
       route,
       sourceLanguage,
       apiKey,
-      fetchImpl,
     );
     // Deterministic intent queries come first. Map-derived hints are useful expansion,
     // but must never consume the bounded plan before exact-clause candidates such as
@@ -1019,7 +1014,6 @@ async function retrieveStandards(
   ai: any,
   vectorize: any,
   multilingual?: MultilingualRetrieval,
-  fetchImpl: FetchLike = fetch,
 ) {
   const checked = await Promise.all(
     CORE_STANDARDS.map(async (standard) => {
@@ -1032,7 +1026,6 @@ async function retrieveStandards(
           ai,
           vectorize,
           multilingual,
-          fetchImpl,
         );
       } catch (error) {
         console.error("Standards retrieval error:", {
@@ -1279,7 +1272,6 @@ async function buildHumanSummary(
   claims: VerifiedStandardClaim[],
   language: string | null | undefined,
   apiKey: string,
-  fetchImpl: FetchLike = fetch,
 ) {
   const factsOnly = claims.map((claim) => claim.text).join("\n");
   const prompt = `
@@ -1305,7 +1297,7 @@ ${factsOnly}
 `;
 
   try {
-    const response = await fetchImpl(
+    const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
@@ -1358,17 +1350,10 @@ async function formatAnswer(
   claims: VerifiedStandardClaim[],
   language: string | null | undefined,
   apiKey: string,
-  fetchImpl: FetchLike = fetch,
 ) {
   if (language === "de") return formatGermanStandardsAnswer(claims);
   const labels = presentationLabels(language);
-  const summary = await buildHumanSummary(
-    question,
-    claims,
-    language,
-    apiKey,
-    fetchImpl,
-  );
+  const summary = await buildHumanSummary(question, claims, language, apiKey);
   const details = formatClaimDetails(claims, language);
   return `${labels.summary}:\n${summary}\n\n${labels.details}:\n${details}`;
 }
@@ -1393,8 +1378,6 @@ export async function answerStandardsQuestion(
   ai: any,
   vectorize: any,
   multilingual?: MultilingualRetrieval,
-  fetchImpl: FetchLike = fetch,
-  retrievalFetchImpl: FetchLike = fetchImpl,
 ) {
   const retrieval = await retrieveStandards(
     question,
@@ -1403,7 +1386,6 @@ export async function answerStandardsQuestion(
     ai,
     vectorize,
     multilingual,
-    retrievalFetchImpl,
   );
   const checkedStandards = retrieval.checkedStandards;
 
@@ -1442,7 +1424,6 @@ export async function answerStandardsQuestion(
         deterministicClaims,
         route.questionLanguage,
         apiKey,
-        fetchImpl,
       ),
       checkedStandards,
       verifiedClaims: deterministicClaims,
@@ -1500,7 +1481,7 @@ Evidence:
 ${excerpts}
 `;
 
-  const response = await fetchImpl(
+  const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
     {
       method: "POST",
@@ -1549,7 +1530,6 @@ ${excerpts}
       selected,
       route.questionLanguage,
       apiKey,
-      fetchImpl,
     ),
     checkedStandards,
     verifiedClaims: selected,

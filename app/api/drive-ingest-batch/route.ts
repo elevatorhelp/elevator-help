@@ -8,10 +8,6 @@ import {
   MULTILINGUAL_EMBEDDING_VERSION,
   embedRetrievalDocuments,
 } from "../../lib/multilingual-embedding";
-import {
-  createGeminiCallBudget,
-  type FetchLike,
-} from "../../lib/gemini-cost-control";
 
 type IncomingChunk = {
   id: string;
@@ -117,11 +113,7 @@ function normalizeContentType(value: unknown) {
   return allowed.has(normalized) ? normalized : "general";
 }
 
-async function enrichChunks(
-  chunks: IncomingChunk[],
-  apiKey: string,
-  fetchImpl: FetchLike = fetch,
-) {
+async function enrichChunks(chunks: IncomingChunk[], apiKey: string) {
   const payload = chunks.map((chunk) => ({
     id: chunk.id,
     fileName: chunk.fileName,
@@ -169,7 +161,7 @@ Chunks:
 ${JSON.stringify(payload)}
 `;
 
-  const response = await fetchImpl(
+  const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
     {
       method: "POST",
@@ -329,10 +321,7 @@ export async function POST(request: NextRequest) {
       throw new Error("Ingestion dependencies are not configured");
     }
 
-    const geminiBudget = createGeminiCallBudget(
-      (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST ?? 2,
-    );
-    const enriched = await enrichChunks(chunks, apiKey, geminiBudget.fetch);
+    const enriched = await enrichChunks(chunks, apiKey);
     const embeddingTexts = chunks.map((chunk, index) => {
       const context = enriched[index]?.retrievalContext;
       return context
@@ -347,7 +336,6 @@ export async function POST(request: NextRequest) {
     const multilingualEmbeddings = await embedRetrievalDocuments(
       chunks.map((chunk) => chunk.text),
       apiKey,
-      geminiBudget.fetch,
     );
 
     if (!Array.isArray(embeddings) || embeddings.length !== chunks.length) {

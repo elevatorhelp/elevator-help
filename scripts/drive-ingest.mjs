@@ -37,40 +37,6 @@ const MAP_PAGES_PER_BATCH = 6;
 const MAX_MAP_PAGE_TEXT = 7000;
 const DOCUMENT_MAP_VERSION = 4;
 const RAW_EMBEDDING_VERSION = 3;
-const GEMINI_CALLS_PER_RAW_BATCH = 2;
-const GEMINI_CALLS_PER_MAP_WINDOW = 3;
-const MAX_GEMINI_CALLS = Number(process.env.MAX_GEMINI_CALLS || "30");
-
-function createIngestionCallBudget(limitValue = MAX_GEMINI_CALLS) {
-  const limit = Number(limitValue);
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw new Error("MAX_GEMINI_CALLS must be a positive integer");
-  }
-  let reserved = 0;
-  return {
-    assertFits(count, label) {
-      if (reserved + count > limit) {
-        throw new Error(
-          `INGESTION_GEMINI_BUDGET_EXCEEDED: ${label} needs ${count} call(s), ${limit - reserved} remain`
-        );
-      }
-    },
-    reserve(count, label) {
-      this.assertFits(count, label);
-      reserved += count;
-      console.log(`Gemini ingestion budget: reserved ${reserved}/${limit} calls (${label})`);
-    },
-    snapshot() {
-      return { limit, reserved, remaining: Math.max(0, limit - reserved) };
-    },
-  };
-}
-
-function estimateRawGeminiCalls(chunkCount) {
-  return Math.ceil(Math.max(0, Number(chunkCount) || 0) / BATCH_SIZE) * GEMINI_CALLS_PER_RAW_BATCH;
-}
-
-const ingestionBudget = createIngestionCallBudget();
 
 function base64Url(input) {
   return Buffer.from(input).toString("base64url");
@@ -334,14 +300,10 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
 }
 
 async function callIngest(payload, token) {
-  if (payload?.action === "upsert") {
-    ingestionBudget.reserve(GEMINI_CALLS_PER_RAW_BATCH, "raw chunk batch");
-  }
   return callJsonEndpoint(INGEST_ENDPOINT, payload, token, "Ingestion endpoint");
 }
 
 async function callDocumentMap(payload, token) {
-  ingestionBudget.reserve(GEMINI_CALLS_PER_MAP_WINDOW, "document-map window");
   return callJsonEndpoint(DOCUMENT_MAP_ENDPOINT, payload, token, "Document-map endpoint");
 }
 
@@ -446,10 +408,6 @@ async function processPdf(
   console.log(`Extracted ${chunks.length} chunks from ${totalPages} pages`);
 
   if (ingestRaw) {
-    ingestionBudget.assertFits(
-      estimateRawGeminiCalls(chunks.length),
-      `${file.name} raw-vector phase`,
-    );
     for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
       const batch = chunks.slice(i, i + BATCH_SIZE);
       const result = await callIngest({ action: "upsert", chunks: batch }, ingestToken);
@@ -494,10 +452,6 @@ async function processText(file, accessToken, ingestToken) {
     languageHint: detectLanguageHint(file.name),
     documentGroupHint: documentGroupHint(file.name),
   }));
-  ingestionBudget.assertFits(
-    estimateRawGeminiCalls(chunks.length),
-    `${file.name} raw-vector phase`,
-  );
   for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
     const result = await callIngest({ action: "upsert", chunks: chunks.slice(i, i + BATCH_SIZE) }, ingestToken);
     if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
@@ -527,9 +481,6 @@ async function main() {
   scope.files ||= {};
 
   console.log(`Found ${files.length} supported documents in Drive scope ${DRIVE_FOLDER_ID}`);
-  console.log(
-    `Gemini ingestion safety budget: at most ${ingestionBudget.snapshot().limit} calls in this process.`
-  );
 
   const foundIds = new Set(allFiles.map((file) => file.id));
   for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : scope.files)) {
@@ -705,10 +656,7 @@ async function main() {
   state.scopes[DRIVE_FOLDER_ID] = scope;
   await saveState(state);
 
-  const budget = ingestionBudget.snapshot();
-  console.log(
-    `Done. Processed ${selected.length} file(s); ${Math.max(0, changed.length - selected.length)} changed file(s) remain. Gemini calls reserved: ${budget.reserved}/${budget.limit}.`
-  );
+  console.log(`Done. Processed ${selected.length} file(s); ${Math.max(0, changed.length - selected.length)} changed file(s) remain.`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -724,6 +672,4 @@ export {
   fingerprint,
   needsMapBackfill,
   needsRawBackfill,
-  createIngestionCallBudget,
-  estimateRawGeminiCalls,
 };

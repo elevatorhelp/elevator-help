@@ -14,21 +14,8 @@
 		"enabled": true
 	},
 	"vars": {
-		"AUTH_REQUIRED": "false",
-		"MULTILINGUAL_RETRIEVAL_ENABLED": "true",
-		"GEMINI_MAX_CALLS_PER_QUESTION": "5",
-		"GEMINI_MAX_CALLS_PER_INGEST_REQUEST": "3"
+		"MULTILINGUAL_RETRIEVAL_ENABLED": "true"
 	},
-	"ratelimits": [
-		{
-			"name": "GEMINI_ASK_RATE_LIMITER",
-			"namespace_id": "24001",
-			"simple": {
-				"limit": 30,
-				"period": 60
-			}
-		}
-	],
 	"ai": {
 		"binding": "AI"
 	},

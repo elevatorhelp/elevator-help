@@ -1,9 +1,6 @@
 import { routeQuestion } from "../../lib/router";
-import { denyDiagnosticRequest } from "../../lib/diagnostic-auth";
 
 export async function POST(request: Request) {
-  const denied = denyDiagnosticRequest(request);
-  if (denied) return denied;
   try {
     const body: any = await request.json();
     const question = body?.question;

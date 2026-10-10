@@ -1,5 +1,4 @@
 export type EvidenceNeed = "direct" | "internal" | "standard" | "web_current";
-import type { FetchLike } from "./gemini-cost-control.ts";
 import {
   canonicalManufacturer,
   extractFaultCode,
@@ -124,9 +123,8 @@ async function callRouterModel(
   question: string,
   apiKey: string,
   context: RouterContextItem[] = [],
-  fetchImpl: FetchLike = fetch,
 ) {
-  const response = await fetchImpl(
+  const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
     {
       method: "POST",
@@ -352,7 +350,6 @@ export function deterministicStandardsRoute(
 export async function routeQuestion(
   question: string,
   context: RouterContextItem[] = [],
-  fetchImpl: FetchLike = fetch,
 ): Promise<RouterResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -364,9 +361,7 @@ export async function routeQuestion(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const normalized = normalizeRoute(
-        parseRouterJson(
-          await callRouterModel(question, apiKey, context, fetchImpl),
-        ),
+        parseRouterJson(await callRouterModel(question, apiKey, context)),
         question,
       );
       if (normalized.needsClarification)

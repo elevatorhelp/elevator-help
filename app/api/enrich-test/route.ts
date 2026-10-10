@@ -1,8 +1,4 @@
-import { denyDiagnosticRequest } from "../../lib/diagnostic-auth";
-
-export async function GET(request: Request) {
-  const denied = denyDiagnosticRequest(request);
-  if (denied) return denied;
+export async function GET() {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
 

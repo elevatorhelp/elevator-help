@@ -1,22 +1,5 @@
 # elevator.help
 
-## Authentication rollout
-
-The account UI is intentionally inactive until Clerk production credentials are
-configured. Chat messages remain browser-memory-only and are not written to a
-user history database.
-
-1. Create a Clerk production application with email + password enabled.
-2. Require email verification at sign-up and disable phone/social sign-in.
-3. Configure the Clerk DNS records for `elevator.help` plus DMARC.
-4. Add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` to GitHub Actions secrets.
-5. Add `CLERK_SECRET_KEY` as a Cloudflare Worker secret.
-6. Deploy with `AUTH_REQUIRED=false`, verify sign-up/sign-in/reset, then set
-   `AUTH_REQUIRED=true` and deploy again.
-
-The Clerk dashboard is the customer registry for this phase. No password and no
-conversation content is stored in Cloudflare D1.
-
 Version 0.2 foundation.
 
 ## Cloudflare dashboard

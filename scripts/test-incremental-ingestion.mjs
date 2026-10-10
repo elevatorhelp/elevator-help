@@ -2,27 +2,9 @@ import {
   DOCUMENT_MAP_VERSION,
   RAW_EMBEDDING_VERSION,
   fingerprint,
-  createIngestionCallBudget,
-  estimateRawGeminiCalls,
   needsMapBackfill,
   needsRawBackfill,
 } from "./drive-ingest.mjs";
-
-if (estimateRawGeminiCalls(0) !== 0 || estimateRawGeminiCalls(9) !== 4) {
-  throw new Error("Raw ingestion call estimate must reserve two calls per batch");
-}
-const budget = createIngestionCallBudget(4);
-budget.reserve(2, "test batch");
-budget.reserve(2, "test batch");
-let budgetBlocked = false;
-try {
-  budget.reserve(1, "overflow");
-} catch (error) {
-  budgetBlocked = String(error).includes("INGESTION_GEMINI_BUDGET_EXCEEDED");
-}
-if (!budgetBlocked) {
-  throw new Error("Ingestion budget must stop work before exceeding its limit");
-}
 
 if (RAW_EMBEDDING_VERSION !== 3 || DOCUMENT_MAP_VERSION !== 4) {
   throw new Error("Unexpected multilingual ingestion schema versions");

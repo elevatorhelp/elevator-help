@@ -5,21 +5,15 @@
   "scripts": {
     "dev": "next dev",
     "test:language": "node --experimental-strip-types scripts/test-german-language.ts",
-    "test:gemini-cost-control": "node --experimental-strip-types scripts/test-gemini-cost-control.ts",
-    "test:conversation-edit": "node --experimental-strip-types scripts/test-conversation-edit.ts",
-    "test:request-auth": "node --experimental-strip-types scripts/test-request-auth.ts",
-    "test:security": "node scripts/test-security-baseline.mjs && npm audit --omit=dev --audit-level=high",
     "test:incremental-ingestion": "node scripts/test-incremental-ingestion.mjs",
     "test:multilingual-retrieval": "node --experimental-strip-types scripts/test-multilingual-retrieval.ts",
     "test:standards-presentation": "node --experimental-strip-types scripts/test-standards-presentation.ts",
-    "build": "next build --webpack",
+    "build": "next build",
     "cf:build": "opennextjs-cloudflare build",
     "deploy": "opennextjs-cloudflare build && wrangler deploy"
   },
   "dependencies": {
-    "@clerk/backend": "^3.23.2",
-    "@clerk/nextjs": "^7.9.14",
-    "next": "^16.4.0",
+    "next": "^16.3.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "unpdf": "^1.8.1"
@@ -31,9 +25,5 @@
     "@types/react-dom": "^19.0.0",
     "typescript": "^5.9.0",
     "wrangler": "^4.125.0"
-  },
-  "overrides": {
-    "sharp": "^0.35.5",
-    "source-map-js": "^1.2.2"
   }
 }
