@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-const TARGET_TEXT_FILES = Number(process.env.TARGET_TEXT_FILES || "2");
+const TARGET_TEXT_FILES = Number(process.env.TARGET_TEXT_FILES || "1");
 const MAX_SCAN_FILES = Number(process.env.MAX_SCAN_FILES || "20");
 
 function runOne() {
