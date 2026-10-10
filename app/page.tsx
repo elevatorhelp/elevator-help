@@ -1,12 +1,25 @@
 "use client";
 
 import {
+  SignInButton,
+  SignUpButton,
+  SignedIn,
+  SignedOut,
+  UserButton,
+  useAuth,
+} from "@clerk/nextjs";
+import {
   FormEvent,
   ReactNode,
   useEffect,
   useRef,
   useState,
 } from "react";
+import { conversationBeforeMessage } from "./lib/conversation-edit";
+
+const authUiEnabled = Boolean(
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+);
 
 type ReferenceItem = {
   title?: string;
@@ -124,12 +137,14 @@ function SendBox({
   onChange,
   onSubmit,
   loading,
+  disabled = false,
   compact = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   loading: boolean;
+  disabled?: boolean;
   compact?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -181,6 +196,7 @@ function SendBox({
             type="button"
             className="roundButton plusButton"
             aria-label="Add photo or document"
+            disabled={disabled}
             onClick={() => setMenuOpen((current) => !current)}
           >
             <PlusIcon />
@@ -240,9 +256,13 @@ function SendBox({
         <textarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="Ask about a fault, controller, component, standard or project…"
+          placeholder={
+            disabled
+              ? "Sign in to ask a technical question…"
+              : "Ask about a fault, controller, component, standard or project…"
+          }
           rows={1}
-          disabled={loading}
+          disabled={loading || disabled}
           onKeyDown={(event) => {
             if (
               event.key === "Enter" &&
@@ -251,7 +271,7 @@ function SendBox({
             ) {
               event.preventDefault();
 
-              if (value.trim() && !loading) {
+              if (value.trim() && !loading && !disabled) {
                 onSubmit();
               }
             }
@@ -262,7 +282,7 @@ function SendBox({
           className="roundButton sendButton"
           type="submit"
           aria-label="Send question"
-          disabled={!value.trim() || loading}
+          disabled={!value.trim() || loading || disabled}
         >
           {loading ? (
             <span className="spinner" />
@@ -277,6 +297,26 @@ function SendBox({
           {uploadMessage}
         </div>
       )}
+    </div>
+  );
+}
+
+function AuthControls({ prominent = false }: { prominent?: boolean }) {
+  if (!authUiEnabled) return null;
+
+  return (
+    <div className={`authControls ${prominent ? "prominent" : ""}`}>
+      <SignedOut>
+        <SignInButton mode="modal">
+          <button type="button" className="authSecondary">Sign in</button>
+        </SignInButton>
+        <SignUpButton mode="modal">
+          <button type="button" className="authPrimary">Create account</button>
+        </SignUpButton>
+      </SignedOut>
+      <SignedIn>
+        <UserButton />
+      </SignedIn>
     </div>
   );
 }
@@ -374,11 +414,21 @@ function Bubble({
   );
 }
 
-export default function HomePage() {
+function ChatExperience({
+  canAsk,
+  authLoading = false,
+  getAuthToken,
+}: {
+  canAsk: boolean;
+  authLoading?: boolean;
+  getAuthToken?: () => Promise<string | null>;
+}) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState("");
 
   const hasConversation = messages.length > 0;
 
@@ -399,37 +449,40 @@ export default function HomePage() {
     return () => cancelAnimationFrame(frame);
   }, [messages]);
 
-  async function ask(customQuestion?: string) {
+  async function ask(
+    customQuestion?: string,
+    baseMessages: ChatMessage[] = messages,
+    userMessageId: number = Date.now(),
+  ) {
     const finalQuestion = (
       customQuestion ?? question
     ).trim();
 
-    if (!finalQuestion || loading) return;
+    if (!finalQuestion || loading || !canAsk) return;
 
     const userMessage: ChatMessage = {
-      id: Date.now(),
+      id: userMessageId,
       role: "user",
       text: finalQuestion,
     };
 
-    setMessages((current) => [
-      ...current,
-      userMessage,
-    ]);
+    setMessages([...baseMessages, userMessage]);
 
     setQuestion("");
     setLoading(true);
     setError(null);
 
     try {
+      const authToken = getAuthToken ? await getAuthToken() : null;
       const response = await fetch("/api/ask", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         },
         body: JSON.stringify({
           question: finalQuestion,
-          history: messages.slice(-10).map((message) => ({
+          history: baseMessages.slice(-10).map((message) => ({
             role: message.role,
             content: message.text,
             mode: message.mode,
@@ -512,6 +565,27 @@ export default function HomePage() {
     }
   }
 
+  function startEditing(message: ChatMessage) {
+    if (loading) return;
+    setEditingMessageId(message.id);
+    setEditingText(message.text);
+    setError(null);
+  }
+
+  function cancelEditing() {
+    setEditingMessageId(null);
+    setEditingText("");
+  }
+
+  function submitEditedMessage(messageId: number) {
+    const revisedQuestion = editingText.trim();
+    const earlierConversation = conversationBeforeMessage(messages, messageId);
+    if (!earlierConversation || !revisedQuestion || loading || !canAsk) return;
+
+    cancelEditing();
+    void ask(revisedQuestion, earlierConversation, messageId);
+  }
+
   function useQuickPrompt(prompt: string) {
     setQuestion(prompt);
   }
@@ -521,9 +595,15 @@ export default function HomePage() {
       <header className="header">
         <Logo />
 
-        <div className="headerRight">
-          <span className="statusDot" />
-          <span>Development</span>
+        <div className={`headerRight ${authUiEnabled ? "authEnabled" : ""}`}>
+          {authUiEnabled ? (
+            <AuthControls />
+          ) : (
+            <>
+              <span className="statusDot" />
+              <span>Development</span>
+            </>
+          )}
         </div>
       </header>
 
@@ -560,13 +640,23 @@ export default function HomePage() {
               onChange={setQuestion}
               onSubmit={() => ask()}
               loading={loading}
+              disabled={!canAsk || authLoading}
             />
+
+            {!canAsk && !authLoading && (
+              <div className="authGate">
+                <strong>Sign in to use elevator.help</strong>
+                <span>Your conversations are not saved as account history.</span>
+                <AuthControls prominent />
+              </div>
+            )}
 
             <div className="quickPrompts">
               {quickPrompts.map((item) => (
                 <button
                   key={item.title}
                   type="button"
+                  disabled={!canAsk}
                   onClick={() =>
                     useQuickPrompt(item.prompt)
                   }
@@ -581,6 +671,7 @@ export default function HomePage() {
 
               <button
                 type="button"
+                disabled={!canAsk}
                 onClick={() => {
                   const input =
                     document.querySelector<HTMLInputElement>(
@@ -596,6 +687,7 @@ export default function HomePage() {
 
               <button
                 type="button"
+                disabled={!canAsk}
                 onClick={() => {
                   const input =
                     document.querySelector<HTMLInputElement>(
@@ -636,9 +728,45 @@ export default function HomePage() {
                     : undefined
                 }
               >
-                <div className="messageText">
-                  {message.text}
-                </div>
+                {message.role === "user" && editingMessageId === message.id ? (
+                  <form
+                    className="messageEditor"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      submitEditedMessage(message.id);
+                    }}
+                  >
+                    <textarea
+                      value={editingText}
+                      onChange={(event) => setEditingText(event.target.value)}
+                      aria-label="Edit your message"
+                      autoFocus
+                      rows={3}
+                    />
+                    <div className="messageEditorActions">
+                      <button type="button" onClick={cancelEditing}>
+                        Cancel
+                      </button>
+                      <button type="submit" disabled={!editingText.trim()}>
+                        Save &amp; resend
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <div className="messageText">{message.text}</div>
+                    {message.role === "user" && canAsk && !loading && (
+                      <button
+                        type="button"
+                        className="editMessageButton"
+                        onClick={() => startEditing(message)}
+                        aria-label="Edit and resend this message"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </>
+                )}
 
                 {message.role === "assistant" && (
                   <>
@@ -679,6 +807,7 @@ export default function HomePage() {
               onChange={setQuestion}
               onSubmit={() => ask()}
               loading={loading}
+              disabled={!canAsk || authLoading}
               compact
             />
 
@@ -722,6 +851,120 @@ export default function HomePage() {
 
         button {
           -webkit-tap-highlight-color: transparent;
+        }
+
+        .authControls {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .authControls button {
+          border-radius: 999px;
+          padding: 9px 14px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .authSecondary {
+          border: 1px solid #dce5df;
+          background: #fff;
+          color: #35413b;
+        }
+
+        .authPrimary {
+          border: 1px solid #168947;
+          background: #168947;
+          color: #fff;
+        }
+
+        .authGate {
+          margin: 14px auto 0;
+          padding: 16px;
+          border: 1px solid #dce8e0;
+          border-radius: 14px;
+          background: #f6faf7;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px 16px;
+          flex-wrap: wrap;
+          color: #57635d;
+          font-size: 13px;
+        }
+
+        .authGate strong {
+          color: #1e2b24;
+        }
+
+        .authGate .authControls.prominent {
+          margin-left: 4px;
+        }
+
+        .quickPrompts button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .editMessageButton {
+          margin-top: 8px;
+          padding: 4px 8px;
+          border: 0;
+          border-radius: 7px;
+          background: transparent;
+          color: #66716b;
+          font-size: 11px;
+          cursor: pointer;
+        }
+
+        .editMessageButton:hover {
+          background: rgba(255, 255, 255, 0.55);
+          color: #1c4f33;
+        }
+
+        .messageEditor textarea {
+          width: min(620px, 100%);
+          resize: vertical;
+          border: 1px solid #cbd8d0;
+          border-radius: 12px;
+          padding: 12px;
+          background: #fff;
+          color: #151b18;
+          line-height: 1.5;
+          outline: none;
+        }
+
+        .messageEditor textarea:focus {
+          border-color: #279158;
+          box-shadow: 0 0 0 3px rgba(39, 145, 88, 0.12);
+        }
+
+        .messageEditorActions {
+          margin-top: 8px;
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+        }
+
+        .messageEditorActions button {
+          border: 1px solid #cbd8d0;
+          border-radius: 9px;
+          padding: 7px 10px;
+          background: #fff;
+          color: #35413b;
+          cursor: pointer;
+        }
+
+        .messageEditorActions button[type="submit"] {
+          border-color: #168947;
+          background: #168947;
+          color: #fff;
+        }
+
+        .messageEditorActions button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
 
         .page {
@@ -1301,6 +1544,15 @@ export default function HomePage() {
             display: none;
           }
 
+          .headerRight.authEnabled {
+            display: flex;
+          }
+
+          .headerRight.authEnabled .authControls button {
+            padding: 7px 10px;
+            font-size: 11px;
+          }
+
           .landing {
             min-height: calc(100vh - 62px);
             padding: 6vh 14px 35px;
@@ -1377,4 +1629,20 @@ export default function HomePage() {
       `}</style>
     </main>
   );
+}
+
+function AuthenticatedHomePage() {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  return (
+    <ChatExperience
+      canAsk={Boolean(isLoaded && isSignedIn)}
+      authLoading={!isLoaded}
+      getAuthToken={getToken}
+    />
+  );
+}
+
+export default function HomePage() {
+  if (authUiEnabled) return <AuthenticatedHomePage />;
+  return <ChatExperience canAsk />;
 }

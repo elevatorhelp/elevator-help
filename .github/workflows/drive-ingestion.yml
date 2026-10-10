@@ -15,7 +15,7 @@ on:
       target_text_files:
         description: Stop after this many PDFs with extractable text are indexed
         required: false
-        default: "10"
+        default: "1"
       max_scan_files:
         description: Maximum PDFs to inspect in one run while looking for text-bearing files
         required: false
@@ -44,10 +44,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
           cache: npm
@@ -103,7 +103,7 @@ jobs:
           exit 1
 
       - name: Restore ingestion state
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .ingestion-state
           key: drive-ingestion-state-${{ github.run_id }}-${{ github.run_attempt }}
@@ -121,15 +121,16 @@ jobs:
           ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
           DRIVE_FOLDER_ID: ${{ inputs.folder_id || '1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5' }}
           TARGET_FILE_ID: ${{ inputs.target_file_id || '' }}
-          TARGET_TEXT_FILES: ${{ inputs.target_text_files || '10' }}
+          TARGET_TEXT_FILES: ${{ inputs.target_text_files || '1' }}
           MAX_SCAN_FILES: ${{ inputs.max_scan_files || '100' }}
+          MAX_GEMINI_CALLS: "30"
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
         run: node scripts/drive-ingest-until-text.mjs
 
       - name: Save ingestion state
         if: always()
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .ingestion-state
           key: drive-ingestion-state-${{ github.run_id }}-${{ github.run_attempt }}

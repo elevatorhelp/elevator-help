@@ -1,6 +1,9 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { denyDiagnosticRequest } from "../../lib/diagnostic-auth";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = denyDiagnosticRequest(request);
+  if (denied) return denied;
   try {
     const { env } = getCloudflareContext();
 
@@ -15,7 +18,7 @@ export async function GET() {
       }
     );
 
-  const vectors = (result as { data: number[][] }).data;
+    const vectors = (result as { data: number[][] }).data;
 
     return Response.json({
       ok: true,

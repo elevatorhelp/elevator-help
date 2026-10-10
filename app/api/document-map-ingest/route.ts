@@ -4,6 +4,10 @@ import {
   MULTILINGUAL_EMBEDDING_VERSION,
   embedRetrievalDocuments,
 } from "../../lib/multilingual-embedding";
+import {
+  createGeminiCallBudget,
+  type FetchLike,
+} from "../../lib/gemini-cost-control";
 
 type PageInput = {
   page: number;
@@ -130,8 +134,12 @@ const responseSchema = {
   required: ["items"],
 };
 
-async function requestDocumentMap(prompt: string, apiKey: string) {
-  const response = await fetch(
+async function requestDocumentMap(
+  prompt: string,
+  apiKey: string,
+  fetchImpl: FetchLike = fetch,
+) {
+  const response = await fetchImpl(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
     {
       method: "POST",
@@ -165,6 +173,7 @@ async function analyzeDocumentWindow(
   document: DocumentInput,
   pages: PageInput[],
   apiKey: string,
+  fetchImpl: FetchLike = fetch,
 ): Promise<MapNode[]> {
   const firstPage = pages[0]?.page || 1;
   const lastPage = pages[pages.length - 1]?.page || firstPage;
@@ -211,7 +220,7 @@ ${JSON.stringify(pages)}
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const raw = await requestDocumentMap(prompt, apiKey);
+      const raw = await requestDocumentMap(prompt, apiKey, fetchImpl);
       if (!raw) return [];
       parsed = parseJsonObject(raw);
       break;
@@ -323,7 +332,15 @@ export async function POST(request: NextRequest) {
       throw new Error("Document-map dependencies are not configured");
     }
 
-    const nodes = await analyzeDocumentWindow(document, pages, apiKey);
+    const geminiBudget = createGeminiCallBudget(
+      (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST ?? 3,
+    );
+    const nodes = await analyzeDocumentWindow(
+      document,
+      pages,
+      apiKey,
+      geminiBudget.fetch,
+    );
     if (!nodes.length)
       return NextResponse.json({ ok: true, upserted: 0, ids: [], nodes: [] });
 
@@ -349,6 +366,7 @@ export async function POST(request: NextRequest) {
     const multilingualEmbeddings = await embedRetrievalDocuments(
       mapTexts,
       apiKey,
+      geminiBudget.fetch,
     );
     if (!Array.isArray(embeddings) || embeddings.length !== nodes.length) {
       throw new Error("Document-map embedding count mismatch");

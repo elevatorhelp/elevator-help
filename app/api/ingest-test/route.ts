@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { denyDiagnosticRequest } from "../../lib/diagnostic-auth";
 
 type Chunk = {
   id: string;
@@ -190,7 +191,9 @@ const chunks: Chunk[] = [
   },
 ];
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = denyDiagnosticRequest(request);
+  if (denied) return denied;
   try {
     const { env } = getCloudflareContext();
 
