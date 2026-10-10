@@ -1,3 +1,4 @@
+import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import "./globals.css";
 
@@ -7,7 +8,7 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (
+  const document = (
     <html lang="en">
       <body>
         {children}
@@ -166,5 +167,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         `}</style>
       </body>
     </html>
+  );
+
+  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    return document;
+  }
+
+  return (
+    <ClerkProvider dynamic signInUrl="/sign-in" signUpUrl="/sign-up">
+      {document}
+    </ClerkProvider>
   );
 }

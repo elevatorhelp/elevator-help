@@ -1,4 +1,5 @@
 import { extractText, getDocumentProxy } from "unpdf";
+import { denyDiagnosticRequest } from "../../lib/diagnostic-auth";
 
 type ServiceAccount = {
   client_email: string;
@@ -108,7 +109,9 @@ async function getGoogleAccessToken(serviceAccount: ServiceAccount) {
   return tokenData.access_token;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = denyDiagnosticRequest(request);
+  if (denied) return denied;
   try {
     const rawServiceAccount =
       process.env.GOOGLE_SERVICE_ACCOUNT_JSON;

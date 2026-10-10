@@ -1,9 +1,11 @@
 import { embedRetrievalQuery } from "./multilingual-embedding.ts";
+import type { FetchLike } from "./gemini-cost-control.ts";
 
 export type MultilingualRetrieval = {
   apiKey: string;
   vectorize: any;
   enabled: boolean;
+  fetchImpl?: FetchLike;
 };
 
 export type QueryBackend = {
@@ -21,7 +23,11 @@ export async function createQueryBackend(
   if (multilingual?.enabled && multilingual.apiKey && multilingual.vectorize) {
     try {
       return {
-        vector: await embedRetrievalQuery(query, multilingual.apiKey),
+        vector: await embedRetrievalQuery(
+          query,
+          multilingual.apiKey,
+          multilingual.fetchImpl,
+        ),
         vectorize: multilingual.vectorize,
         embeddingVersion: 3,
       };
@@ -42,7 +48,11 @@ export async function createQueryBackend(
   return { vector, vectorize: legacyVectorize, embeddingVersion: 2 };
 }
 
-export function multilingualRetrievalFromEnv(env: any, apiKey: string) {
+export function multilingualRetrievalFromEnv(
+  env: any,
+  apiKey: string,
+  fetchImpl?: FetchLike,
+) {
   const configuredFlag =
     env?.MULTILINGUAL_RETRIEVAL_ENABLED ??
     process.env.MULTILINGUAL_RETRIEVAL_ENABLED;
@@ -50,5 +60,6 @@ export function multilingualRetrievalFromEnv(env: any, apiKey: string) {
     apiKey,
     vectorize: env?.VECTORIZE_V2,
     enabled: String(configuredFlag).toLowerCase() === "true",
+    fetchImpl,
   } satisfies MultilingualRetrieval;
 }
