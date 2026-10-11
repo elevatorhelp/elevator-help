@@ -27,6 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <footer className="siteContact">
           <span aria-hidden="true">✉</span>
           <a href="mailto:info@elevator.help">info@elevator.help</a>
+          <span aria-hidden="true">·</span>
+          <a href="/privacy">Datenschutz</a>
+          <span aria-hidden="true">·</span>
+          <a href="/terms">Nutzungsbedingungen</a>
         </footer>
 
         <style>{`
