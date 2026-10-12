@@ -3,8 +3,6 @@
 import {
   SignInButton,
   SignUpButton,
-  SignedIn,
-  SignedOut,
   UserButton,
   useAuth,
 } from "@clerk/nextjs";
@@ -302,21 +300,26 @@ function SendBox({
 }
 
 function AuthControls({ prominent = false }: { prominent?: boolean }) {
-  if (!authUiEnabled) return null;
+  const { isLoaded, isSignedIn } = useAuth();
+
+  if (!isLoaded) {
+    return <div className="authControls" aria-hidden="true" />;
+  }
 
   return (
     <div className={`authControls ${prominent ? "prominent" : ""}`}>
-      <SignedOut>
-        <SignInButton mode="modal">
-          <button type="button" className="authSecondary">Sign in</button>
-        </SignInButton>
-        <SignUpButton mode="modal">
-          <button type="button" className="authPrimary">Create account</button>
-        </SignUpButton>
-      </SignedOut>
-      <SignedIn>
+      {!isSignedIn ? (
+        <>
+          <SignInButton mode="modal">
+            <button type="button" className="authSecondary">Sign in</button>
+          </SignInButton>
+          <SignUpButton mode="modal">
+            <button type="button" className="authPrimary">Create account</button>
+          </SignUpButton>
+        </>
+      ) : (
         <UserButton />
-      </SignedIn>
+      )}
     </div>
   );
 }
