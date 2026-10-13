@@ -1004,6 +1004,35 @@ async function queryOneStandard(
     }
   }
 
+  // A healthy multilingual embedding call can still return no raw standard
+  // chunks (for example while the multilingual archive is being backfilled).
+  // Probe the existing legacy archive once with an English technical query
+  // before giving up. This does not change normative evidence verification.
+  if (multilingual?.enabled) {
+    try {
+      const fallback = await rawMatchesForQuery(
+        { topic: "general", query: `${question} ${standard.code} elevator lift rope technical requirements` },
+        standard,
+        "en",
+        ai,
+        vectorize,
+      );
+      if (fallback.length) {
+        return {
+          standard: standard.code,
+          sourceLanguage: "en",
+          broad: isBroadShaftQuestion(question),
+          matches: fallback,
+        };
+      }
+    } catch (error) {
+      console.error("Legacy standards retrieval fallback failed", {
+        standard: standard.code,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   return {
     standard: standard.code,
     sourceLanguage: null,
