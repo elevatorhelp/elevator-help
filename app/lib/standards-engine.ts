@@ -1011,7 +1011,7 @@ async function queryOneStandard(
   if (multilingual?.enabled) {
     try {
       const fallback = await rawMatchesForQuery(
-        { topic: "general", query: `${question} ${standard.code} elevator lift rope technical requirements` },
+        { topic: "general", query: `${question} ${standard.code} elevator lift technical requirements` },
         standard,
         "en",
         ai,
