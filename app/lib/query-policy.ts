@@ -1,3 +1,15 @@
+// A car-roof fall-protection height is a normative safety dimension even when
+// the technician says "Schutz" rather than "Geländer" or cites no standard.
+export function isCarRoofFallProtectionHeightQuestion(question: string) {
+  const carRoof =
+    /\b(?:fahrkorbdach|kabinen?dach|car\s*roof|cabin\s*roof|roof\s+of\s+(?:the\s+)?(?:car|cabin))\b/i.test(question);
+  const protection =
+    /(geländer|umwehrung|absturz(?:gefahr|schutz)|fall(?:ing)?\s*protection|guard\s*rail|guardrail|barrier|schutz)/i.test(question);
+  const height =
+    /(\bhoch\b|höhe|height|mindesthöhe|how\s+high|\b\d+\s*(?:mm|cm|m)\b)/i.test(question);
+  return carRoof && protection && height;
+}
+
 export function requiresStandardSafetyCheck(question: string) {
   const explicitStandard =
     /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
@@ -13,5 +25,5 @@ export function requiresStandardSafetyCheck(question: string) {
       question,
     ) || /(قطر|ارتفاع|عرض|عمق|فاصله|میلی.?متر|سانتی.?متر)/i.test(question);
 
-  return explicitStandard || (bindingValue && measurableProperty);
+  return explicitStandard || isCarRoofFallProtectionHeightQuestion(question) || (bindingValue && measurableProperty);
 }

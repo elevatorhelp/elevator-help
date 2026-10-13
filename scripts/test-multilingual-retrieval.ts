@@ -13,7 +13,10 @@ import {
   isBareFaultCodeQuestion,
   manufacturerClarificationQuestion,
 } from "../app/lib/fault-context.ts";
-import { ACTIVE_DOCUMENT_MAP_VERSION } from "../app/lib/standards-engine.ts";
+import {
+  ACTIVE_DOCUMENT_MAP_VERSION,
+  isStandardsQuestion,
+} from "../app/lib/standards-engine.ts";
 import {
   createQueryBackend,
   multilingualRetrievalFromEnv,
@@ -94,6 +97,19 @@ for (const question of [
     throw new Error("Spanish standards question language was not preserved");
   }
 }
+// Offline regressions for the two core standards in German. No API calls.
+for (const question of [
+  "Was sagt EN 81-20 über den Aufzugsschacht?",
+  "Welche Anforderungen stellt DIN EN 81-50 an die Prüfung?",
+]) {
+  if (!isStandardsQuestion(question)) {
+    throw new Error(`German standards query was not recognized: ${question}`);
+  }
+}
+if (isStandardsQuestion("Hallo, wie geht es dir?")) {
+  throw new Error("Ordinary German conversation must not be treated as a standards question");
+}
+
 if (requiresStandardSafetyCheck("Hallo, wie geht es dir?")) {
   throw new Error(
     "Ordinary conversation must not enter standards verification",

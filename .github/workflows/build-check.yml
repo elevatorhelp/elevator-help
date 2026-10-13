@@ -46,6 +46,9 @@ jobs:
       - name: Test multilingual retrieval contract
         run: npm run test:multilingual-retrieval
 
+      - name: Test car-roof fall-protection routing
+        run: node --experimental-strip-types scripts/test-roof-protection.ts
+
       - name: Test incremental archive ingestion
         run: npm run test:incremental-ingestion
 
