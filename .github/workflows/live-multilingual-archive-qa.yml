@@ -1,10 +1,7 @@
 name: Live multilingual archive QA
 
 on:
-  workflow_run:
-    workflows: ["Deploy production"]
-    types: [completed]
-    branches: [main]
+  # Paid Gemini-backed QA is opt-in, not triggered on every production deploy.
   workflow_dispatch:
 
 permissions:
@@ -16,7 +13,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 5
     steps:
       - name: Verify cross-language internal standards retrieval
         shell: bash
@@ -32,7 +29,7 @@ jobs:
 
           for question in "${questions[@]}"; do
             passed=0
-            for attempt in $(seq 1 6); do
+            for attempt in $(seq 1 2); do
               response=$(curl -sS --fail-with-body --max-time 90                 -H 'content-type: application/json'                 --data "$(jq -nc --arg q "$question" '{question:$q}')"                 https://elevator.help/api/ask || true)
               mode=$(printf '%s' "$response" | jq -r '.mode // empty' 2>/dev/null || true)
               answer=$(printf '%s' "$response" | jq -r '.answer // empty' 2>/dev/null || true)
@@ -40,7 +37,7 @@ jobs:
                 passed=1
                 break
               fi
-              sleep 15
+              sleep 5
             done
             if [[ "$passed" -ne 1 ]]; then
               echo "FAIL: archive-first standards answer was not verified for: $question"
@@ -54,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           question='¿Qué significa el código de error 14 de Newlift?'
-          for attempt in $(seq 1 6); do
+          for attempt in $(seq 1 2); do
             response=$(curl -sS --fail-with-body --max-time 90               -H 'content-type: application/json'               --data "$(jq -nc --arg q "$question" '{question:$q}')"               https://elevator.help/api/ask || true)
             mode=$(printf '%s' "$response" | jq -r '.mode // empty' 2>/dev/null || true)
             answer=$(printf '%s' "$response" | jq -r '.answer // empty' 2>/dev/null || true)
@@ -64,7 +61,7 @@ jobs:
             if [[ "$mode" == "gemini_web" ]] && grep -Eqi 'Web-based|Fuente: búsqueda web' <<<"$answer"; then
               exit 0
             fi
-            sleep 15
+            sleep 5
           done
           echo 'FAIL: Spanish Newlift fault answer did not come from internal evidence.'
           printf '%s\n' "$response" | jq -c '{mode,answer,error}' 2>/dev/null || true

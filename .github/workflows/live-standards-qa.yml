@@ -1,12 +1,7 @@
 name: Live Standards QA
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'app/api/ask/**'
-      - 'app/lib/**'
-      - '.github/workflows/live-standards-qa.yml'
+  # Live Gemini-backed checks are manual to avoid repeated paid calls on each commit.
   workflow_dispatch:
 
 permissions:
@@ -21,7 +16,7 @@ jobs:
         run: |
           set -euo pipefail
           payload='{"question":"wie viel ist min. abstand zwischen kabinenaufzug und schachtwand ?"}'
-          for attempt in $(seq 1 18); do
+          for attempt in $(seq 1 2); do
             status=$(curl --silent --show-error --max-time 90               --output /tmp/live.json --write-out "%{http_code}"               -X POST "https://elevator.help/api/ask"               -H "Content-Type: application/json"               --data "$payload") || status="000"
             if [ "$status" = "200" ] && node -e '
               const fs=require("fs");
@@ -39,7 +34,7 @@ jobs:
               echo "PASS: production standards answer is verified."
               exit 0
             fi
-            sleep 20
+            sleep 10
           done
           echo "FAIL: production standards QA did not pass after deployment retries."
           exit 1

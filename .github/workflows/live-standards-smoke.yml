@@ -29,7 +29,7 @@ jobs:
             echo "Question: $QUESTION"
             echo "mode=$MODE"
             printf '%s\n' "$ANSWER"
-            if [[ "$MODE" != "standards_knowledge_base" ]] \
+            if [[ "$MODE" != "standards_verified" ]] \
               || ! grep -q '5\.2\.5\.3\.1' <<<"$ANSWER" \
               || ! grep -q '5\.3\.4\.1' <<<"$ANSWER" \
               || ! grep -Eq '0[,.]15[[:space:]]*m|150[[:space:]]*mm' <<<"$ANSWER" \
@@ -58,7 +58,7 @@ jobs:
           echo "mode=$MODE"
           printf '%s\n' "$ANSWER"
           CLAUSE_COUNT=$(printf '%s' "$ANSWER" | (grep -o 'Abschnitt [0-9][0-9.]*' || true) | sort -u | wc -l | tr -d ' ')
-          if [[ "$MODE" == "standards_knowledge_base" ]] \
+          if [[ "$MODE" == "standards_verified" ]] \
             && grep -q 'EN 81-20, Abschnitt 5\.2\.1\.8\.2' <<<"$ANSWER" \
             && [[ "$CLAUSE_COUNT" -ge 3 ]]; then
             echo 'PASS: broad shaft answer is grounded and diversified.'
