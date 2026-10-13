@@ -1,10 +1,7 @@
 name: Live multilingual archive QA
 
 on:
-  workflow_run:
-    workflows: ["Deploy production"]
-    types: [completed]
-    branches: [main]
+  # Paid Gemini-backed QA is opt-in, not triggered on every production deploy.
   workflow_dispatch:
 
 permissions:
@@ -32,7 +29,7 @@ jobs:
 
           for question in "${questions[@]}"; do
             passed=0
-            for attempt in $(seq 1 6); do
+            for attempt in $(seq 1 2); do
               response=$(curl -sS --fail-with-body --max-time 90                 -H 'content-type: application/json'                 --data "$(jq -nc --arg q "$question" '{question:$q}')"                 https://elevator.help/api/ask || true)
               mode=$(printf '%s' "$response" | jq -r '.mode // empty' 2>/dev/null || true)
               answer=$(printf '%s' "$response" | jq -r '.answer // empty' 2>/dev/null || true)
@@ -54,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           question='¿Qué significa el código de error 14 de Newlift?'
-          for attempt in $(seq 1 6); do
+          for attempt in $(seq 1 2); do
             response=$(curl -sS --fail-with-body --max-time 90               -H 'content-type: application/json'               --data "$(jq -nc --arg q "$question" '{question:$q}')"               https://elevator.help/api/ask || true)
             mode=$(printf '%s' "$response" | jq -r '.mode // empty' 2>/dev/null || true)
             answer=$(printf '%s' "$response" | jq -r '.answer // empty' 2>/dev/null || true)
