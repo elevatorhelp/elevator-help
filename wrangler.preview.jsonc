@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "elevator-help-qa-preview",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "AUTH_REQUIRED": "true",
+    "MULTILINGUAL_RETRIEVAL_ENABLED": "true",
+    "GEMINI_MAX_CALLS_PER_QUESTION": "5",
+    "GEMINI_MAX_CALLS_PER_INGEST_REQUEST": "3"
+  },
+  "ai": {"binding": "AI"},
+  "vectorize": [
+    {"binding": "VECTORIZE", "index_name": "elevator-help-index"},
+    {"binding": "VECTORIZE_V2", "index_name": "elevator-help-multilingual-v2"}
+  ]
+}

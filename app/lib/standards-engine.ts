@@ -1000,7 +1000,38 @@ async function queryOneStandard(
         sourceLanguage,
         broad,
         matches: selected.slice(0, broad ? 14 : 12),
+        legacyProbeAttempted: false,
       };
+    }
+  }
+
+  // A healthy multilingual embedding call can still return no raw standard
+  // chunks (for example while the multilingual archive is being backfilled).
+  // Probe the existing legacy archive once with an English technical query
+  // before giving up. This does not change normative evidence verification.
+  if (multilingual?.enabled) {
+    try {
+      const fallback = await rawMatchesForQuery(
+        { topic: "general", query: `${question} ${standard.code} elevator lift technical requirements` },
+        standard,
+        "en",
+        ai,
+        vectorize,
+      );
+      if (fallback.length) {
+        return {
+          standard: standard.code,
+          sourceLanguage: "en",
+          broad: isBroadShaftQuestion(question),
+          matches: fallback,
+          legacyProbeAttempted: true,
+        };
+      }
+    } catch (error) {
+      console.error("Legacy standards retrieval fallback failed", {
+        standard: standard.code,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -1009,6 +1040,7 @@ async function queryOneStandard(
     sourceLanguage: null,
     broad: isBroadShaftQuestion(question),
     matches: [],
+    legacyProbeAttempted: Boolean(multilingual?.enabled),
   };
 }
 
@@ -1044,6 +1076,7 @@ async function retrieveStandards(
           sourceLanguage: null,
           broad: isBroadShaftQuestion(question),
           matches: [],
+          legacyProbeAttempted: false,
         };
       }
     }),
@@ -1051,6 +1084,9 @@ async function retrieveStandards(
 
   return {
     checkedStandards: CORE_STANDARDS.map((standard) => standard.code),
+    legacyRetryCandidates: checked
+      .filter((entry) => entry.matches.length && !entry.legacyProbeAttempted)
+      .map((entry) => entry.standard),
     explicitlyNamed: explicitlyNamedCoreStandards(question),
     broad: isBroadShaftQuestion(question),
     matches: checked.flatMap((entry) =>
@@ -1060,6 +1096,46 @@ async function retrieveStandards(
       })),
     ),
   };
+}
+
+// A single, bounded second-chance probe for standards whose multilingual hits
+// were nonempty but could not support a question-relevant verified claim.
+// No translation, map discovery, or repeated language search is performed.
+async function retrieveLegacyRetryEvidence(
+  question: string,
+  candidates: CoreStandardCode[],
+  ai: any,
+  vectorize: any,
+) {
+  const results = await Promise.all(
+    CORE_STANDARDS.filter((standard) => candidates.includes(standard.code)).map(
+      async (standard) => {
+        try {
+          const matches = await rawMatchesForQuery(
+            {
+              topic: "general",
+              query: `${question} ${standard.code} elevator lift technical requirements`,
+            },
+            standard,
+            "en",
+            ai,
+            vectorize,
+          );
+          return matches.slice(0, 6).map((match: any) => ({
+            ...match,
+            standardCode: standard.code,
+          }));
+        } catch (error) {
+          console.error("Bounded legacy evidence retry failed", {
+            standard: standard.code,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return [];
+        }
+      },
+    ),
+  );
+  return results.flat().slice(0, 12);
 }
 
 function normalizeStandardCode(value: unknown): CoreStandardCode | null {
@@ -1395,8 +1471,14 @@ export async function answerStandardsQuestion(
   multilingual?: MultilingualRetrieval,
   fetchImpl: FetchLike = fetch,
   retrievalFetchImpl: FetchLike = fetchImpl,
-) {
-  const retrieval = await retrieveStandards(
+  retrievalOverride?: Awaited<ReturnType<typeof retrieveStandards>>,
+): Promise<{
+  sufficient: boolean;
+  answer: string;
+  checkedStandards: CoreStandardCode[];
+  verifiedClaims?: VerifiedStandardClaim[];
+}> {
+  const retrieval = retrievalOverride ?? await retrieveStandards(
     question,
     route,
     apiKey,
@@ -1453,11 +1535,13 @@ export async function answerStandardsQuestion(
 You are the standards evidence layer of elevator.help.
 Both EN 81-20 and EN 81-50 were searched in the internal indexed standards library.
 Work ONLY from the supplied excerpts.
+Assess whether each excerpt DIRECTLY answers the user's specific question, not just whether it is authentic text from the same standard or a related elevator topic. List only directly relevant evidence IDs in relevantEvidenceIds. If no excerpt directly answers the question, return {"relevantEvidenceIds":[],"claims":[]}.
 
 STRICT CLAIM RULES:
 - Do not use outside or web knowledge.
 - Do not invent or reconstruct requirements from memory.
 - One claim = one normative requirement.
+- Every claim must cite an evidenceId that is in relevantEvidenceIds and directly answers the question.
 - Every claim must identify the exact standard and exact clause number.
 - The exact clause number must appear verbatim in the same evidence excerpt.
 - Every claim must include evidenceId pointing to that exact EVIDENCE item.
@@ -1478,6 +1562,7 @@ LANGUAGE:
 
 Return ONLY valid JSON:
 {
+  "relevantEvidenceIds": [1],
   "claims": [
     {
       "standard": "EN 81-20" | "EN 81-50",
@@ -1530,8 +1615,57 @@ ${excerpts}
     .join("")
     .trim();
   const parsed = raw ? parseModelJson(raw) : null;
-  const verified = verifyClaims(parsed, evidence);
+  // Evidence authenticity alone is insufficient: a real but unrelated clause
+  // must not become an answer to a different safety question. This explicit
+  // semantic assessment is still model-derived, never a substitute for the
+  // deterministic clause/quote/number checks below.
+  const hasRelevanceAssessment = Array.isArray(parsed?.relevantEvidenceIds);
+  const relevantIds = new Set<number>(
+    hasRelevanceAssessment
+      ? parsed.relevantEvidenceIds.filter(
+          (id: unknown) =>
+            Number.isInteger(id) && Number(id) >= 1 && Number(id) <= evidence.length,
+        )
+      : [],
+  );
+  const relevantParsed = {
+    claims: (Array.isArray(parsed?.claims) ? parsed.claims : []).filter(
+      (claim: any) => relevantIds.has(Number(claim?.evidenceId)),
+    ),
+  };
+  const verified = verifyClaims(relevantParsed, evidence);
   const selected = selectClaimsForAnswer(verified, retrieval.broad);
+
+  // Only the first synthesis may trigger this bounded retry. It uses at most
+  // two legacy embedding queries and one additional budgeted Gemini request.
+  // Never retry a failed or malformed synthesis, or when no legacy candidates
+  // remain. The original request-wide Gemini budget remains authoritative.
+  if (
+    !selected.length &&
+    hasRelevanceAssessment &&
+    !retrievalOverride &&
+    multilingual?.enabled &&
+    retrieval.legacyRetryCandidates.length > 0 &&
+    route?.disableLegacyEvidenceRetry !== true
+  ) {
+    const legacyEvidence = await retrieveLegacyRetryEvidence(
+      question, retrieval.legacyRetryCandidates, ai, vectorize,
+    );
+    if (legacyEvidence.length) {
+      try {
+        const retried = await answerStandardsQuestion(
+          question, route, apiKey, ai, vectorize, multilingual,
+          fetchImpl, retrievalFetchImpl,
+          { ...retrieval, matches: legacyEvidence, legacyRetryCandidates: [] },
+        );
+        if (retried.sufficient) return retried;
+      } catch (error) {
+        console.error("Bounded standards synthesis retry unavailable", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
 
   if (!selected.length) {
     return {
