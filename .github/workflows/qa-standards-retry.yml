@@ -1,0 +1,37 @@
+name: Standards Retry QA
+
+on:
+  pull_request:
+    branches:
+      - qa/standards-legacy-fallback-characterization-20261014
+    paths:
+      - 'app/lib/standards-engine.ts'
+      - 'scripts/test-standards-evidence-retry.mjs'
+      - '.github/workflows/qa-standards-retry.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-standards-qa:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Offline evidence-aware retry regression
+        run: node scripts/test-standards-evidence-retry.mjs
+      - name: Offline legacy fallback characterization
+        run: node scripts/test-standards-legacy-fallback.mjs
+      - name: Standards presentation
+        run: npm run test:standards-presentation
+      - name: Multilingual retrieval contract
+        run: npm run test:multilingual-retrieval
+      - name: Production build (no deploy)
+        run: npm run build
