@@ -132,27 +132,38 @@ async function searchEvidence(
   const seen = new Set<string>();
 
   for (const backend of backends) {
-    let result: any = null;
+    const resultSets: any[] = [];
     try {
-      result = await backend.vectorize.query(backend.vector, {
+      const filtered = await backend.vectorize.query(backend.vector, {
         topK: 40,
         returnMetadata: "all",
         filter: { contentType: "standard" },
       });
+      resultSets.push(filtered);
     } catch (error) {
       console.warn("Cortex standards metadata filter unavailable", error);
     }
-    if (!result?.matches?.length) {
-      result = await backend.vectorize.query(backend.vector, {
+
+    // Classification metadata is an accelerator, never an authority. Older
+    // or imperfectly classified archive chunks must remain discoverable; the
+    // exact standard identifier and clause checks below are the trust gate.
+    try {
+      const unfiltered = await backend.vectorize.query(backend.vector, {
         topK: 50,
         returnMetadata: "all",
       });
+      resultSets.push(unfiltered);
+    } catch (error) {
+      console.warn("Cortex standards unfiltered retrieval unavailable", error);
     }
-    for (const match of result?.matches || []) {
-      const key = String(match?.id || "");
-      if (key && seen.has(key)) continue;
-      if (key) seen.add(key);
-      matches.push(match);
+
+    for (const result of resultSets) {
+      for (const match of result?.matches || []) {
+        const key = String(match?.id || "");
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        matches.push(match);
+      }
     }
   }
 

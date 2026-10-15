@@ -37,11 +37,13 @@ async function scenario({
   standard,
   clause,
   sourceText,
+  filteredDecoy = false,
 }: {
   question: string;
   standard: string;
   clause: string;
   sourceText: string;
+  filteredDecoy?: boolean;
 }) {
   const calls: string[] = [];
   const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -97,21 +99,40 @@ async function scenario({
     { method: "POST", body: "{}" },
   );
   const vectorize = {
-    query: async () => ({
-      matches: [
-        {
-          id: "synthetic-source",
-          score: 0.98,
-          metadata: {
-            text: `${clause} ${sourceText}`,
-            contentType: "standard",
-            fileName: `${standard}.pdf`,
-            sourcePath: `/standards/${standard}.pdf`,
-            page: 12,
+    query: async (_vector: number[], options: any) => {
+      if (filteredDecoy && options?.filter?.contentType === "standard") {
+        return {
+          matches: [
+            {
+              id: "classified-decoy",
+              score: 0.99,
+              metadata: {
+                text: "5.3 Unrelated synthetic text.",
+                contentType: "standard",
+                fileName: "EN 81-20.pdf",
+                sourcePath: "/standards/EN 81-20.pdf",
+                page: 1,
+              },
+            },
+          ],
+        };
+      }
+      return {
+        matches: [
+          {
+            id: "synthetic-source",
+            score: 0.98,
+            metadata: {
+              text: `${clause} ${sourceText}`,
+              contentType: filteredDecoy ? "general" : "standard",
+              fileName: `${standard}.pdf`,
+              sourcePath: `/standards/${standard}.pdf`,
+              page: 12,
+            },
           },
-        },
-      ],
-    }),
+        ],
+      };
+    },
   };
   const result = await answerStandardsQuestion(
     question,
@@ -139,6 +160,7 @@ const en8170 = await scenario({
   standard: "EN 81-70",
   clause: "5.3.2.3",
   sourceText: "Synthetic source states requirement 1200 mm for this test only.",
+  filteredDecoy: true,
 });
 assert.equal(en8170.result.sufficient, true);
 assert.deepEqual(en8170.result.checkedStandards, ["EN 81-70"]);
