@@ -31,6 +31,32 @@ Version 0.2 foundation.
 - Internal source files and storage mechanics remain backend-only.
 - Production assistant runtime uses the current Gemini 3.6 Flash model; standards verification remains deterministic against raw source evidence.
 
+## HELIX Cortex rollout
+
+- The active standards path discovers standard identifiers from the question and
+  source metadata. The reasoning engine has no fixed list of EN/ISO standards.
+- Retrieval queries are embedded in one batch so routing, evidence retrieval,
+  synthesis and an optional web fallback stay inside the per-question Gemini
+  budget.
+- A replaceable domain pack supplies product identity, protected claim classes
+  and source-specific entities. The Cortex evidence engine remains reusable.
+- A technical archive miss always falls back to grounded public-web research.
+- Grounded web queries and source URLs can enter a quarantined learning queue;
+  user messages and generated answers are not stored as evidence.
+
+### Cortex database activation
+
+The daily quota and learning queue share a D1 binding named `CORTEX_DB`. They
+remain off until the database is created and tested.
+
+1. Create a D1 database and add its binding to both Wrangler configurations.
+2. Apply `migrations/0001_cortex_usage.sql`.
+3. Verify authentication in preview.
+4. Set `DAILY_QUESTION_LIMIT_ENABLED=true` to enforce 10 successful answers per
+   authenticated user and Berlin calendar day.
+5. Set `CORTEX_LEARNING_ENABLED=true` to collect grounded source candidates for
+   later verification and ingestion.
+
 ## v0.2
 - Updated technical-source list (without Wittur)
 - Added NEW Lift, Weber and & more

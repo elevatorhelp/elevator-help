@@ -4,7 +4,7 @@ import { routeQuestion } from "../../lib/router";
 import {
   answerStandardsQuestion,
   isStandardsQuestion,
-} from "../../lib/standards-engine";
+} from "../../lib/cortex-standards-engine";
 import {
   retrieveInternalEvidence,
   shouldTryInternalRetrieval,
@@ -18,6 +18,20 @@ import {
   createGeminiCallBudget,
   type FetchLike,
 } from "../../lib/gemini-cost-control";
+import {
+  domainIdentityPrompt,
+  protectedClaimsPrompt,
+} from "../../lib/domain-pack";
+import { shouldUsePublicWebFallback } from "../../lib/cortex-evidence-policy";
+import {
+  releaseDailyQuestion,
+  reserveDailyQuestion,
+  type DailyQuotaReservation,
+} from "../../lib/daily-question-quota";
+import {
+  recordWebResearchCandidate,
+  type WebResearchTrace,
+} from "../../lib/cortex-learning";
 import {
   asksResponseProvenance,
   canonicalManufacturer,
@@ -76,9 +90,14 @@ function historyText(h: HistoryItem[]) {
     .join("\n");
 }
 function basePrompt(q: string, h: HistoryItem[], unverified = false) {
-  return `You are elevator.help, a Gemini-first conversational assistant specialized in elevators and lift engineering.\nPRIMARY BEHAVIOR:\n- Understand natural, misspelled, incomplete, shorthand and mixed-language input.\n- Reply naturally in the language the user is using now. Preserve technical identifiers, manufacturer names and fault codes.\n- Maintain conversational context when relevant. Ordinary conversation works directly without retrieval.\n- Never expose internal filenames, storage locations, archive/Drive links or implementation details.\nTECHNICAL SAFETY / EVIDENCE:\n- Never invent a fault-code meaning, standard clause, mandatory minimum/maximum, parameter, connector/pin, wiring value, test value or manufacturer-specific procedure.\n- If an exact manufacturer-specific or normative fact cannot be verified from evidence supplied by the application, say that the exact point cannot currently be verified.\n- Do not pretend retrieval succeeded when it did not.\n- When asked where a previous answer came from, use only the explicit response-provenance marker in RECENT CONVERSATION. If no marker is present, say that its provenance cannot be determined; never claim that manuals or internal documents were checked merely from your general knowledge.\n${unverified ? "- A specialist retrieval tool failed or returned no verified evidence for this turn. Do not present the requested specialist fact as verified or claim that manuals, catalogs, an internal library, or the web were checked." : ""}\nRECENT CONVERSATION:\n${historyText(h) || "(none)"}\nCURRENT USER MESSAGE:\n${q}\nReturn only the answer to the user.`;
+  return `${domainIdentityPrompt()}\nPRIMARY BEHAVIOR:\n- Understand natural, misspelled, incomplete, shorthand and mixed-language input.\n- Reply naturally in the language the user is using now. Preserve technical identifiers, manufacturer names and fault codes.\n- Maintain conversational context when relevant. Ordinary conversation works directly without retrieval.\n- Never expose internal filenames, storage locations, archive/Drive links or implementation details.\nTECHNICAL SAFETY / EVIDENCE:\n- Never invent any protected claim (${protectedClaimsPrompt()}).\n- If an exact source-specific or normative fact cannot be verified from evidence supplied by the application, say that the exact point cannot currently be verified.\n- Do not pretend retrieval succeeded when it did not.\n- When asked where a previous answer came from, use only the explicit response-provenance marker in RECENT CONVERSATION. If no marker is present, say that its provenance cannot be determined; never claim that manuals or internal documents were checked merely from your general knowledge.\n${unverified ? "- A specialist retrieval tool failed or returned no verified evidence for this turn. Do not present the requested specialist fact as verified or claim that manuals, catalogs, an internal library, or the web were checked." : ""}\nRECENT CONVERSATION:\n${historyText(h) || "(none)"}\nCURRENT USER MESSAGE:\n${q}\nReturn only the answer to the user.`;
 }
-async function callGemini(
+type GeminiCallResult = {
+  text: string;
+  webResearch: WebResearchTrace;
+};
+
+async function callGeminiResult(
   prompt: string,
   key: string,
   useWeb = false,
@@ -130,7 +149,31 @@ async function callGemini(
     promptChars: prompt.length,
     answerChars: a.length,
   });
-  return a;
+  const grounding = d?.candidates?.[0]?.groundingMetadata || {};
+  const queries = Array.isArray(grounding?.webSearchQueries)
+    ? grounding.webSearchQueries.filter(
+        (item: unknown): item is string => typeof item === "string",
+      )
+    : [];
+  const sources = Array.isArray(grounding?.groundingChunks)
+    ? grounding.groundingChunks
+        .map((chunk: any) => chunk?.web)
+        .filter((web: any) => typeof web?.uri === "string")
+        .map((web: any) => ({
+          uri: web.uri as string,
+          title: typeof web.title === "string" ? web.title : null,
+        }))
+    : [];
+  return { text: a, webResearch: { queries, sources } };
+}
+
+async function callGemini(
+  prompt: string,
+  key: string,
+  useWeb = false,
+  fetchImpl: FetchLike = fetch,
+) {
+  return (await callGeminiResult(prompt, key, useWeb, fetchImpl)).text;
 }
 const answerDirect = (
   q: string,
@@ -211,12 +254,16 @@ async function safeWebAnswer(
   language?: string | null,
   fetchImpl: FetchLike = fetch,
 ) {
+  const result = await callGeminiResult(prompt, key, true, fetchImpl);
   const clean = sanitizeUserAnswer(
-    await callGemini(prompt, key, true, fetchImpl),
+    result.text,
   );
   if (!clean || isObviouslyIncomplete(clean))
     throw new Error("GEMINI_WEB_OUTPUT_UNSAFE");
-  return addWebSourceLabel(clean, language);
+  return {
+    answer: addWebSourceLabel(clean, language),
+    webResearch: result.webResearch,
+  };
 }
 type GroundedAnswer = {
   answer: string;
@@ -277,6 +324,16 @@ function safeError(q: string) {
   return "The direct AI connection did not respond just now. Please send the same message once more.";
 }
 
+function dailyQuotaError(q: string, limit: number) {
+  if (/[؀-ۿ]/.test(q))
+    return `سهمیهٔ ${limit} سؤال امروزت تمام شده است. فردا دوباره می‌توانی سؤال بپرسی.`;
+  if (/\b(du|dich|was|wie|wer|aufzug|fehler|schacht)\b/i.test(q))
+    return `Deine ${limit} Fragen für heute sind aufgebraucht. Morgen kannst du wieder fragen.`;
+  if (/[¿¡]|\b(?:qué|cuál|cómo|código)\b/i.test(q))
+    return `Has usado tus ${limit} preguntas de hoy. Podrás volver a preguntar mañana.`;
+  return `Your ${limit} questions for today have been used. Please try again tomorrow.`;
+}
+
 async function proxyProductionAnswer(question: string, history: HistoryItem[]) {
   const response = await fetch("https://elevator.help/api/ask", {
     method: "POST",
@@ -335,6 +392,31 @@ async function retrieveFaultEvidenceWithoutGemini(question: string) {
 export async function POST(request: NextRequest) {
   let question = "";
   let geminiBudget: ReturnType<typeof createGeminiCallBudget> | null = null;
+  let runtimeEnv: any = null;
+  let quotaReservation: DailyQuotaReservation | null = null;
+  let successfulAnswerDelivered = false;
+  const answerJson = (payload: Record<string, unknown>, counts = true) => {
+    if (counts) successfulAnswerDelivered = true;
+    return NextResponse.json({
+      ...payload,
+      ...(counts && quotaReservation
+        ? {
+            dailyQuestions: {
+              limit: quotaReservation.limit,
+              remaining: quotaReservation.remaining,
+            },
+          }
+        : {}),
+    });
+  };
+  const rememberWebResearch = async (trace: WebResearchTrace) => {
+    if (!runtimeEnv) return;
+    try {
+      await recordWebResearchCandidate(runtimeEnv, trace);
+    } catch (error) {
+      console.error("Web learning candidate could not be recorded", error);
+    }
+  };
   try {
     const authorization = await authorizeChatRequest(request);
     if (!authorization.ok) {
@@ -366,6 +448,7 @@ export async function POST(request: NextRequest) {
       body?.history ?? body?.messages ?? body?.conversation,
     );
     const { env } = getCloudflareContext();
+    runtimeEnv = env;
     const requesterKey =
       authorization.userId ||
       request.headers.get("cf-connecting-ip") ||
@@ -376,6 +459,30 @@ export async function POST(request: NextRequest) {
         { status: 429 },
       );
     }
+    const quota = await reserveDailyQuestion(
+      env,
+      authorization.userId,
+    );
+    if (quota.status === "authentication_required") {
+      return NextResponse.json(
+        {
+          error: "Please sign in to use your daily question allowance.",
+          diagnosticCode: "DAILY_QUOTA_AUTH_REQUIRED",
+        },
+        { status: 401 },
+      );
+    }
+    if (quota.status === "limit_reached") {
+      return NextResponse.json(
+        {
+          error: dailyQuotaError(question, quota.limit),
+          diagnosticCode: "DAILY_QUESTION_LIMIT_REACHED",
+          dailyQuestions: { limit: quota.limit, remaining: 0 },
+        },
+        { status: 429 },
+      );
+    }
+    if (quota.status === "reserved") quotaReservation = quota.reservation;
     geminiBudget = createGeminiCallBudget(
       (env as any).GEMINI_MAX_CALLS_PER_QUESTION ??
         process.env.GEMINI_MAX_CALLS_PER_QUESTION,
@@ -385,17 +492,17 @@ export async function POST(request: NextRequest) {
     const retrievalFetch = geminiBudget.fetchWithReserve(2);
     question = resolveManufacturerClarification(question, history) || question;
     if (isBareFaultCodeQuestion(question))
-      return NextResponse.json({
+      return answerJson({
         answer: manufacturerClarificationQuestion(question),
         sources: [],
         mode: "clarification",
-      });
+      }, false);
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
       try {
         const evidence = await retrieveFaultEvidenceWithoutGemini(question);
         if (evidence)
-          return NextResponse.json({
+          return answerJson({
             answer: evidence,
             sources: [],
             mode: "internal_evidence",
@@ -411,7 +518,7 @@ export async function POST(request: NextRequest) {
       );
     }
     if (asksResponseProvenance(question))
-      return NextResponse.json({
+      return answerJson({
         answer: await safeDirectAnswer(
           question,
           key,
@@ -433,11 +540,11 @@ export async function POST(request: NextRequest) {
       preRoutedRoute?.needsClarification &&
       preRoutedRoute?.clarificationQuestion
     )
-      return NextResponse.json({
+      return answerJson({
         answer: preRoutedRoute.clarificationQuestion,
         sources: [],
         mode: "clarification",
-      });
+      }, false);
     if (
       requiresStandardSafetyCheck(question) ||
       preRoutedRoute?.intent === "standard" ||
@@ -446,7 +553,7 @@ export async function POST(request: NextRequest) {
       let route: any = preRoutedRoute;
       const effective = route?.normalizedQuestion || question;
       if (!route)
-        return NextResponse.json({
+        return answerJson({
           answer: await safeDirectAnswer(
             effective,
             key,
@@ -474,20 +581,22 @@ export async function POST(request: NextRequest) {
             retrievalFetch,
           );
           if (result.sufficient)
-            return NextResponse.json({
+            return answerJson({
               answer: result.answer,
               sources: [],
               mode: "standards_verified",
               standardsChecked: result.checkedStandards,
             });
           const p = `${basePrompt(effective, history, false)}\n\nSTANDARD WEB FALLBACK:\n- First form the best technical candidate answer from your elevator knowledge. Then use Google Search to verify the exact normative claim against credible public sources.\n- Do not mention any internal library, archive, retrieval, index, database, missing document, or search mechanics.\n- If public evidence supports the exact claim, answer naturally and append exactly: Web-based\n- If public evidence is insufficient or conflicting, give the likely answer only as explicitly uncertain, say that sufficient evidence was not found to confirm it, and append exactly: Web-based\n- Never turn an unverified normative number into a certain fact.\n- Reply in the user's language.`;
-          return NextResponse.json({
-            answer: await safeWebAnswer(
-              p,
-              key,
-              route?.questionLanguage,
-              geminiFetch,
-            ),
+          const web = await safeWebAnswer(
+            p,
+            key,
+            route?.questionLanguage,
+            geminiFetch,
+          );
+          await rememberWebResearch(web.webResearch);
+          return answerJson({
+            answer: web.answer,
             sources: [],
             mode: "standards_web_fallback",
             standardsChecked: result.checkedStandards,
@@ -498,13 +607,15 @@ export async function POST(request: NextRequest) {
             e,
           );
           const p = `${basePrompt(effective, history, false)}\n\nSTANDARD WEB FALLBACK:\n- Give your best technical candidate, then use Google Search to verify the exact normative claim.\n- Do not mention internal systems or search mechanics.\n- If verified, answer naturally and append exactly: Web-based\n- If not sufficiently verified, state the likely answer as uncertain and say sufficient evidence was not found, then append exactly: Web-based\n- Reply in the user's language.`;
-          return NextResponse.json({
-            answer: await safeWebAnswer(
-              p,
-              key,
-              route?.questionLanguage,
-              geminiFetch,
-            ),
+          const web = await safeWebAnswer(
+            p,
+            key,
+            route?.questionLanguage,
+            geminiFetch,
+          );
+          await rememberWebResearch(web.webResearch);
+          return answerJson({
+            answer: web.answer,
             sources: [],
             mode: "standards_web_fallback",
           });
@@ -518,11 +629,11 @@ export async function POST(request: NextRequest) {
       let route: any = preRoutedRoute;
       const effective = route.normalizedQuestion || preRoutedEffective;
       if (route?.needsClarification && route?.clarificationQuestion)
-        return NextResponse.json({
+        return answerJson({
           answer: route.clarificationQuestion,
           sources: [],
           mode: "clarification",
-        });
+        }, false);
       const mustVerify =
         requiresStandardSafetyCheck(question) ||
         requiresStandardSafetyCheck(effective) ||
@@ -545,20 +656,22 @@ export async function POST(request: NextRequest) {
           );
           if (route?.intent === "standard") {
             if (result.sufficient)
-              return NextResponse.json({
+              return answerJson({
                 answer: result.answer,
                 sources: [],
                 mode: "standards_verified",
                 standardsChecked: result.checkedStandards,
               });
             const p = `${basePrompt(effective, history, false)}\n\nSTANDARD WEB FALLBACK:\n- First form the best technical candidate answer, then use Google Search to verify the exact normative claim.\n- Never mention internal library/archive/retrieval/index mechanics.\n- If verified, answer naturally. If not, mark the likely answer explicitly uncertain and say sufficient evidence was not found.\n- Append exactly: Web-based\n- Reply in the user's language.`;
-            return NextResponse.json({
-              answer: await safeWebAnswer(
-                p,
-                key,
-                route?.questionLanguage,
-                geminiFetch,
-              ),
+            const web = await safeWebAnswer(
+              p,
+              key,
+              route?.questionLanguage,
+              geminiFetch,
+            );
+            await rememberWebResearch(web.webResearch);
+            return answerJson({
+              answer: web.answer,
               sources: [],
               mode: "standards_web_fallback",
               standardsChecked: result.checkedStandards,
@@ -605,7 +718,7 @@ export async function POST(request: NextRequest) {
                 ),
                 quoteMatched: true,
               });
-              return NextResponse.json({
+              return answerJson({
                 answer: grounded.answer,
                 sources: [],
                 mode: "internal_evidence",
@@ -628,24 +741,24 @@ export async function POST(request: NextRequest) {
           );
         }
       }
-      const manufacturerSpecific =
-        /\b(Schindler|KONE|Otis|TKE|ThyssenKrupp|NEW\s*LIFT|Ziehl[-\s]*Abegg|Weber)\b/i.test(
-          effective,
-        );
-      const wantsWeb =
-        route?.evidenceNeed === "web_current" ||
-        needsPublicWeb(effective) ||
-        (manufacturerSpecific && internalEvidenceAttemptedButUnavailable);
+      const wantsWeb = shouldUsePublicWebFallback({
+        evidenceNeed: route?.evidenceNeed,
+        explicitWebRequest: needsPublicWeb(effective),
+        internalEvidenceMissing: internalEvidenceAttemptedButUnavailable,
+        requiredVerificationMissing: standardsVerificationUnavailable,
+      });
       if (wantsWeb) {
         try {
           const p = `${basePrompt(effective, history, false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because current/public evidence is required or internal evidence was unavailable or insufficient. Prefer manufacturer/official primary sources. Do not expose internal retrieval mechanics, citations, or a routine source list. Public web evidence is not a substitute for deterministic standards verification. Never state normative numerical limits, standard clauses, mandatory safety values, or exact test values from public-web mode; omit the number and say the exact value requires standards verification. For manufacturer-specific model numbers, parameters, connector/pin details, or procedures, state them only when directly supported by an authoritative manufacturer primary source; otherwise do not guess or list candidate models, and say the exact manufacturer detail could not be verified. For manufacturer-specific technical information, calibrate certainty to the evidence: if authoritative manufacturer primary evidence directly supports a claim, state it normally. If public evidence supports a common/typical configuration but not the exact installation, keep the useful information but qualify it naturally (for example: typically, commonly, depending on configuration) and say the exact installed type must be verified from the unit identification or manufacturer documentation. Do not turn plausible public-web details into guaranteed facts. For safety-relevant replacement, adjustment or parameterization, add one concise caution in the user's language to verify against the applicable manufacturer documentation or manufacturer service. Omit unnecessary caution only when authoritative manufacturer evidence directly supports the exact answer. Append exactly: Web-based`;
-          return NextResponse.json({
-            answer: await safeWebAnswer(
-              p,
-              key,
-              route?.questionLanguage,
-              geminiFetch,
-            ),
+          const web = await safeWebAnswer(
+            p,
+            key,
+            route?.questionLanguage,
+            geminiFetch,
+          );
+          await rememberWebResearch(web.webResearch);
+          return answerJson({
+            answer: web.answer,
             sources: [],
             mode: "gemini_web",
           });
@@ -654,7 +767,7 @@ export async function POST(request: NextRequest) {
             "Public web unavailable or unsafe; preserving conversation:",
             e,
           );
-          return NextResponse.json({
+          return answerJson({
             answer: await safeDirectAnswer(
               effective,
               key,
@@ -672,7 +785,7 @@ export async function POST(request: NextRequest) {
           .map((x: any) => `${x.standard} ${x.clause}: ${x.text}`)
           .join("\n");
         const p = `${basePrompt(effective, history, false)}\n\nDETERMINISTICALLY VERIFIED STANDARD CLAIMS:\n${verifiedFacts}\n\nUse these verified claims as constraints/facts while answering the user's planning/design question. Preserve the planning intent. Do not add or infer any exact normative value that is not contained in these verified claims. Do not mention internal verification mechanics.`;
-        return NextResponse.json({
+        return answerJson({
           answer: await callGemini(
             p +
               "\n\nReturn only a complete user-facing planning/design answer.",
@@ -684,7 +797,7 @@ export async function POST(request: NextRequest) {
           mode: "planning_with_verified_standards",
         });
       }
-      return NextResponse.json({
+      return answerJson({
         answer: await safeDirectAnswer(
           effective,
           key,
@@ -705,19 +818,17 @@ export async function POST(request: NextRequest) {
     if (needsPublicWeb(question)) {
       try {
         const p = `${basePrompt(question, history, false)}\n\nPUBLIC WEB MODE:\n- Use Google Search grounding because this turn explicitly needs current/online evidence. Prefer official primary sources. Do not expose a routine source list.`;
-        return NextResponse.json({
-          answer: await safeWebAnswer(
-            p,
-            key,
-            /[؀-ۿ]/.test(question)
-              ? "fa"
-              : /[¿¡]|\b(?:qué|cuál|cómo|código)\b/i.test(question)
-                ? "es"
-                : /\b(?:was|wie|fehler|aufzug|quelle)\b/i.test(question)
-                  ? "de"
-                  : "en",
-            geminiFetch,
-          ),
+        const language = /[؀-ۿ]/.test(question)
+          ? "fa"
+          : /[¿¡]|\b(?:qué|cuál|cómo|código)\b/i.test(question)
+            ? "es"
+            : /\b(?:was|wie|fehler|aufzug|quelle)\b/i.test(question)
+              ? "de"
+              : "en";
+        const web = await safeWebAnswer(p, key, language, geminiFetch);
+        await rememberWebResearch(web.webResearch);
+        return answerJson({
+          answer: web.answer,
           sources: [],
           mode: "gemini_web",
         });
@@ -726,7 +837,7 @@ export async function POST(request: NextRequest) {
           "Public web unavailable or unsafe; preserving conversation:",
           e,
         );
-        return NextResponse.json({
+        return answerJson({
           answer: await safeDirectAnswer(
             question,
             key,
@@ -739,7 +850,7 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-    return NextResponse.json({
+    return answerJson({
       answer: await safeDirectAnswer(
         question,
         key,
@@ -767,6 +878,13 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   } finally {
+    if (quotaReservation && !successfulAnswerDelivered && runtimeEnv) {
+      try {
+        await releaseDailyQuestion(runtimeEnv, quotaReservation);
+      } catch (error) {
+        console.error("Failed to release unsuccessful daily quota reservation", error);
+      }
+    }
     if (geminiBudget) {
       console.info("Gemini request budget", geminiBudget.snapshot());
     }

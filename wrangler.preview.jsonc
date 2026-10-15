@@ -9,8 +9,18 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "d1_databases": [
+    {
+      "binding": "CORTEX_DB",
+      "database_name": "elevator-help-cortex-preview",
+      "database_id": "4997e193-045c-4daa-bec3-b5a15ddfd5ed"
+    }
+  ],
   "vars": {
     "AUTH_REQUIRED": "true",
+    "DAILY_QUESTION_LIMIT_ENABLED": "true",
+    "DAILY_QUESTION_LIMIT": "10",
+    "CORTEX_LEARNING_ENABLED": "true",
     "MULTILINGUAL_RETRIEVAL_ENABLED": "true",
     "GEMINI_MAX_CALLS_PER_QUESTION": "5",
     "GEMINI_MAX_CALLS_PER_INGEST_REQUEST": "3"

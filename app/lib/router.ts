@@ -6,6 +6,7 @@ import {
   isBareFaultCodeQuestion,
   manufacturerClarificationQuestion,
 } from "./fault-context.ts";
+import { activeDomainPack } from "./domain-pack.ts";
 export type RouterResult = {
   intent:
     | "troubleshooting"
@@ -61,7 +62,8 @@ function buildRouterPrompt(
 ) {
   const recent = compactRouterContext(context);
   return `
-You are the semantic understanding and routing brain of elevator.help, a product exclusively for elevator/lift engineering.
+You are the semantic understanding and routing brain of ${activeDomainPack.assistantName}, a product for ${activeDomainPack.expertise}.
+${activeDomainPack.defaultContext}
 FIRST understand what an elevator technician, engineer, architect or homeowner means. THEN decide what evidence is needed. Do not answer the technical question itself.
 
 SEMANTIC RESCUE RULES:

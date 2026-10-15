@@ -22,8 +22,9 @@ const GOOGLE_WORKSPACE_MIME_TYPES = new Set([
   "application/vnd.google-apps.presentation",
 ]);
 
-const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "1GAuMp6D99K9kqLkUMJZM-iHoIS319Loo";
+const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5";
 const TARGET_FILE_ID = process.env.TARGET_FILE_ID || "";
+const FORCE_REINGEST = process.env.FORCE_REINGEST === "true";
 const MAX_FILES = Number(process.env.MAX_FILES || "1");
 const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/api/drive-ingest-batch";
 const DOCUMENT_MAP_ENDPOINT =
@@ -207,24 +208,26 @@ function documentGroupHint(fileName) {
     .slice(0, 120) || null;
 }
 
-function coreStandardPriority(file) {
-  const compact = `${file?.name || ""} ${file?.sourcePath || ""}`
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-  if (compact.includes("EN8120")) return 0;
-  if (compact.includes("EN8150")) return 1;
-  return 2;
-}
-
 function prioritizeChangedFiles(files) {
   return [...files].sort((a, b) => {
-    const priorityDelta = coreStandardPriority(a) - coreStandardPriority(b);
-    if (priorityDelta !== 0) return priorityDelta;
     return String(a.sourcePath || a.name || "").localeCompare(
       String(b.sourcePath || b.name || ""),
       "en"
     );
   });
+}
+
+function createIngestionPlan(files, records = {}, force = false) {
+  const ordered = prioritizeChangedFiles(files);
+  const raw = ordered.filter((file) =>
+    needsRawBackfill(records[file.id], fingerprint(file), force)
+  );
+  if (raw.length) return { phase: "raw", files: raw };
+
+  const map = ordered.filter((file) =>
+    needsMapBackfill(records[file.id], fingerprint(file), force)
+  );
+  return { phase: "map", files: map };
 }
 
 function normalizeText(text) {
@@ -366,7 +369,7 @@ async function buildDocumentMap(
     }))
     .filter((page) => page.text.length >= MIN_CHUNK_LENGTH);
 
-  if (!pageInputs.length) return [];
+  if (!pageInputs.length) return { ids: [], complete: true, nextPage: null };
 
   const mapIds = Array.isArray(initialIds) ? [...initialIds] : [];
   const document = {
@@ -381,9 +384,21 @@ async function buildDocumentMap(
   };
 
   const firstIndex = pageInputs.findIndex((page) => page.page >= Math.max(1, startPage));
-  if (firstIndex === -1) return mapIds;
+  if (firstIndex === -1) {
+    return { ids: mapIds, complete: true, nextPage: null };
+  }
 
   for (let i = firstIndex; i < pageInputs.length; i += MAP_PAGES_PER_BATCH) {
+    if (ingestionBudget.snapshot().remaining < GEMINI_CALLS_PER_MAP_WINDOW) {
+      console.log(
+        `Document-map budget checkpoint reached before page ${pageInputs[i].page}`
+      );
+      return {
+        ids: mapIds,
+        complete: false,
+        nextPage: pageInputs[i].page,
+      };
+    }
     const window = pageInputs.slice(i, i + MAP_PAGES_PER_BATCH);
     const result = await callDocumentMap({ document, pages: window }, ingestToken);
     const ids = Array.isArray(result?.ids) ? result.ids : [];
@@ -397,7 +412,7 @@ async function buildDocumentMap(
     );
   }
 
-  return mapIds;
+  return { ids: mapIds, complete: true, nextPage: null };
 }
 
 async function processPdf(
@@ -407,6 +422,9 @@ async function processPdf(
   {
     ingestRaw = true,
     ingestMap = true,
+    rawStartChunk = 0,
+    initialRawIds = [],
+    onRawProgress = null,
     mapStartPage = 1,
     initialMapIds = [],
     onMapProgress = null,
@@ -445,12 +463,14 @@ async function processPdf(
 
   console.log(`Extracted ${chunks.length} chunks from ${totalPages} pages`);
 
+  const rawIds = Array.isArray(initialRawIds) ? [...initialRawIds] : [];
+  let nextRawChunk = Math.max(0, rawStartChunk);
   if (ingestRaw) {
-    ingestionBudget.assertFits(
-      estimateRawGeminiCalls(chunks.length),
-      `${file.name} raw-vector phase`,
-    );
-    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+    for (let i = nextRawChunk; i < chunks.length; i += BATCH_SIZE) {
+      if (ingestionBudget.snapshot().remaining < GEMINI_CALLS_PER_RAW_BATCH) {
+        console.log(`Raw-vector budget checkpoint reached at chunk ${i}/${chunks.length}`);
+        break;
+      }
       const batch = chunks.slice(i, i + BATCH_SIZE);
       const result = await callIngest({ action: "upsert", chunks: batch }, ingestToken);
       if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
@@ -458,11 +478,16 @@ async function processPdf(
           `Ingestion endpoint raw embedding version mismatch: expected ${RAW_EMBEDDING_VERSION}, got ${String(result?.rawEmbeddingVersion ?? "missing")}`
         );
       }
+      rawIds.push(...batch.map((chunk) => chunk.id));
+      nextRawChunk = i + batch.length;
+      if (typeof onRawProgress === "function") {
+        await onRawProgress({ ids: [...rawIds], nextChunk: nextRawChunk });
+      }
       console.log(`Upserted ${result.upserted} chunks (${Math.min(i + BATCH_SIZE, chunks.length)}/${chunks.length})`);
     }
   }
 
-  const mapIds = ingestMap
+  const mapResult = ingestMap
     ? await buildDocumentMap(file, pages, ingestToken, languageHint, groupHint, {
         startPage: mapStartPage,
         initialIds: initialMapIds,
@@ -470,16 +495,25 @@ async function processPdf(
       })
     : null;
   if (ingestMap) {
-    console.log(`Created ${mapIds.length} document knowledge-map nodes`);
+    console.log(`Created ${mapResult.ids.length} document knowledge-map nodes`);
   }
 
   return {
-    ids: ingestRaw ? chunks.map((chunk) => chunk.id) : null,
-    mapIds,
+    ids: ingestRaw ? rawIds : null,
+    rawComplete: !ingestRaw || nextRawChunk >= chunks.length,
+    nextRawChunk,
+    mapIds: mapResult?.ids ?? null,
+    mapComplete: mapResult?.complete ?? true,
+    mapNextPage: mapResult?.nextPage ?? null,
   };
 }
 
-async function processText(file, accessToken, ingestToken) {
+async function processText(
+  file,
+  accessToken,
+  ingestToken,
+  { rawStartChunk = 0, initialRawIds = [], onRawProgress = null } = {}
+) {
   const text = await downloadText(file.id, accessToken);
   const chunks = splitIntoChunks(text).map((part, chunkIndex) => ({
     id: vectorId(file.id, 1, chunkIndex),
@@ -494,18 +528,31 @@ async function processText(file, accessToken, ingestToken) {
     languageHint: detectLanguageHint(file.name),
     documentGroupHint: documentGroupHint(file.name),
   }));
-  ingestionBudget.assertFits(
-    estimateRawGeminiCalls(chunks.length),
-    `${file.name} raw-vector phase`,
-  );
-  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-    const result = await callIngest({ action: "upsert", chunks: chunks.slice(i, i + BATCH_SIZE) }, ingestToken);
+  const ids = Array.isArray(initialRawIds) ? [...initialRawIds] : [];
+  let nextRawChunk = Math.max(0, rawStartChunk);
+  for (let i = nextRawChunk; i < chunks.length; i += BATCH_SIZE) {
+    if (ingestionBudget.snapshot().remaining < GEMINI_CALLS_PER_RAW_BATCH) {
+      console.log(`Raw-vector budget checkpoint reached at chunk ${i}/${chunks.length}`);
+      break;
+    }
+    const batch = chunks.slice(i, i + BATCH_SIZE);
+    const result = await callIngest({ action: "upsert", chunks: batch }, ingestToken);
     if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
       throw new Error("Ingestion endpoint raw embedding version mismatch");
     }
+    ids.push(...batch.map((chunk) => chunk.id));
+    nextRawChunk = i + batch.length;
+    if (typeof onRawProgress === "function") {
+      await onRawProgress({ ids: [...ids], nextChunk: nextRawChunk });
+    }
   }
-  console.log(`Indexed ${chunks.length} text chunks from ${file.sourcePath}`);
-  return { ids: chunks.map((chunk) => chunk.id), mapIds: [] };
+  console.log(`Indexed ${nextRawChunk}/${chunks.length} text chunks from ${file.sourcePath}`);
+  return {
+    ids,
+    rawComplete: nextRawChunk >= chunks.length,
+    nextRawChunk,
+    mapIds: [],
+  };
 }
 
 async function main() {
@@ -537,6 +584,7 @@ async function main() {
       const oldIds = Array.from(
         new Set([
           ...(Array.isArray(old.ids) ? old.ids : []),
+          ...(Array.isArray(old.partialRawIds) ? old.partialRawIds : []),
           ...(Array.isArray(old.mapIds) ? old.mapIds : []),
           ...(Array.isArray(old.partialMapIds) ? old.partialMapIds : []),
         ])
@@ -549,16 +597,10 @@ async function main() {
     }
   }
 
-  const changed = prioritizeChangedFiles(files.filter((file) => {
-    const previous = scope.files[file.id];
-    const currentFingerprint = fingerprint(file);
-    return (
-      needsRawBackfill(previous, currentFingerprint, Boolean(TARGET_FILE_ID)) ||
-      needsMapBackfill(previous, currentFingerprint, Boolean(TARGET_FILE_ID))
-    );
-  }));
+  const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST);
+  const changed = plan.files;
   console.log(
-    `${changed.length} PDF files are new, changed, or need raw/document-map backfill`
+    `${changed.length} document(s) need the ${plan.phase} phase; raw indexing is completed across the archive before document-map enrichment begins`
   );
 
   const selected = changed.slice(0, Math.max(0, MAX_FILES));
@@ -567,16 +609,8 @@ async function main() {
     const previous = scope.files[file.id] || {};
     const currentFingerprint = fingerprint(file);
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
-    const needsRaw = needsRawBackfill(
-      previous,
-      currentFingerprint,
-      Boolean(TARGET_FILE_ID)
-    );
-    const needsMap = needsMapBackfill(
-      previous,
-      currentFingerprint,
-      Boolean(TARGET_FILE_ID)
-    );
+    const needsRaw = plan.phase === "raw";
+    const needsMap = plan.phase === "map";
 
     const next = {
       ...previous,
@@ -587,13 +621,69 @@ async function main() {
 
     if (needsRaw) {
       console.log(`Raw-vector backfill required for ${file.name}`);
+      const canResumeRaw =
+        previous.partialRawEmbeddingVersion === RAW_EMBEDDING_VERSION &&
+        previous.partialRawFingerprint === currentFingerprint &&
+        Array.isArray(previous.partialRawIds) &&
+        Number.isInteger(previous.rawNextChunk) &&
+        previous.rawNextChunk > 0;
+      const rawStartChunk = canResumeRaw ? previous.rawNextChunk : 0;
+      const initialRawIds = canResumeRaw ? previous.partialRawIds : [];
+
+      if (!canResumeRaw) {
+        delete next.partialRawIds;
+        delete next.partialRawEmbeddingVersion;
+        delete next.partialRawFingerprint;
+        delete next.rawNextChunk;
+        delete next.rawProgressAt;
+      }
+
       const indexedRaw = await (isText
-        ? processText(file, accessToken, ingestToken)
+        ? processText(file, accessToken, ingestToken, {
+            rawStartChunk,
+            initialRawIds,
+            onRawProgress: async ({ ids, nextChunk }) => {
+              next.partialRawIds = ids;
+              next.partialRawEmbeddingVersion = RAW_EMBEDDING_VERSION;
+              next.partialRawFingerprint = currentFingerprint;
+              next.rawNextChunk = nextChunk;
+              next.rawProgressAt = new Date().toISOString();
+              scope.files[file.id] = next;
+              state.scopes[DRIVE_FOLDER_ID] = scope;
+              await saveState(state);
+            },
+          })
         : processPdf(file, accessToken, ingestToken, {
-        ingestRaw: true,
-        ingestMap: false,
-      }));
+            ingestRaw: true,
+            ingestMap: false,
+            rawStartChunk,
+            initialRawIds,
+            onRawProgress: async ({ ids, nextChunk }) => {
+              next.partialRawIds = ids;
+              next.partialRawEmbeddingVersion = RAW_EMBEDDING_VERSION;
+              next.partialRawFingerprint = currentFingerprint;
+              next.rawNextChunk = nextChunk;
+              next.rawProgressAt = new Date().toISOString();
+              scope.files[file.id] = next;
+              state.scopes[DRIVE_FOLDER_ID] = scope;
+              await saveState(state);
+            },
+          }));
       const newIds = Array.isArray(indexedRaw.ids) ? indexedRaw.ids : [];
+
+      if (!indexedRaw.rawComplete) {
+        next.partialRawIds = newIds;
+        next.partialRawEmbeddingVersion = RAW_EMBEDDING_VERSION;
+        next.partialRawFingerprint = currentFingerprint;
+        next.rawNextChunk = indexedRaw.nextRawChunk;
+        next.rawProgressAt = new Date().toISOString();
+        scope.files[file.id] = next;
+        state.scopes[DRIVE_FOLDER_ID] = scope;
+        await saveState(state);
+        console.log(`Raw-vector progress checkpoint saved for ${file.name}`);
+        continue;
+      }
+
       const newIdSet = new Set(newIds);
       const staleRawIds = (Array.isArray(previous.ids) ? previous.ids : []).filter(
         (id) => !newIdSet.has(id)
@@ -604,6 +694,11 @@ async function main() {
       next.rawEmbeddingVersion = RAW_EMBEDDING_VERSION;
       next.rawFingerprint = currentFingerprint;
       next.rawIndexedAt = new Date().toISOString();
+      delete next.partialRawIds;
+      delete next.partialRawEmbeddingVersion;
+      delete next.partialRawFingerprint;
+      delete next.rawNextChunk;
+      delete next.rawProgressAt;
       scope.files[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
@@ -669,6 +764,19 @@ async function main() {
         },
       });
       const newMapIds = Array.isArray(indexedMap.mapIds) ? indexedMap.mapIds : [];
+
+      if (!indexedMap.mapComplete) {
+        next.partialMapIds = newMapIds;
+        next.partialMapVersion = DOCUMENT_MAP_VERSION;
+        next.partialMapFingerprint = currentFingerprint;
+        next.mapNextPage = indexedMap.mapNextPage;
+        next.mapProgressAt = new Date().toISOString();
+        scope.files[file.id] = next;
+        state.scopes[DRIVE_FOLDER_ID] = scope;
+        await saveState(state);
+        console.log(`Document-map progress checkpoint saved for ${file.name}`);
+        continue;
+      }
       const newMapIdSet = new Set(newMapIds);
       const staleMapIds = Array.from(
         new Set([
@@ -725,5 +833,6 @@ export {
   needsMapBackfill,
   needsRawBackfill,
   createIngestionCallBudget,
+  createIngestionPlan,
   estimateRawGeminiCalls,
 };

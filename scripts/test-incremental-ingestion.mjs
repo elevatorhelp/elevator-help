@@ -3,6 +3,7 @@ import {
   RAW_EMBEDDING_VERSION,
   fingerprint,
   createIngestionCallBudget,
+  createIngestionPlan,
   estimateRawGeminiCalls,
   needsMapBackfill,
   needsRawBackfill,
@@ -68,6 +69,37 @@ if (
   !needsMapBackfill(current, "abc123", true)
 ) {
   throw new Error("A bounded forced reingestion must rebuild both layers");
+}
+
+const genericFiles = [
+  { id: "z", name: "EN 81-20.pdf", sourcePath: "standards/EN 81-20.pdf", md5Checksum: "z" },
+  { id: "a", name: "Any Topic.pdf", sourcePath: "manuals/Any Topic.pdf", md5Checksum: "a" },
+];
+const rawFirst = createIngestionPlan(genericFiles, {
+  z: {
+    rawFingerprint: "z",
+    rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
+    ids: ["raw-z"],
+  },
+});
+if (rawFirst.phase !== "raw" || rawFirst.files[0]?.id !== "a") {
+  throw new Error("Archive planning must prioritize missing raw coverage generically");
+}
+
+const mapAfterRaw = createIngestionPlan(genericFiles, {
+  z: {
+    rawFingerprint: "z",
+    rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
+    ids: ["raw-z"],
+  },
+  a: {
+    rawFingerprint: "a",
+    rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
+    ids: ["raw-a"],
+  },
+});
+if (mapAfterRaw.phase !== "map" || mapAfterRaw.files.length !== 2) {
+  throw new Error("Document-map enrichment must begin only after raw archive coverage");
 }
 
 console.log("PASS: incremental multilingual ingestion contract");

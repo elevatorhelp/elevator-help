@@ -99,3 +99,11 @@ export async function embedRetrievalQuery(
   );
   return vector;
 }
+
+export function embedRetrievalQueries(
+  texts: string[],
+  apiKey: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<number[][]> {
+  return embeddingRequest(texts, "RETRIEVAL_QUERY", apiKey, fetchImpl);
+}

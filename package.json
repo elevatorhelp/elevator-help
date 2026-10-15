@@ -12,6 +12,12 @@
     "test:incremental-ingestion": "node scripts/test-incremental-ingestion.mjs",
     "test:multilingual-retrieval": "node --experimental-strip-types scripts/test-multilingual-retrieval.ts",
     "test:standards-presentation": "node --experimental-strip-types scripts/test-standards-presentation.ts",
+    "test:cortex-standards": "node --experimental-strip-types scripts/test-cortex-standards.ts",
+    "test:domain-pack": "node --experimental-strip-types scripts/test-domain-pack.ts",
+    "test:cortex-evidence-policy": "node --experimental-strip-types scripts/test-cortex-evidence-policy.ts",
+    "test:daily-question-quota": "node --experimental-strip-types scripts/test-daily-question-quota.ts",
+    "test:cortex-learning": "node --experimental-strip-types scripts/test-cortex-learning.ts",
+    "test:safe-markdown": "node --experimental-strip-types scripts/test-safe-markdown.ts",
     "build": "next build --webpack",
     "cf:build": "opennextjs-cloudflare build",
     "deploy": "opennextjs-cloudflare build && wrangler deploy"

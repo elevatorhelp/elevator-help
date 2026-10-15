@@ -14,6 +14,10 @@ import {
   useState,
 } from "react";
 import { conversationBeforeMessage } from "./lib/conversation-edit";
+import {
+  parseSafeMarkdown,
+  type InlineToken,
+} from "./lib/safe-markdown";
 
 const authUiEnabled = Boolean(
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
@@ -34,6 +38,57 @@ type ChatMessage = {
   disclosure?: string;
   mode?: string;
 };
+
+function InlineMarkdown({ tokens }: { tokens: InlineToken[] }) {
+  return tokens.map((token, index) => {
+    const key = `${token.type}-${index}`;
+    if (token.type === "strong") return <strong key={key}>{token.value}</strong>;
+    if (token.type === "emphasis") return <em key={key}>{token.value}</em>;
+    if (token.type === "code") return <code key={key}>{token.value}</code>;
+    if (token.type === "link") {
+      return (
+        <a key={key} href={token.href} target="_blank" rel="noreferrer">
+          {token.value}
+        </a>
+      );
+    }
+    return <span key={key}>{token.value}</span>;
+  });
+}
+
+function AssistantMessage({ text }: { text: string }) {
+  return (
+    <div className="messageText assistantMarkdown">
+      {parseSafeMarkdown(text).map((block, index) => {
+        const content = <InlineMarkdown tokens={block.tokens} />;
+        if (block.type === "heading") {
+          return (
+            <div className={`markdownHeading level${block.level}`} key={index}>
+              {content}
+            </div>
+          );
+        }
+        if (block.type === "bullet" || block.type === "numbered") {
+          return (
+            <div className={`markdownListItem ${block.type}`} key={index}>
+              <span className="markdownMarker" aria-hidden="true">
+                {block.type === "bullet" ? "•" : `${block.marker}.`}
+              </span>
+              <span>{content}</span>
+            </div>
+          );
+        }
+        return block.tokens.length === 1 && block.tokens[0].value === "" ? (
+          <div className="markdownSpacer" key={index} aria-hidden="true" />
+        ) : (
+          <div className="markdownParagraph" key={index}>
+            {content}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const quickPrompts = [
   {
@@ -432,6 +487,10 @@ function ChatExperience({
   const [error, setError] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [editingText, setEditingText] = useState("");
+  const [dailyQuestions, setDailyQuestions] = useState<{
+    limit: number;
+    remaining: number;
+  } | null>(null);
 
   const hasConversation = messages.length > 0;
 
@@ -494,6 +553,16 @@ function ChatExperience({
       });
 
       const data: any = await response.json();
+
+      if (
+        Number.isInteger(data?.dailyQuestions?.limit) &&
+        Number.isInteger(data?.dailyQuestions?.remaining)
+      ) {
+        setDailyQuestions({
+          limit: data.dailyQuestions.limit,
+          remaining: data.dailyQuestions.remaining,
+        });
+      }
 
       if (!response.ok) {
         throw new Error(
@@ -646,6 +715,13 @@ function ChatExperience({
               disabled={!canAsk || authLoading}
             />
 
+            {dailyQuestions && (
+              <div className="dailyQuota">
+                {dailyQuestions.remaining} of {dailyQuestions.limit} questions
+                remaining today
+              </div>
+            )}
+
             {!canAsk && !authLoading && (
               <div className="authGate">
                 <strong>Sign in to use elevator.help</strong>
@@ -757,7 +833,11 @@ function ChatExperience({
                   </form>
                 ) : (
                   <>
-                    <div className="messageText">{message.text}</div>
+                    {message.role === "assistant" ? (
+                      <AssistantMessage text={message.text} />
+                    ) : (
+                      <div className="messageText">{message.text}</div>
+                    )}
                     {message.role === "user" && canAsk && !loading && (
                       <button
                         type="button"
@@ -813,6 +893,13 @@ function ChatExperience({
               disabled={!canAsk || authLoading}
               compact
             />
+
+            {dailyQuestions && (
+              <div className="dailyQuota">
+                {dailyQuestions.remaining} of {dailyQuestions.limit} questions
+                remaining today
+              </div>
+            )}
 
             <div className="composerDisclaimer">
               Technical guidance should be verified
@@ -899,6 +986,13 @@ function ChatExperience({
 
         .authGate strong {
           color: #1e2b24;
+        }
+
+        .dailyQuota {
+          margin-top: 8px;
+          color: #6d7872;
+          font-size: 12px;
+          text-align: center;
         }
 
         .authGate .authControls.prominent {
@@ -1402,6 +1496,46 @@ function ChatExperience({
           white-space: pre-wrap;
           font-size: 15px;
           line-height: 1.72;
+        }
+
+        .assistantMarkdown {
+          white-space: normal;
+        }
+
+        .markdownParagraph,
+        .markdownHeading,
+        .markdownListItem {
+          margin: 0 0 0.55rem;
+        }
+
+        .markdownHeading {
+          font-weight: 750;
+          line-height: 1.3;
+        }
+
+        .markdownHeading.level1 { font-size: 1.2em; }
+        .markdownHeading.level2 { font-size: 1.1em; }
+        .markdownHeading.level3 { font-size: 1em; }
+
+        .markdownListItem {
+          display: grid;
+          grid-template-columns: 1.2rem 1fr;
+          gap: 0.2rem;
+        }
+
+        .markdownMarker {
+          color: #6f7a73;
+        }
+
+        .markdownSpacer {
+          height: 0.45rem;
+        }
+
+        .assistantMarkdown code {
+          padding: 0.08rem 0.28rem;
+          border-radius: 0.3rem;
+          background: rgba(20, 92, 55, 0.08);
+          font-size: 0.92em;
         }
 
         .sources {
