@@ -1,6 +1,8 @@
+import { extractStandardCodes } from "./standard-identifiers.ts";
+
 export function requiresStandardSafetyCheck(question: string) {
   const explicitStandard =
-    /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
+    extractStandardCodes(question).length > 0 ||
     /\b(DIN\s*)?(norm|normen|standard|standards|norma|normas)\b/i.test(question) ||
     /(استاندارد|نورم|نُرم)/i.test(question);
   const bindingValue =

@@ -38,6 +38,7 @@ const MAP_PAGES_PER_BATCH = 6;
 const MAX_MAP_PAGE_TEXT = 7000;
 const DOCUMENT_MAP_VERSION = 4;
 const RAW_EMBEDDING_VERSION = 3;
+const ARCHIVE_INDEX_VERSION = 1;
 const GEMINI_CALLS_PER_RAW_BATCH = 2;
 const GEMINI_CALLS_PER_MAP_WINDOW = 3;
 const MAX_GEMINI_CALLS = Number(process.env.MAX_GEMINI_CALLS || "30");
@@ -219,6 +220,11 @@ function prioritizeChangedFiles(files) {
 
 function createIngestionPlan(files, records = {}, force = false) {
   const ordered = prioritizeChangedFiles(files);
+  const evidence = ordered.filter((file) =>
+    needsEvidenceBackfill(records[file.id], fingerprint(file), force)
+  );
+  if (evidence.length) return { phase: "evidence", files: evidence };
+
   const raw = ordered.filter((file) =>
     needsRawBackfill(records[file.id], fingerprint(file), force)
   );
@@ -296,6 +302,15 @@ function needsRawBackfill(previous, currentFingerprint, force = false) {
   );
 }
 
+function needsEvidenceBackfill(previous, currentFingerprint, force = false) {
+  return Boolean(
+    force ||
+      previous?.evidenceFingerprint !== currentFingerprint ||
+      previous?.archiveIndexVersion !== ARCHIVE_INDEX_VERSION ||
+      !Array.isArray(previous?.evidenceIds)
+  );
+}
+
 function needsMapBackfill(previous, currentFingerprint, force = false) {
   const mapFingerprint = previous?.mapFingerprint ?? previous?.fingerprint;
   return Boolean(
@@ -352,6 +367,61 @@ async function deleteIds(ids, token) {
   for (let i = 0; i < ids.length; i += 100) {
     await callIngest({ action: "delete", ids: ids.slice(i, i + 100) }, token);
   }
+}
+
+async function processEvidenceIndex(file, accessToken, ingestToken) {
+  const languageHint = detectLanguageHint(file.name);
+  const groupHint = documentGroupHint(file.name);
+  let pages;
+  if (file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase())) {
+    pages = [await downloadText(file.id, accessToken)];
+  } else {
+    console.log(`Downloading ${file.sourcePath}`);
+    const original = await downloadDocument(file, accessToken);
+    const bytes = file.mimeType === "application/pdf" || GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType)
+      ? original
+      : await officeToPdf(file, original);
+    const pdf = await getDocumentProxy(bytes, { maxImageSize: 16_777_216 });
+    const extracted = await extractText(pdf, { mergePages: false });
+    pages = Array.isArray(extracted.text) ? extracted.text : [extracted.text];
+  }
+
+  const chunks = [];
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+    const pageChunks = splitIntoChunks(pages[pageIndex]);
+    for (let chunkIndex = 0; chunkIndex < pageChunks.length; chunkIndex++) {
+      chunks.push({
+        id: vectorId(file.id, pageIndex + 1, chunkIndex),
+        text: pageChunks[chunkIndex],
+        sourceFileId: file.id,
+        fileName: file.name,
+        sourcePath: file.sourcePath,
+        page: pageIndex + 1,
+        chunkIndex,
+        modifiedTime: file.modifiedTime || undefined,
+        sourceFingerprint: fingerprint(file),
+        languageHint,
+        documentGroupHint: groupHint,
+      });
+    }
+  }
+
+  for (let index = 0; index < chunks.length; index += BATCH_SIZE) {
+    const batch = chunks.slice(index, index + BATCH_SIZE);
+    const result = await callJsonEndpoint(
+      INGEST_ENDPOINT,
+      { action: "index_evidence", chunks: batch },
+      ingestToken,
+      "Archive evidence endpoint",
+    );
+    if (result?.archiveIndexVersion !== ARCHIVE_INDEX_VERSION) {
+      throw new Error(
+        `Archive index version mismatch: expected ${ARCHIVE_INDEX_VERSION}, got ${String(result?.archiveIndexVersion ?? "missing")}`,
+      );
+    }
+  }
+  console.log(`Indexed ${chunks.length} exact-evidence chunks without model-specific routing`);
+  return chunks.map((chunk) => chunk.id);
 }
 
 async function buildDocumentMap(
@@ -584,6 +654,7 @@ async function main() {
       const oldIds = Array.from(
         new Set([
           ...(Array.isArray(old.ids) ? old.ids : []),
+          ...(Array.isArray(old.evidenceIds) ? old.evidenceIds : []),
           ...(Array.isArray(old.partialRawIds) ? old.partialRawIds : []),
           ...(Array.isArray(old.mapIds) ? old.mapIds : []),
           ...(Array.isArray(old.partialMapIds) ? old.partialMapIds : []),
@@ -600,7 +671,7 @@ async function main() {
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST);
   const changed = plan.files;
   console.log(
-    `${changed.length} document(s) need the ${plan.phase} phase; raw indexing is completed across the archive before document-map enrichment begins`
+    `${changed.length} document(s) need the ${plan.phase} phase; exact evidence, semantic vectors and document maps advance archive-wide without file-specific routing`
   );
 
   const selected = changed.slice(0, Math.max(0, MAX_FILES));
@@ -609,6 +680,7 @@ async function main() {
     const previous = scope.files[file.id] || {};
     const currentFingerprint = fingerprint(file);
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
+    const needsEvidence = plan.phase === "evidence";
     const needsRaw = plan.phase === "raw";
     const needsMap = plan.phase === "map";
 
@@ -618,6 +690,25 @@ async function main() {
       sourcePath: file.sourcePath,
       modifiedTime: file.modifiedTime || null,
     };
+
+    if (needsEvidence) {
+      console.log(`Exact-evidence index backfill required for ${file.name}`);
+      const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken);
+      const evidenceIdSet = new Set(evidenceIds);
+      const staleEvidenceIds = (Array.isArray(previous.evidenceIds)
+        ? previous.evidenceIds
+        : []
+      ).filter((id) => !evidenceIdSet.has(id));
+      if (staleEvidenceIds.length) await deleteIds(staleEvidenceIds, ingestToken);
+      next.evidenceIds = evidenceIds;
+      next.archiveIndexVersion = ARCHIVE_INDEX_VERSION;
+      next.evidenceFingerprint = currentFingerprint;
+      next.evidenceIndexedAt = new Date().toISOString();
+      scope.files[file.id] = next;
+      state.scopes[DRIVE_FOLDER_ID] = scope;
+      await saveState(state);
+      console.log(`Exact-evidence checkpoint saved for ${file.name}`);
+    }
 
     if (needsRaw) {
       console.log(`Raw-vector backfill required for ${file.name}`);
@@ -827,10 +918,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 
 export {
+  ARCHIVE_INDEX_VERSION,
   DOCUMENT_MAP_VERSION,
   RAW_EMBEDDING_VERSION,
   fingerprint,
   needsMapBackfill,
+  needsEvidenceBackfill,
   needsRawBackfill,
   createIngestionCallBudget,
   createIngestionPlan,

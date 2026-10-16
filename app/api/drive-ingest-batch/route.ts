@@ -12,6 +12,10 @@ import {
   createGeminiCallBudget,
   type FetchLike,
 } from "../../lib/gemini-cost-control";
+import {
+  extractClauseNumbers,
+} from "../../lib/standard-identifiers";
+import { extractReferenceIdentifiers } from "../../lib/reference-identifiers";
 
 type IncomingChunk = {
   id: string;
@@ -44,6 +48,103 @@ const MAX_BATCH_SIZE = 8;
 const MAX_TEXT_LENGTH = 5000;
 const MAX_RETRIEVAL_CONTEXT_LENGTH = 700;
 const RAW_EMBEDDING_VERSION = MULTILINGUAL_EMBEDDING_VERSION;
+const ARCHIVE_INDEX_VERSION = 1;
+
+async function runD1Batch(db: any, statements: any[]) {
+  for (let index = 0; index < statements.length; index += 80) {
+    await db.batch(statements.slice(index, index + 80));
+  }
+}
+
+async function removeArchiveChunks(db: any, ids: string[]) {
+  if (!db || !ids.length) return;
+  const statements = ids.flatMap((id) => [
+    db.prepare("DELETE FROM archive_chunk_identifiers WHERE chunk_id = ?").bind(id),
+    db.prepare("DELETE FROM archive_chunk_clauses WHERE chunk_id = ?").bind(id),
+    db.prepare("DELETE FROM archive_chunks WHERE id = ?").bind(id),
+  ]);
+  await runD1Batch(db, statements);
+}
+
+async function indexArchiveChunks(
+  db: any,
+  chunks: IncomingChunk[],
+  enriched: EnrichedMetadata[],
+) {
+  if (!db) throw new Error("Archive evidence index is not configured");
+  const now = Date.now();
+  const statements: any[] = [];
+  chunks.forEach((chunk, index) => {
+    const metadata = enriched[index];
+    const sourceLabels = [
+      ...chunk.sourcePath.split(/[\\/]/g),
+      chunk.fileName.replace(/\.[^.]+$/i, ""),
+      chunk.documentGroupHint,
+      metadata?.manufacturer,
+      metadata?.controller,
+      metadata?.faultFamily,
+      metadata?.faultCode,
+      metadata?.faultName,
+      metadata?.documentGroup,
+    ];
+    const identifiers = extractReferenceIdentifiers(chunk.text, sourceLabels);
+    const clauses = extractClauseNumbers(chunk.text);
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO archive_chunks
+            (id, text, source_file_id, file_name, source_path, page, chunk_index,
+             content_type, source_fingerprint, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             text = excluded.text,
+             source_file_id = excluded.source_file_id,
+             file_name = excluded.file_name,
+             source_path = excluded.source_path,
+             page = excluded.page,
+             chunk_index = excluded.chunk_index,
+             content_type = excluded.content_type,
+             source_fingerprint = excluded.source_fingerprint,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(
+          chunk.id,
+          chunk.text,
+          chunk.sourceFileId,
+          chunk.fileName,
+          chunk.sourcePath,
+          chunk.page,
+          chunk.chunkIndex,
+          metadata?.contentType || null,
+          chunk.sourceFingerprint || null,
+          now,
+        ),
+      db.prepare("DELETE FROM archive_chunk_identifiers WHERE chunk_id = ?").bind(chunk.id),
+      db.prepare("DELETE FROM archive_chunk_clauses WHERE chunk_id = ?").bind(chunk.id),
+    );
+    for (const identifier of identifiers) {
+      statements.push(
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO archive_chunk_identifiers
+              (chunk_id, identifier_key, identifier_label) VALUES (?, ?, ?)`,
+          )
+          .bind(chunk.id, identifier.key, identifier.label),
+      );
+    }
+    for (const clause of clauses) {
+      statements.push(
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO archive_chunk_clauses
+              (chunk_id, clause_key) VALUES (?, ?)`,
+          )
+          .bind(chunk.id, clause),
+      );
+    }
+  });
+  await runD1Batch(db, statements);
+}
 
 function unauthorized() {
   return NextResponse.json(
@@ -254,13 +355,16 @@ export async function POST(request: NextRequest) {
     const { env } = getCloudflareContext();
     const vectorize = (env as any).VECTORIZE;
     const vectorizeV2 = (env as any).VECTORIZE_V2;
+    const archiveDb = (env as any).CORTEX_DB;
 
     if (action === "status") {
       return NextResponse.json({
         ok: true,
         rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
+        archiveIndexVersion: ARCHIVE_INDEX_VERSION,
         legacyConfigured: Boolean(vectorize),
         multilingualConfigured: Boolean(vectorizeV2),
+        archiveIndexConfigured: Boolean(archiveDb),
       });
     }
 
@@ -283,6 +387,7 @@ export async function POST(request: NextRequest) {
         vectorize.deleteByIds(ids),
         vectorizeV2.deleteByIds(ids),
       ]);
+      await removeArchiveChunks(archiveDb, ids);
       return NextResponse.json({ ok: true, deleted: ids.length });
     }
 
@@ -320,6 +425,31 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+    }
+
+    if (action === "index_evidence") {
+      await indexArchiveChunks(
+        archiveDb,
+        chunks,
+        chunks.map((chunk) => ({
+          id: chunk.id,
+          manufacturer: null,
+          controller: null,
+          contentType: "general",
+          faultFamily: null,
+          faultCode: null,
+          faultName: null,
+          language: chunk.languageHint || null,
+          documentGroup: chunk.documentGroupHint || null,
+          retrievalContext: null,
+        })),
+      );
+      return NextResponse.json({
+        ok: true,
+        indexed: chunks.length,
+        archiveIndexVersion: ARCHIVE_INDEX_VERSION,
+        ids: chunks.map((chunk) => chunk.id),
+      });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -399,11 +529,13 @@ export async function POST(request: NextRequest) {
 
     await vectorize.upsert(legacyVectors);
     await vectorizeV2.upsert(multilingualVectors);
+    await indexArchiveChunks(archiveDb, chunks, enriched);
 
     return NextResponse.json({
       ok: true,
       upserted: multilingualVectors.length,
       rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
+      archiveIndexVersion: ARCHIVE_INDEX_VERSION,
       ids: multilingualVectors.map((vector) => vector.id),
       enrichment: enriched.map(
         ({ retrievalContext: _retrievalContext, ...metadata }) => metadata,

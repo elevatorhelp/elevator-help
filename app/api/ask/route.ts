@@ -380,6 +380,8 @@ async function retrieveFaultEvidenceWithoutGemini(question: string) {
     route,
     (env as any).AI,
     (env as any).VECTORIZE,
+    undefined,
+    (env as any).CORTEX_DB,
   );
   const exact = evidence.find(
     (item) =>
@@ -579,6 +581,7 @@ export async function POST(request: NextRequest) {
             multilingualRetrievalFromEnv(env, key, retrievalFetch),
             geminiFetch,
             retrievalFetch,
+            (env as any).CORTEX_DB,
           );
           if (result.sufficient)
             return answerJson({
@@ -653,6 +656,7 @@ export async function POST(request: NextRequest) {
             multilingualRetrievalFromEnv(env, key, retrievalFetch),
             geminiFetch,
             retrievalFetch,
+            (env as any).CORTEX_DB,
           );
           if (route?.intent === "standard") {
             if (result.sufficient)
@@ -702,6 +706,7 @@ export async function POST(request: NextRequest) {
             (env as any).AI,
             (env as any).VECTORIZE,
             multilingualRetrievalFromEnv(env, key, retrievalFetch),
+            (env as any).CORTEX_DB,
           );
           if (evidence.length) {
             const excerpts = evidence

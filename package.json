@@ -13,6 +13,7 @@
     "test:multilingual-retrieval": "node --experimental-strip-types scripts/test-multilingual-retrieval.ts",
     "test:standards-presentation": "node --experimental-strip-types scripts/test-standards-presentation.ts",
     "test:cortex-standards": "node --experimental-strip-types scripts/test-cortex-standards.ts",
+    "test:reference-index": "node --experimental-strip-types scripts/test-reference-index.ts",
     "test:domain-pack": "node --experimental-strip-types scripts/test-domain-pack.ts",
     "test:cortex-evidence-policy": "node --experimental-strip-types scripts/test-cortex-evidence-policy.ts",
     "test:daily-question-quota": "node --experimental-strip-types scripts/test-daily-question-quota.ts",

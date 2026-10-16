@@ -1,5 +1,11 @@
+// Reference discovery is deliberately syntax-based rather than a catalogue of
+// known standards. This keeps the retrieval core independent of an industry,
+// publisher, document number, folder, or filename convention. Examples that
+// share this shape include standards, regulations and technical specifications.
 const STANDARD_PATTERN =
-  /\b(?:(?:DIN|BS|SN|ÖNORM|OENORM)\s+)?(?:EN|ISO|IEC|ASME)\s*\d+(?:\s*[-:]\s*\d+)+(?:\s*[-:]\s*\d{4})?\b/giu;
+  /\b(?:[A-ZÖ]{2,12}(?:[\s_-]+[A-ZÖ]{2,12}){0,2})[\s_-]*\d{1,6}(?:(?:\s*[-–—/:]\s*)\d{1,6}){1,5}\b/gu;
+const COMPACT_LOWERCASE_STANDARD_PATTERN =
+  /\b[a-zö]{2,12}\d{1,6}(?:(?:\s*[-–—/:]\s*)\d{1,6}){1,5}\b/gu;
 
 const CLAUSE_PATTERN = /\b\d+(?:\.\d+){1,6}\b/g;
 
@@ -7,8 +13,11 @@ export function normalizeStandardCode(value: string) {
   return value
     .toUpperCase()
     .replace(/Ö/g, "O")
+    .replace(/_/g, " ")
+    .replace(/([A-Z])(?=\d)/g, "$1 ")
+    .replace(/[–—/]/g, "-")
     .replace(/\s+/g, " ")
-    .replace(/\s*([-:])\s*/g, "$1")
+    .replace(/\s*([:-])\s*/g, "$1")
     .trim();
 }
 
@@ -18,7 +27,10 @@ export function standardCodeKey(value: string) {
 
 export function extractStandardCodes(value: unknown) {
   if (typeof value !== "string") return [] as string[];
-  const matches = value.match(STANDARD_PATTERN) || [];
+  const matches = [
+    ...(value.match(STANDARD_PATTERN) || []),
+    ...(value.match(COMPACT_LOWERCASE_STANDARD_PATTERN) || []),
+  ];
   return [...new Set(matches.map(normalizeStandardCode))];
 }
 

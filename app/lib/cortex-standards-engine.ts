@@ -8,6 +8,8 @@ import {
   extractStandardCodes,
   standardCodesMatch,
 } from "./standard-identifiers.ts";
+import { searchArchiveEvidenceIndex } from "./archive-evidence-index.ts";
+import { standardReferenceIdentifiers } from "./reference-identifiers.ts";
 
 type Evidence = {
   id: string;
@@ -82,6 +84,56 @@ function evidenceFromMatch(match: any): Evidence | null {
   };
 }
 
+function evidenceFromArchiveRow(row: any): Evidence | null {
+  const text = String(row?.text || "").trim();
+  if (!text) return null;
+  const sourceName = [row?.file_name, row?.source_path]
+    .filter(Boolean)
+    .join(" ");
+  const labels = String(row?.identifier_labels || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const standardCodes = [
+    ...new Set([...labels, ...extractStandardCodes(`${sourceName} ${text}`)]),
+  ];
+  if (!standardCodes.length) return null;
+  return {
+    id: String(row?.id || ""),
+    text,
+    score: 2,
+    standardCodes,
+    sourceName,
+    page: Number.isFinite(Number(row?.page)) ? Number(row.page) : null,
+    sourceFingerprint:
+      typeof row?.source_fingerprint === "string"
+        ? row.source_fingerprint
+        : null,
+  };
+}
+
+async function searchExactArchiveEvidence(
+  requested: string[],
+  requestedClauses: string[],
+  archiveDb?: any,
+) {
+  if (!archiveDb || !requested.length) return [] as Evidence[];
+  try {
+    const rows = await searchArchiveEvidenceIndex(
+      archiveDb,
+      standardReferenceIdentifiers(requested),
+      requestedClauses,
+      60,
+    );
+    return rows
+      .map(evidenceFromArchiveRow)
+      .filter((item: Evidence | null): item is Evidence => Boolean(item));
+  } catch (error) {
+    console.warn("Cortex exact archive index unavailable", error);
+    return [] as Evidence[];
+  }
+}
+
 function belongsToRequestedStandard(
   evidence: Evidence,
   requested: string[],
@@ -119,15 +171,22 @@ async function searchEvidence(
   ai: any,
   vectorize: any,
   multilingual?: MultilingualRetrieval,
+  archiveDb?: any,
 ) {
   const requested = extractStandardCodes(question);
-  const queries = buildQueries(question, route);
-  const backends = await createQueryBackends(
-    queries,
-    ai,
-    vectorize,
-    multilingual,
+  const requestedClauses = extractClauseNumbers(question);
+  const exactEvidence = await searchExactArchiveEvidence(
+    requested,
+    requestedClauses,
+    archiveDb,
   );
+  const queries = buildQueries(question, route);
+  // Exact identifiers plus a clause form a deterministic archive address. The
+  // model never needs to know a file/folder address; the index resolves it. If
+  // that address produced evidence, avoid a noisy semantic search entirely.
+  const backends = exactEvidence.length
+    ? []
+    : await createQueryBackends(queries, ai, vectorize, multilingual);
   const matches: any[] = [];
   const seen = new Set<string>();
 
@@ -167,9 +226,7 @@ async function searchEvidence(
     }
   }
 
-  const requestedClauses = extractClauseNumbers(question);
-  const evidence = matches
-    .map(evidenceFromMatch)
+  const evidence = [...exactEvidence, ...matches.map(evidenceFromMatch)]
     .filter((item): item is Evidence => Boolean(item))
     .filter((item) => belongsToRequestedStandard(item, requested))
     .sort((a, b) => {
@@ -278,6 +335,7 @@ export async function answerStandardsQuestion(
   multilingual?: MultilingualRetrieval,
   fetchImpl: FetchLike = fetch,
   _retrievalFetchImpl: FetchLike = fetchImpl,
+  archiveDb?: any,
 ) {
   const retrieval = await searchEvidence(
     question,
@@ -285,6 +343,7 @@ export async function answerStandardsQuestion(
     ai,
     vectorize,
     multilingual,
+    archiveDb,
   );
   if (!retrieval.evidence.length) {
     return {

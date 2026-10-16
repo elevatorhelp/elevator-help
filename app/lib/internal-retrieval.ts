@@ -3,6 +3,8 @@ import {
   createQueryBackend,
   type MultilingualRetrieval,
 } from "./retrieval-backend.ts";
+import { searchArchiveEvidenceIndex } from "./archive-evidence-index.ts";
+import { extractReferenceIdentifiers } from "./reference-identifiers.ts";
 
 export type InternalEvidence = {
   id: string;
@@ -99,10 +101,57 @@ function exactSourceCandidate(item: InternalEvidence, route: RouterResult) {
     const code = normalized(String(route.faultCode));
     const hasCode =
       normalized(item.faultCode) === code ||
-      normalized(item.text).includes(code);
+      normalized(item.text).includes(code) ||
+      normalized(item.sourceName).includes(code);
     if (!hasCode) return false;
   }
   return true;
+}
+
+async function retrieveExactArchiveEvidence(
+  query: string,
+  route: RouterResult,
+  archiveDb?: any,
+) {
+  if (!archiveDb) return [] as InternalEvidence[];
+  const identifiers = extractReferenceIdentifiers(query, [
+    route.manufacturer,
+    route.productFamily,
+    route.controller,
+    route.faultFamily,
+    route.faultCode == null ? null : String(route.faultCode),
+    route.faultName,
+  ]);
+  // One ordinary word is not an address. A structured model/code/reference,
+  // or multiple independent source labels, is enough to query the exact index.
+  if (!identifiers.some((item) => item.structured) && identifiers.length < 2)
+    return [] as InternalEvidence[];
+  try {
+    const rows = await searchArchiveEvidenceIndex(
+      archiveDb,
+      identifiers,
+      [],
+      60,
+    );
+    return rows
+      .map((row) => ({
+        id: String(row.id || ""),
+        text: String(row.text || "").trim(),
+        score: 2 + Number(row.matched_identifiers || 0) / 100,
+        manufacturer: null,
+        controller: null,
+        faultCode: null,
+        faultName: null,
+        contentType: row.content_type ?? null,
+        sourceName:
+          [row.file_name, row.source_path].filter(Boolean).join(" ") || null,
+      }))
+      .filter((item) => exactSourceCandidate(item, route))
+      .filter((item) => item.text.length > 0);
+  } catch (error) {
+    console.warn("Exact archive evidence lookup unavailable", error);
+    return [] as InternalEvidence[];
+  }
 }
 
 export function buildRetrievalQuery(query: string, route: RouterResult) {
@@ -204,18 +253,31 @@ export async function retrieveInternalEvidence(
   ai: any,
   vectorize: any,
   multilingual?: MultilingualRetrieval,
+  archiveDb?: any,
 ): Promise<InternalEvidence[]> {
   if (!shouldTryInternalRetrieval(route)) return [];
+  const exactEvidence = await retrieveExactArchiveEvidence(
+    query,
+    route,
+    archiveDb,
+  );
   const retrievalQuery =
     route.manufacturer && route.faultCode
       ? `${String(route.faultCode)} ${route.manufacturer}`
       : buildRetrievalQuery(query, route);
-  const backend = await createQueryBackend(
-    retrievalQuery,
-    ai,
-    vectorize,
-    multilingual,
-  );
+  let backend;
+  try {
+    backend = await createQueryBackend(
+      retrievalQuery,
+      ai,
+      vectorize,
+      multilingual,
+    );
+  } catch (error) {
+    if (exactEvidence.length)
+      return dedupeEvidence(exactEvidence).slice(0, 5);
+    throw error;
+  }
   const vector = backend.vector;
   vectorize = backend.vectorize;
   const options = {
@@ -240,7 +302,7 @@ export async function retrieveInternalEvidence(
     // for both the exact code and manufacturer identity.
     result = await vectorize.query(vector, options);
   }
-  const candidates = (result.matches || [])
+  const semanticCandidates = (result.matches || [])
     .filter(authoritativeCandidate)
     .map((match: any) => ({
       id: String(match?.id || ""),
@@ -265,5 +327,7 @@ export async function retrieveInternalEvidence(
       score: item.score + routeBoost(item, route),
     }))
     .sort((a: InternalEvidence, b: InternalEvidence) => b.score - a.score);
-  return dedupeEvidence(candidates).slice(0, 5);
+  return dedupeEvidence([...exactEvidence, ...semanticCandidates])
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
 }

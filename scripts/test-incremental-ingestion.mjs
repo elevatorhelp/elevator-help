@@ -1,4 +1,5 @@
 import {
+  ARCHIVE_INDEX_VERSION,
   DOCUMENT_MAP_VERSION,
   RAW_EMBEDDING_VERSION,
   fingerprint,
@@ -6,6 +7,7 @@ import {
   createIngestionPlan,
   estimateRawGeminiCalls,
   needsMapBackfill,
+  needsEvidenceBackfill,
   needsRawBackfill,
 } from "./drive-ingest.mjs";
 
@@ -25,7 +27,11 @@ if (!budgetBlocked) {
   throw new Error("Ingestion budget must stop work before exceeding its limit");
 }
 
-if (RAW_EMBEDDING_VERSION !== 3 || DOCUMENT_MAP_VERSION !== 4) {
+if (
+  ARCHIVE_INDEX_VERSION !== 1 ||
+  RAW_EMBEDDING_VERSION !== 3 ||
+  DOCUMENT_MAP_VERSION !== 4
+) {
   throw new Error("Unexpected multilingual ingestion schema versions");
 }
 
@@ -39,6 +45,9 @@ if (fingerprint(file) !== "abc123") {
 }
 
 const current = {
+  evidenceFingerprint: "abc123",
+  archiveIndexVersion: 1,
+  evidenceIds: ["evidence-1"],
   rawFingerprint: "abc123",
   rawEmbeddingVersion: 3,
   ids: ["raw-1"],
@@ -48,6 +57,7 @@ const current = {
 };
 if (
   needsRawBackfill(current, "abc123") ||
+  needsEvidenceBackfill(current, "abc123") ||
   needsMapBackfill(current, "abc123")
 ) {
   throw new Error("Unchanged current documents must not be re-embedded");
@@ -55,31 +65,49 @@ if (
 if (!needsRawBackfill({ ...current, rawEmbeddingVersion: 2 }, "abc123")) {
   throw new Error("An older embedding version must trigger raw backfill");
 }
+if (!needsEvidenceBackfill({ ...current, archiveIndexVersion: 0 }, "abc123")) {
+  throw new Error("An older exact-evidence index must trigger backfill");
+}
 if (!needsMapBackfill({ ...current, mapVersion: 3 }, "abc123")) {
   throw new Error("An older map version must trigger map backfill");
 }
 if (
   !needsRawBackfill(current, "changed") ||
+  !needsEvidenceBackfill(current, "changed") ||
   !needsMapBackfill(current, "changed")
 ) {
   throw new Error("A changed Drive fingerprint must rebuild both layers");
 }
 if (
   !needsRawBackfill(current, "abc123", true) ||
+  !needsEvidenceBackfill(current, "abc123", true) ||
   !needsMapBackfill(current, "abc123", true)
 ) {
   throw new Error("A bounded forced reingestion must rebuild both layers");
 }
 
 const genericFiles = [
-  { id: "z", name: "EN 81-20.pdf", sourcePath: "standards/EN 81-20.pdf", md5Checksum: "z" },
+  { id: "z", name: "ZX 410-22.pdf", sourcePath: "references/ZX 410-22.pdf", md5Checksum: "z" },
   { id: "a", name: "Any Topic.pdf", sourcePath: "manuals/Any Topic.pdf", md5Checksum: "a" },
 ];
+const evidenceFirst = createIngestionPlan(genericFiles, {});
+if (evidenceFirst.phase !== "evidence" || evidenceFirst.files.length !== 2) {
+  throw new Error("Every source must enter the generic exact-evidence index first");
+}
+
 const rawFirst = createIngestionPlan(genericFiles, {
   z: {
+    evidenceFingerprint: "z",
+    archiveIndexVersion: ARCHIVE_INDEX_VERSION,
+    evidenceIds: ["evidence-z"],
     rawFingerprint: "z",
     rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
     ids: ["raw-z"],
+  },
+  a: {
+    evidenceFingerprint: "a",
+    archiveIndexVersion: ARCHIVE_INDEX_VERSION,
+    evidenceIds: ["evidence-a"],
   },
 });
 if (rawFirst.phase !== "raw" || rawFirst.files[0]?.id !== "a") {
@@ -88,11 +116,17 @@ if (rawFirst.phase !== "raw" || rawFirst.files[0]?.id !== "a") {
 
 const mapAfterRaw = createIngestionPlan(genericFiles, {
   z: {
+    evidenceFingerprint: "z",
+    archiveIndexVersion: ARCHIVE_INDEX_VERSION,
+    evidenceIds: ["evidence-z"],
     rawFingerprint: "z",
     rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
     ids: ["raw-z"],
   },
   a: {
+    evidenceFingerprint: "a",
+    archiveIndexVersion: ARCHIVE_INDEX_VERSION,
+    evidenceIds: ["evidence-a"],
     rawFingerprint: "a",
     rawEmbeddingVersion: RAW_EMBEDDING_VERSION,
     ids: ["raw-a"],

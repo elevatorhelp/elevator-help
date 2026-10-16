@@ -7,6 +7,7 @@ import {
   manufacturerClarificationQuestion,
 } from "./fault-context.ts";
 import { activeDomainPack } from "./domain-pack.ts";
+import { extractStandardCodes } from "./standard-identifiers.ts";
 export type RouterResult = {
   intent:
     | "troubleshooting"
@@ -298,7 +299,7 @@ export function deterministicStandardsRoute(
   question: string,
 ): RouterResult | null {
   const explicit =
-    /\bEN\s*81\s*[-–]?\s*\d+\b/i.test(question) ||
+    extractStandardCodes(question).length > 0 ||
     /\b(DIN\s*)?(norm|normen|standard|standards|norma|normas)\b/i.test(question) ||
     /(استاندارد|نورم|نُرم)/i.test(question);
   const planning =
