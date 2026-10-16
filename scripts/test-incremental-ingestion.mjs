@@ -28,7 +28,7 @@ if (!budgetBlocked) {
 }
 
 if (
-  ARCHIVE_INDEX_VERSION !== 1 ||
+  ARCHIVE_INDEX_VERSION !== 2 ||
   RAW_EMBEDDING_VERSION !== 3 ||
   DOCUMENT_MAP_VERSION !== 4
 ) {
@@ -46,7 +46,7 @@ if (fingerprint(file) !== "abc123") {
 
 const current = {
   evidenceFingerprint: "abc123",
-  archiveIndexVersion: 1,
+  archiveIndexVersion: 2,
   evidenceIds: ["evidence-1"],
   rawFingerprint: "abc123",
   rawEmbeddingVersion: 3,

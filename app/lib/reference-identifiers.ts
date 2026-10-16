@@ -16,6 +16,8 @@ const NAMED_NUMBER =
   /\b[A-Z][A-Za-z0-9]{2,30}(?:[-_][A-Za-z0-9]{1,20})?\s+\d{2,6}(?:\s*[/:-]\s*\d{1,6})*\b/g;
 const CONTEXTUAL_IDENTIFIER =
   /(?:fault|error|code|model|type|series|part(?:\s*(?:no|number))?|fehler|störung|typ|modell|baureihe|artikel(?:nummer)?|referenz|código|modelo|tipo|خطا|کد|مدل|قطعه)\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9._:/-]{0,30})/giu;
+const HIERARCHICAL_REFERENCE =
+  /\b((?:[A-Za-zÖö]{2,12}[\s_.-]*){1,3})(\d{1,6}(?:[\s_.:/-]+\d{1,6}){1,5})\b/g;
 
 export function normalizeReferenceLabel(value: string) {
   return value
@@ -49,14 +51,34 @@ export function extractReferenceIdentifiers(
   sourceLabels: unknown[] = [],
 ) {
   const text = typeof value === "string" ? value : "";
+  const searchable = [
+    text,
+    ...sourceLabels.filter((item): item is string => typeof item === "string"),
+  ].join("\n");
   const discovered: string[] = [
-    ...extractStandardCodes(text),
-    ...(text.match(STRUCTURED_TOKEN) || []),
-    ...(text.match(NUMERIC_RELATION) || []),
-    ...(text.match(NAMED_NUMBER) || []),
+    ...extractStandardCodes(searchable),
+    ...(searchable.match(STRUCTURED_TOKEN) || []),
+    ...(searchable.match(NUMERIC_RELATION) || []),
+    ...(searchable.match(NAMED_NUMBER) || []),
   ];
-  for (const match of text.matchAll(CONTEXTUAL_IDENTIFIER)) {
+  for (const match of searchable.matchAll(CONTEXTUAL_IDENTIFIER)) {
     if (match[1]) discovered.push(match[1]);
+  }
+  // Filenames commonly append edition/date segments to a useful identifier.
+  // Emit every numeric prefix and every authority suffix so a query for the
+  // stable identifier resolves a source such as AUTH_SPEC_123_45_2026.pdf.
+  for (const match of searchable.matchAll(HIERARCHICAL_REFERENCE)) {
+    const authorities = match[1].match(/[A-Za-zÖö]{2,12}/g) || [];
+    const numbers = match[2].match(/\d{1,6}/g) || [];
+    for (let authorityStart = 0; authorityStart < authorities.length; authorityStart++) {
+      for (let numberCount = 2; numberCount <= numbers.length; numberCount++) {
+        discovered.push(
+          `${authorities.slice(authorityStart).join(" ")} ${numbers
+            .slice(0, numberCount)
+            .join("-")}`,
+        );
+      }
+    }
   }
   return referenceIdentifiersFromLabels([...discovered, ...sourceLabels]);
 }

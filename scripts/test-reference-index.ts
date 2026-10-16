@@ -12,6 +12,19 @@ for (const expected of ["NOVA5500", "DRIVEX3550", "E14", "41", "NOVA"]) {
   assert.equal(keys.has(expected), true, `Missing generic reference ${expected}`);
 }
 
+const hierarchicalKeys = new Set(
+  extractReferenceIdentifiers("", ["QRS_SPEC_900_7_2026.pdf"]).map(
+    (item) => item.key,
+  ),
+);
+for (const expected of ["QRSSPEC9007", "SPEC9007", "QRSSPEC90072026"]) {
+  assert.equal(
+    hierarchicalKeys.has(expected),
+    true,
+    `Missing hierarchical source alias ${expected}`,
+  );
+}
+
 const route: RouterResult = {
   intent: "troubleshooting",
   evidenceNeed: "internal",
