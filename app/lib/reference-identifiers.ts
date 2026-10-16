@@ -16,6 +16,8 @@ const NAMED_NUMBER =
   /\b[A-Z][A-Za-z0-9]{2,30}(?:[-_][A-Za-z0-9]{1,20})?\s+\d{2,6}(?:\s*[/:-]\s*\d{1,6})*\b/g;
 const CONTEXTUAL_IDENTIFIER =
   /(?:fault|error|code|model|type|series|part(?:\s*(?:no|number))?|fehler|störung|typ|modell|baureihe|artikel(?:nummer)?|referenz|código|modelo|tipo|خطا|کد|مدل|قطعه)\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9._:/-]{0,30})/giu;
+const REVERSED_CONTEXTUAL_IDENTIFIER =
+  /\b([A-Za-z0-9][A-Za-z0-9._:/-]{0,30})\s*[-:#]?\s*(?:fault|error|code|model|type|series|fehler|störung|typ|modell|baureihe|referenz|código|modelo|tipo)\b/giu;
 const HIERARCHICAL_REFERENCE =
   /\b((?:[A-Za-zÖö]{2,12}[\s_.-]*){1,3})(\d{1,6}(?:[\s_.:/-]+\d{1,6}){1,5})\b/g;
 
@@ -62,6 +64,12 @@ export function extractReferenceIdentifiers(
     ...(searchable.match(NAMED_NUMBER) || []),
   ];
   for (const match of searchable.matchAll(CONTEXTUAL_IDENTIFIER)) {
+    if (match[1]) discovered.push(match[1]);
+  }
+  // Manuals use both "error E14" and "E14 error" (and their translated
+  // equivalents). Index the referenced token in either order so the lookup is
+  // based on the identifier, not on a supplier's label grammar.
+  for (const match of searchable.matchAll(REVERSED_CONTEXTUAL_IDENTIFIER)) {
     if (match[1]) discovered.push(match[1]);
   }
   // Filenames commonly append edition/date segments to a useful identifier.

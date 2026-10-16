@@ -48,7 +48,7 @@ const MAX_BATCH_SIZE = 8;
 const MAX_TEXT_LENGTH = 5000;
 const MAX_RETRIEVAL_CONTEXT_LENGTH = 700;
 const RAW_EMBEDDING_VERSION = MULTILINGUAL_EMBEDDING_VERSION;
-const ARCHIVE_INDEX_VERSION = 2;
+const ARCHIVE_INDEX_VERSION = 3;
 
 async function runD1Batch(db: any, statements: any[]) {
   for (let index = 0; index < statements.length; index += 80) {

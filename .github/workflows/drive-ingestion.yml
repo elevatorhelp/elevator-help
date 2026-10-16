@@ -85,7 +85,7 @@ jobs:
               -H 'Content-Type: application/json' \
               --data '{"action":"status"}'
             if grep -q '"rawEmbeddingVersion":3' /tmp/ingest-readiness.json && \
-               grep -q '"archiveIndexVersion":2' /tmp/ingest-readiness.json && \
+               grep -q '"archiveIndexVersion":3' /tmp/ingest-readiness.json && \
                grep -q '"legacyConfigured":true' /tmp/ingest-readiness.json && \
                grep -q '"multilingualConfigured":true' /tmp/ingest-readiness.json && \
                grep -q '"archiveIndexConfigured":true' /tmp/ingest-readiness.json; then

@@ -25,6 +25,19 @@ for (const expected of ["QRSSPEC9007", "SPEC9007", "QRSSPEC90072026"]) {
   );
 }
 
+const bidirectionalKeys = new Set(
+  extractReferenceIdentifiers(
+    "Fault ZX-42; 73 error; Fehler 19; E88 Störung; model Q7",
+  ).map((item) => item.key),
+);
+for (const expected of ["ZX42", "73", "19", "E88", "Q7"]) {
+  assert.equal(
+    bidirectionalKeys.has(expected),
+    true,
+    `Missing bidirectional contextual reference ${expected}`,
+  );
+}
+
 const route: RouterResult = {
   intent: "troubleshooting",
   evidenceNeed: "internal",
