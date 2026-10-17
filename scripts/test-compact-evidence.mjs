@@ -1,0 +1,25 @@
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
+import { searchArchiveEvidenceIndex } from "../app/lib/archive-evidence-index.ts";
+import assert from "node:assert/strict";
+const db = new DatabaseSync(":memory:");
+db.exec(readFileSync(new URL("../migrations/0002_archive_evidence.sql", import.meta.url), "utf8"));
+db.exec(readFileSync(new URL("../migrations/0003_archive_compact_references.sql", import.meta.url), "utf8"));
+const wrapper = { prepare(sql) { return { bind(...args) { return { all: async () => ({results: db.prepare(sql).all(...args)}) }; } }; } };
+const insert = db.prepare("INSERT INTO archive_chunks(id,text,source_file_id,file_name,source_path,page,chunk_index,updated_at) VALUES (?,?,?,?,?,?,?,?)");
+insert.run("old","Old evidence","a","old.pdf","A",1,0,1);
+insert.run("new","New evidence","b","new.pdf","B",2,0,1);
+db.prepare("INSERT INTO archive_chunk_identifiers VALUES (?,?,?)").run("old","E16","E-16");
+db.prepare("INSERT INTO archive_chunk_clauses VALUES (?,?)").run("old","5.2");
+db.prepare("INSERT INTO archive_chunk_search VALUES (?,?,?)").run("new",JSON.stringify([{key:"E16",label:"16-Fehler"},{key:"MODEL42",label:"Model 42"}]),JSON.stringify(["5.2"]));
+db.prepare("INSERT INTO archive_chunk_search_fts(rowid,identifier_keys) SELECT rowid,'E16 MODEL42' FROM archive_chunk_search WHERE chunk_id='new'").run();
+const ref = [{key:"E16",label:"E-16",structured:true}];
+const results= await searchArchiveEvidenceIndex(wrapper,ref,["5.2"]);
+assert.deepEqual(results.map(x=>x.id),["old","new"]);
+assert.equal(results[1].identifier_labels,"16-Fehler");
+assert.equal((await searchArchiveEvidenceIndex(wrapper,ref,["5.3"])).length,0);
+// Stale legacy row must never override compact replacement.
+db.prepare("INSERT INTO archive_chunk_identifiers VALUES (?,?,?)").run("new","OLD99","old99");
+assert.equal((await searchArchiveEvidenceIndex(wrapper,[{key:"OLD99",label:"old99",structured:true}])).length,0);
+assert.equal((await searchArchiveEvidenceIndex(wrapper,[{key:"MODEL42",label:"Model 42",structured:true}])).length,1);
+console.log("PASS: compact + legacy, clause filter, no stale leakage");
