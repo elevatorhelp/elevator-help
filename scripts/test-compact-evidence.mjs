@@ -12,6 +12,7 @@ insert.run("new","New evidence","b","new.pdf","B",2,0,1);
 db.prepare("INSERT INTO archive_chunk_identifiers VALUES (?,?,?)").run("old","E16","E-16");
 db.prepare("INSERT INTO archive_chunk_clauses VALUES (?,?)").run("old","5.2");
 db.prepare("INSERT INTO archive_chunk_search VALUES (?,?,?)").run("new",JSON.stringify([{key:"E16",label:"16-Fehler"},{key:"MODEL42",label:"Model 42"}]),JSON.stringify(["5.2"]));
+db.prepare("INSERT INTO archive_chunk_search_fts(rowid,identifier_keys) SELECT rowid,'E16 MODEL42' FROM archive_chunk_search WHERE chunk_id='new'").run();
 const ref = [{key:"E16",label:"E-16",structured:true}];
 const results= await searchArchiveEvidenceIndex(wrapper,ref,["5.2"]);
 assert.deepEqual(results.map(x=>x.id),["old","new"]);
