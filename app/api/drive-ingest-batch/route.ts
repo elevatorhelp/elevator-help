@@ -61,6 +61,9 @@ async function removeArchiveChunks(db: any, ids: string[]) {
   const statements = ids.flatMap((id) => [
     db.prepare("DELETE FROM archive_chunk_identifiers WHERE chunk_id = ?").bind(id),
     db.prepare("DELETE FROM archive_chunk_clauses WHERE chunk_id = ?").bind(id),
+    db.prepare(
+      "DELETE FROM archive_chunk_search_fts WHERE rowid IN (SELECT rowid FROM archive_chunk_search WHERE chunk_id = ?)"
+    ).bind(id),
     db.prepare("DELETE FROM archive_chunk_search WHERE chunk_id = ?").bind(id),
     db.prepare("DELETE FROM archive_chunks WHERE id = ?").bind(id),
   ]);
@@ -129,6 +132,11 @@ async function indexArchiveChunks(
            identifiers_json = excluded.identifiers_json,
            clauses_json = excluded.clauses_json`,
       ).bind(chunk.id, JSON.stringify(identifiers), JSON.stringify(clauses)),
+      // FTS narrows candidates before the exact JSON verification.
+      db.prepare(
+        `INSERT OR REPLACE INTO archive_chunk_search_fts (rowid, identifier_keys)
+         SELECT rowid, ? FROM archive_chunk_search WHERE chunk_id = ?`
+      ).bind(identifiers.map((item) => item.key).join(" "), chunk.id),
     );
   });
   await runD1Batch(db, statements);
