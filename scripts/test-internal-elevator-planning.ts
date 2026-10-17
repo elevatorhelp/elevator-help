@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import {checkInputs,handlingCapacity5MinPct,checkSupplierEnvelope,initialPlanningAssessment} from "../app/lib/planning/elevator-planning.ts";
+const b={use:"residential" as const,servedFloors:6,population:40,riseM:16,shaft:{widthMm:1800,depthMm:1900,pitMm:1000,headroomMm:3600}};
+const lift={manufacturer:"Synthetic",model:"Test only",ratedLoadKg:630,speedMps:1,minShaftWidthMm:1800,minShaftDepthMm:1800,minPitMm:1000,minHeadroomMm:3600,evidence:{document:"synthetic fixture",page:1}};
+assert.equal(handlingCapacity5MinPct(5,50),10);
+assert.throws(()=>handlingCapacity5MinPct(1,0),RangeError);
+assert.deepEqual(checkInputs(b),[]);
+assert.equal(checkSupplierEnvelope(b,lift).every(v=>v.outcome==="pass"),true);
+assert.equal(checkSupplierEnvelope({...b,shaft:{...b.shaft,pitMm:900}},lift).find(v=>v.field==="pitMm")?.outcome,"fail");
+assert.equal(checkSupplierEnvelope(b,{...lift,evidence:undefined})[0].outcome,"unknown");
+assert.equal(checkSupplierEnvelope({...b,shaft:undefined},lift)[0].outcome,"unknown");
+assert.equal(initialPlanningAssessment(b).proposedLiftCount,null);
+assert.equal(initialPlanningAssessment({...b,population:undefined}).status,"needs_data");
+assert.ok(initialPlanningAssessment({...b,existingBuilding:true}).standardsToVerify.some(x=>x.includes("81-21")));
+console.log("PASS internal planning foundation: safe inputs, arithmetic, geometric fit, normative gate");

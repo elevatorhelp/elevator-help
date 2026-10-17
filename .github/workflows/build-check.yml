@@ -53,6 +53,9 @@ jobs:
       - name: Test incremental archive ingestion
         run: npm run test:incremental-ingestion
 
+      - name: Test internal elevator planning foundation
+        run: node --experimental-strip-types scripts/test-internal-elevator-planning.ts
+
       - name: Build
         run: npm run build
 
