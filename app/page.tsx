@@ -14,6 +14,7 @@ import {
   useState,
 } from "react";
 import { conversationBeforeMessage } from "./lib/conversation-edit";
+import { starterActions } from "./lib/starter-actions";
 import {
   parseSafeMarkdown,
   type InlineToken,
@@ -89,33 +90,6 @@ function AssistantMessage({ text }: { text: string }) {
     </div>
   );
 }
-
-const quickPrompts = [
-  {
-    icon: "⚠️",
-    title: "Troubleshoot a fault",
-    prompt:
-      "I have an elevator fault. Help me troubleshoot it step by step.",
-  },
-  {
-    icon: "📄",
-    title: "Search technical documentation",
-    prompt:
-      "Help me find information in technical elevator documentation.",
-  },
-  {
-    icon: "📐",
-    title: "Ask about EN 81-20/50",
-    prompt:
-      "What does EN 81-20/50 say about ",
-  },
-  {
-    icon: "🏗️",
-    title: "Plan shaft dimensions",
-    prompt:
-      "I am an architect. Help me determine suitable elevator shaft dimensions for my project.",
-  },
-];
 
 function Logo() {
   return (
@@ -730,55 +704,19 @@ function ChatExperience({
               </div>
             )}
 
-            <div className="quickPrompts">
-              {quickPrompts.map((item) => (
+            <div className="quickPrompts" aria-label="Example questions">
+              {starterActions.map((item) => (
                 <button
-                  key={item.title}
+                  key={item.id}
                   type="button"
                   disabled={!canAsk}
                   onClick={() =>
-                    useQuickPrompt(item.prompt)
+                    useQuickPrompt(item.initialQuestion)
                   }
                 >
-                  <span className="promptIcon">
-                    {item.icon}
-                  </span>
-
-                  <span>{item.title}</span>
+                  {item.label}
                 </button>
               ))}
-
-              <button
-                type="button"
-                disabled={!canAsk}
-                onClick={() => {
-                  const input =
-                    document.querySelector<HTMLInputElement>(
-                      'input[accept="image/*"]'
-                    );
-
-                  input?.click();
-                }}
-              >
-                <span className="promptIcon">📷</span>
-                <span>Send a photo</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={!canAsk}
-                onClick={() => {
-                  const input =
-                    document.querySelector<HTMLInputElement>(
-                      'input[accept=".pdf,.doc,.docx,.txt"]'
-                    );
-
-                  input?.click();
-                }}
-              >
-                <span className="promptIcon">📎</span>
-                <span>Upload a document</span>
-              </button>
             </div>
 
             {error && (
@@ -1408,10 +1346,6 @@ function ChatExperience({
           background: #f8faf8;
           border-color: #cfd9d2;
           transform: translateY(-1px);
-        }
-
-        .promptIcon {
-          font-size: 14px;
         }
 
         .landingFootnote {

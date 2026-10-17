@@ -7,6 +7,7 @@
     "test:language": "node --experimental-strip-types scripts/test-german-language.ts",
     "test:gemini-cost-control": "node --experimental-strip-types scripts/test-gemini-cost-control.ts",
     "test:conversation-edit": "node --experimental-strip-types scripts/test-conversation-edit.ts",
+    "test:starter-actions": "node --experimental-strip-types scripts/test-starter-actions.ts",
     "test:request-auth": "node --experimental-strip-types scripts/test-request-auth.ts",
     "test:security": "node scripts/test-security-baseline.mjs && npm audit --omit=dev --audit-level=high",
     "test:incremental-ingestion": "node scripts/test-incremental-ingestion.mjs",

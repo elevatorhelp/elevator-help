@@ -39,26 +39,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             display: none !important;
           }
 
-          /* Beta homepage polish: use the exact standard names in the visible chip. */
-          .quickPrompts > button:nth-child(3) > span:last-child {
-            font-size: 0;
-          }
-
-          .quickPrompts > button:nth-child(3) > span:last-child::after {
-            content: "Ask about EN 81-20 / EN 81-50";
-            font-size: 12px;
-          }
-
-          /* Planning is a digital/engineering workflow, so use a laptop icon. */
-          .quickPrompts > button:nth-child(4) .promptIcon {
-            font-size: 0;
-          }
-
-          .quickPrompts > button:nth-child(4) .promptIcon::after {
-            content: "💻";
-            font-size: 14px;
-          }
-
           /* Beta graphics: prompts must fit cleanly on desktop and mobile. */
           .quickPrompts {
             width: 100%;
