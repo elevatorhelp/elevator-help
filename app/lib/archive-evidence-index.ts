@@ -27,6 +27,8 @@ export async function searchArchiveEvidenceIndex(
   const clauseKeys = [...new Set(clauses.filter(Boolean))];
   if (!keys.length) return [] as ArchiveEvidenceRow[];
   const slots = keys.map(() => "?").join(", ");
+  // Quote each token as an FTS literal. JSON equality remains authoritative.
+  const ftsExpression = keys.map((key) => '"' + key.replace(/"/g, '""') + '"').join(" OR ");
   const clauseSlots = clauseKeys.map(() => "?").join(", ");
   const compactClause = clauseKeys.length
     ? `AND EXISTS (
@@ -48,7 +50,11 @@ export async function searchArchiveEvidenceIndex(
       FROM archive_chunks AS c
       JOIN archive_chunk_search AS s ON s.chunk_id = c.id
       JOIN json_each(s.identifiers_json) AS j
-      WHERE json_extract(j.value, '$.key') IN (${slots})
+      WHERE s.rowid IN (
+        SELECT rowid FROM archive_chunk_search_fts
+        WHERE archive_chunk_search_fts MATCH ?
+      )
+      AND json_extract(j.value, '$.key') IN (${slots})
       ${compactClause}
       UNION ALL
       SELECT c.id AS chunk_id, i.identifier_key, i.identifier_label
@@ -69,7 +75,7 @@ export async function searchArchiveEvidenceIndex(
     ORDER BY matched_identifiers DESC, c.page ASC, c.chunk_index ASC
     LIMIT ?`;
   const bound = [
-    ...keys, ...clauseKeys,
+    ftsExpression, ...keys, ...clauseKeys,
     ...keys, ...clauseKeys,
     Math.max(1, Math.min(100, limit)),
   ];
