@@ -7,3 +7,8 @@ CREATE TABLE IF NOT EXISTS archive_chunk_search (
   clauses_json TEXT NOT NULL CHECK (json_valid(clauses_json)),
   FOREIGN KEY (chunk_id) REFERENCES archive_chunks(id) ON DELETE CASCADE
 );
+
+-- A token-level inverted index narrows candidates before JSON exact-match
+-- verification. The JSON remains the authoritative identifier/label evidence.
+CREATE VIRTUAL TABLE IF NOT EXISTS archive_chunk_search_fts
+USING fts5(identifier_keys, detail=none, columnsize=0, tokenize='unicode61');
