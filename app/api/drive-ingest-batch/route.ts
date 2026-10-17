@@ -61,6 +61,7 @@ async function removeArchiveChunks(db: any, ids: string[]) {
   const statements = ids.flatMap((id) => [
     db.prepare("DELETE FROM archive_chunk_identifiers WHERE chunk_id = ?").bind(id),
     db.prepare("DELETE FROM archive_chunk_clauses WHERE chunk_id = ?").bind(id),
+    db.prepare("DELETE FROM archive_chunk_search WHERE chunk_id = ?").bind(id),
     db.prepare("DELETE FROM archive_chunks WHERE id = ?").bind(id),
   ]);
   await runD1Batch(db, statements);
@@ -119,29 +120,16 @@ async function indexArchiveChunks(
           chunk.sourceFingerprint || null,
           now,
         ),
-      db.prepare("DELETE FROM archive_chunk_identifiers WHERE chunk_id = ?").bind(chunk.id),
-      db.prepare("DELETE FROM archive_chunk_clauses WHERE chunk_id = ?").bind(chunk.id),
+      // A single compact reference row replaces N per-identifier writes.
+      // Historical rows remain readable until their chunks are reindexed.
+      db.prepare(
+        `INSERT INTO archive_chunk_search (chunk_id, identifiers_json, clauses_json)
+         VALUES (?, ?, ?)
+         ON CONFLICT(chunk_id) DO UPDATE SET
+           identifiers_json = excluded.identifiers_json,
+           clauses_json = excluded.clauses_json`,
+      ).bind(chunk.id, JSON.stringify(identifiers), JSON.stringify(clauses)),
     );
-    for (const identifier of identifiers) {
-      statements.push(
-        db
-          .prepare(
-            `INSERT OR IGNORE INTO archive_chunk_identifiers
-              (chunk_id, identifier_key, identifier_label) VALUES (?, ?, ?)`,
-          )
-          .bind(chunk.id, identifier.key, identifier.label),
-      );
-    }
-    for (const clause of clauses) {
-      statements.push(
-        db
-          .prepare(
-            `INSERT OR IGNORE INTO archive_chunk_clauses
-              (chunk_id, clause_key) VALUES (?, ?)`,
-          )
-          .bind(chunk.id, clause),
-      );
-    }
   });
   await runD1Batch(db, statements);
 }
