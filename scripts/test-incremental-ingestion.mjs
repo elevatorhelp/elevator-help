@@ -136,4 +136,18 @@ if (mapAfterRaw.phase !== "map" || mapAfterRaw.files.length !== 2) {
   throw new Error("Document-map enrichment must begin only after raw archive coverage");
 }
 
-console.log("PASS: incremental multilingual ingestion contract");
+const renamed = {id:'same-drive-id', name:'EN_81-71_DE.pdf', sourcePath:'Standards/EN_81-71_DE.pdf', md5Checksum:'same-content'};
+const original = {name:'EN_81-71.pdf', sourcePath:'Standards/EN_81-71.pdf', evidenceFingerprint:'same-content',
+  archiveIndexVersion: ARCHIVE_INDEX_VERSION, evidenceIds:['chunk'], rawFingerprint:'same-content',
+  rawEmbeddingVersion: RAW_EMBEDDING_VERSION, ids:['chunk'], mapFingerprint:'same-content',
+  mapVersion: DOCUMENT_MAP_VERSION, mapIds:['map']};
+if (createIngestionPlan([renamed], {'same-drive-id':original}).phase !== 'evidence') {
+  throw new Error('Rename must refresh citations despite identical content fingerprint');
+}
+if (createIngestionPlan([renamed], {'same-drive-id':{...original,name:renamed.name,sourcePath:renamed.sourcePath,metadataRefreshPendingRaw:true}}).phase !== 'raw') {
+  throw new Error('Rename must refresh semantic metadata after exact evidence');
+}
+if (createIngestionPlan([renamed], {'same-drive-id':{...original,name:renamed.name,sourcePath:renamed.sourcePath,metadataRefreshPendingMap:true}}).phase !== 'map') {
+  throw new Error('Rename must refresh document-map metadata after raw vectors');
+}
+console.log("PASS: incremental multilingual ingestion contract and rename/move metadata refresh");
