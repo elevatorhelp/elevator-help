@@ -1,0 +1,11 @@
+import { DatabaseSync } from 'node:sqlite';
+import { readFileSync, statSync } from 'node:fs';
+const file = process.argv[2];
+if (!file) throw new Error('Provide export SQL file');
+const sql = readFileSync(file, 'utf8');
+const db = new DatabaseSync(':memory:');
+db.exec(sql);
+const chunks = db.prepare('SELECT COUNT(*) AS count FROM archive_chunks').get().count;
+const identifiers = db.prepare('SELECT COUNT(*) AS count FROM archive_chunk_identifiers').get().count;
+console.log(JSON.stringify({restore:'PASS', bytes:statSync(file).size, chunks, identifiers}));
+db.close();
