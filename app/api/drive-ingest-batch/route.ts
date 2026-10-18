@@ -56,14 +56,20 @@ async function runD1Batch(db: any, statements: any[]) {
   }
 }
 
+async function archiveFtsEnabled(db: any) {
+  const row = await db.prepare("SELECT name FROM sqlite_master WHERE name = 'archive_chunk_search_fts'").first();
+  return Boolean(row);
+}
+
 async function removeArchiveChunks(db: any, ids: string[]) {
   if (!db || !ids.length) return;
+  const ftsEnabled = await archiveFtsEnabled(db);
   const statements = ids.flatMap((id) => [
     db.prepare("DELETE FROM archive_chunk_identifiers WHERE chunk_id = ?").bind(id),
     db.prepare("DELETE FROM archive_chunk_clauses WHERE chunk_id = ?").bind(id),
-    db.prepare(
+    ...(ftsEnabled ? [db.prepare(
       "DELETE FROM archive_chunk_search_fts WHERE rowid IN (SELECT rowid FROM archive_chunk_search WHERE chunk_id = ?)"
-    ).bind(id),
+    ).bind(id)] : []),
     db.prepare("DELETE FROM archive_chunk_search WHERE chunk_id = ?").bind(id),
     db.prepare("DELETE FROM archive_chunks WHERE id = ?").bind(id),
   ]);
@@ -76,6 +82,7 @@ async function indexArchiveChunks(
   enriched: EnrichedMetadata[],
 ) {
   if (!db) throw new Error("Archive evidence index is not configured");
+  const ftsEnabled = await archiveFtsEnabled(db);
   const now = Date.now();
   const statements: any[] = [];
   chunks.forEach((chunk, index) => {
@@ -133,10 +140,10 @@ async function indexArchiveChunks(
            clauses_json = excluded.clauses_json`,
       ).bind(chunk.id, JSON.stringify(identifiers), JSON.stringify(clauses)),
       // FTS narrows candidates before the exact JSON verification.
-      db.prepare(
+      ...(ftsEnabled ? [db.prepare(
         `INSERT OR REPLACE INTO archive_chunk_search_fts (rowid, identifier_keys)
          SELECT rowid, ? FROM archive_chunk_search WHERE chunk_id = ?`
-      ).bind(identifiers.map((item) => item.key).join(" "), chunk.id),
+      ).bind(identifiers.map((item) => item.key).join(" "), chunk.id)] : []),
     );
   });
   await runD1Batch(db, statements);

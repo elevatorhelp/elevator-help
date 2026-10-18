@@ -53,6 +53,11 @@ jobs:
       - name: Test incremental archive ingestion
         run: npm run test:incremental-ingestion
 
+      - name: Test generic clause identifiers
+        run: |
+          node --experimental-strip-types scripts/test-generic-clause-parser.ts
+          node --experimental-strip-types scripts/test-clause-casing.ts
+
       - name: Test compact and legacy exact-evidence index
         run: node --experimental-sqlite --experimental-strip-types scripts/test-compact-evidence.mjs
 

@@ -22,4 +22,6 @@ assert.equal((await searchArchiveEvidenceIndex(wrapper,ref,["5.3"])).length,0);
 db.prepare("INSERT INTO archive_chunk_identifiers VALUES (?,?,?)").run("new","OLD99","old99");
 assert.equal((await searchArchiveEvidenceIndex(wrapper,[{key:"OLD99",label:"old99",structured:true}])).length,0);
 assert.equal((await searchArchiveEvidenceIndex(wrapper,[{key:"MODEL42",label:"Model 42",structured:true}])).length,1);
-console.log("PASS: compact + legacy, clause filter, no stale leakage");
+db.exec('DROP TABLE archive_chunk_search_fts');
+assert.deepEqual((await searchArchiveEvidenceIndex(wrapper,ref,['5.2'])).map((row) => row.id), ['old','new']);
+console.log("PASS: compact + legacy, clause filter, no stale leakage, missing-FTS fallback");
