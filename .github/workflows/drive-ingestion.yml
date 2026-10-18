@@ -1,4 +1,5 @@
 name: Drive ingestion
+run-name: Live Archive sync (${{ github.event_name }})
 
 on:
   schedule:
