@@ -390,6 +390,14 @@ async function processEvidenceIndex(
     pages = Array.isArray(extracted.text) ? extracted.text : [extracted.text];
   }
 
+  // Extraction-quality gate: flag image-only PDFs without spending model tokens.
+  // Do not treat a successful PDF parse as evidence that readable text exists.
+  const readablePages = pages.filter((page) => normalizeText(page).length >= MIN_CHUNK_LENGTH).length;
+  if (readablePages === 0) {
+    console.warn(`EXTRACTION_REVIEW_REQUIRED: no readable text in ${file.sourcePath}; OCR or source repair needed`);
+  } else if (readablePages < pages.length) {
+    console.warn(`EXTRACTION_PARTIAL: ${readablePages}/${pages.length} readable pages in ${file.sourcePath}`);
+  }
   const identity = resolveDocumentIdentity({fileId: file.id, fileName: file.name,
     sourcePath: file.sourcePath, text: pages.slice(0, 3).join(' ')});
   const languageHint = identity.language;
