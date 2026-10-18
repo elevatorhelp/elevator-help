@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {detectDocumentLanguage, resolveDocumentIdentity} from './document-identity.mjs';
+const german='Jedes Prüfmuster muss in eine Haltevorrichtung eingebaut werden. Die Anforderungen an die Sicherheit und den Einbau müssen erfüllt sein.';
+const english='Safety requirements for lift installation. Each specimen shall be installed. Testing requirements for doors and operation.';
+const italian='I requisiti di sicurezza per ascensore. La prova e installazione deve essere verificata per il funzionamento delle porte.';
+assert.equal(detectDocumentLanguage(german,'EN_81_71.pdf'),'de');
+assert.equal(detectDocumentLanguage(english,'EN_81_71.pdf'),'en');
+assert.equal(detectDocumentLanguage(italian,'EN_81_71.pdf'),'it');
+assert.equal(detectDocumentLanguage('','EN_81_71.pdf'),null);
+assert.equal(detectDocumentLanguage('','DIN_EN_81-20_EN.pdf'),'en');
+assert.equal(resolveDocumentIdentity({fileId:'abc',fileName:'DIN_EN_81-20_EN.pdf',text:english}).standardId,'EN-81-20');
+assert.equal(resolveDocumentIdentity({fileId:'abc',fileName:'EN_81_71.pdf',text:german}).language,'de');
+assert.equal(resolveDocumentIdentity({fileId:'abc',fileName:'calculation.xlsm'}).documentType,'calculation');
+console.log('PASS: document identity, EN norm ambiguity, DE/EN/IT content detection');

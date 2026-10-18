@@ -18,6 +18,7 @@ on:
     paths:
       - '.github/workflows/drive-ingestion.yml'
       - 'scripts/drive-ingest.mjs'
+      - 'scripts/document-identity.mjs'
       - 'app/api/document-map-ingest/route.ts'
       - 'app/api/drive-ingest-batch/route.ts'
       - 'app/lib/multilingual-embedding.ts'
