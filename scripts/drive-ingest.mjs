@@ -369,7 +369,10 @@ async function deleteIds(ids, token) {
   }
 }
 
-async function processEvidenceIndex(file, accessToken, ingestToken) {
+async function processEvidenceIndex(
+  file, accessToken, ingestToken,
+  { startChunk = 0, initialIds = [], onProgress = null } = {}
+) {
   const languageHint = detectLanguageHint(file.name);
   const groupHint = documentGroupHint(file.name);
   let pages;
@@ -406,7 +409,8 @@ async function processEvidenceIndex(file, accessToken, ingestToken) {
     }
   }
 
-  for (let index = 0; index < chunks.length; index += BATCH_SIZE) {
+  const ids = [...initialIds];
+  for (let index = startChunk; index < chunks.length; index += BATCH_SIZE) {
     const batch = chunks.slice(index, index + BATCH_SIZE);
     const result = await callJsonEndpoint(
       INGEST_ENDPOINT,
@@ -419,9 +423,13 @@ async function processEvidenceIndex(file, accessToken, ingestToken) {
         `Archive index version mismatch: expected ${ARCHIVE_INDEX_VERSION}, got ${String(result?.archiveIndexVersion ?? "missing")}`,
       );
     }
+    ids.push(...batch.map((chunk) => chunk.id));
+    if (typeof onProgress === "function") {
+      await onProgress({ ids: [...ids], nextChunk: index + batch.length });
+    }
   }
   console.log(`Indexed ${chunks.length} exact-evidence chunks without model-specific routing`);
-  return chunks.map((chunk) => chunk.id);
+  return ids;
 }
 
 async function buildDocumentMap(
@@ -693,7 +701,33 @@ async function main() {
 
     if (needsEvidence) {
       console.log(`Exact-evidence index backfill required for ${file.name}`);
-      const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken);
+
+      const canResumeEvidence =
+        previous.partialArchiveIndexVersion === ARCHIVE_INDEX_VERSION &&
+        previous.partialEvidenceFingerprint === currentFingerprint &&
+        Array.isArray(previous.partialEvidenceIds) &&
+        Number.isInteger(previous.evidenceNextChunk) &&
+        previous.evidenceNextChunk > 0 &&
+        previous.partialEvidenceIds.length === previous.evidenceNextChunk;
+      if (!canResumeEvidence) {
+        delete next.partialEvidenceIds;
+        delete next.partialArchiveIndexVersion;
+        delete next.partialEvidenceFingerprint;
+        delete next.evidenceNextChunk;
+      }
+      const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken, {
+        startChunk: canResumeEvidence ? previous.evidenceNextChunk : 0,
+        initialIds: canResumeEvidence ? previous.partialEvidenceIds : [],
+        onProgress: async ({ ids, nextChunk }) => {
+          next.partialEvidenceIds = ids;
+          next.partialArchiveIndexVersion = ARCHIVE_INDEX_VERSION;
+          next.partialEvidenceFingerprint = currentFingerprint;
+          next.evidenceNextChunk = nextChunk;
+          scope.files[file.id] = next;
+          state.scopes[DRIVE_FOLDER_ID] = scope;
+          await saveState(state);
+        },
+      });
       const evidenceIdSet = new Set(evidenceIds);
       const staleEvidenceIds = (Array.isArray(previous.evidenceIds)
         ? previous.evidenceIds
@@ -704,6 +738,10 @@ async function main() {
       next.archiveIndexVersion = ARCHIVE_INDEX_VERSION;
       next.evidenceFingerprint = currentFingerprint;
       next.evidenceIndexedAt = new Date().toISOString();
+      delete next.partialEvidenceIds;
+      delete next.partialArchiveIndexVersion;
+      delete next.partialEvidenceFingerprint;
+      delete next.evidenceNextChunk;
       scope.files[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);

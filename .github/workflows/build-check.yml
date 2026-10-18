@@ -53,6 +53,9 @@ jobs:
       - name: Test incremental archive ingestion
         run: npm run test:incremental-ingestion
 
+      - name: Test compact and legacy exact-evidence index
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-compact-evidence.mjs
+
       - name: Build
         run: npm run build
 
