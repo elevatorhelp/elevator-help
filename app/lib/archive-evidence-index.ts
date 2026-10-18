@@ -28,7 +28,10 @@ export async function searchArchiveEvidenceIndex(
   if (!keys.length) return [] as ArchiveEvidenceRow[];
   const slots = keys.map(() => "?").join(", ");
   // Quote each token as an FTS literal. JSON equality remains authoritative.
-  const ftsExpression = keys.map((key) => '"' + key.replace(/"/g, '""') + '"').join(" OR ");
+  // FTS5 detail=none supports individual terms, not quoted multi-token phrases.
+  // Use a single searchable term as a prefilter; JSON key equality below is authoritative.
+  const ftsExpression = [...new Set(keys.map((key) => key.match(/[\p{L}\p{N}]+/u)?.[0]).filter(Boolean))]
+    .map((term) => '"' + term!.replace(/"/g, '""') + '"').join(" OR ");
   const clauseSlots = clauseKeys.map(() => "?").join(", ");
   const compactClause = clauseKeys.length
     ? `AND EXISTS (
@@ -79,6 +82,19 @@ export async function searchArchiveEvidenceIndex(
     ...keys, ...clauseKeys,
     Math.max(1, Math.min(100, limit)),
   ];
-  const result = await archiveDb.prepare(sql).bind(...bound).all();
-  return (result?.results || []) as ArchiveEvidenceRow[];
+  try {
+    const result = await archiveDb.prepare(sql).bind(...bound).all();
+    return (result?.results || []) as ArchiveEvidenceRow[];
+  } catch (error) {
+    // Older databases may have the compact JSON table but no FTS virtual
+    // table. Preserve exact retrieval while the schema repair is deployed.
+    if (!/no such table:\s*(?:main\.)?archive_chunk_search_fts/i.test(String(error))) throw error;
+    const fallbackSql = sql.replace(
+      /WHERE s\.rowid IN \(\s*SELECT rowid FROM archive_chunk_search_fts\s*WHERE archive_chunk_search_fts MATCH \?\s*\)/,
+      'WHERE 1=1',
+    );
+    if (fallbackSql === sql) throw error;
+    const result = await archiveDb.prepare(fallbackSql).bind(...bound.slice(1)).all();
+    return (result?.results || []) as ArchiveEvidenceRow[];
+  }
 }

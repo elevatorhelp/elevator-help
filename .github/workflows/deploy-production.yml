@@ -33,7 +33,13 @@ jobs:
       - name: Build Cloudflare Worker
         env:
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
-        run: npm run cf:build
+        run: |
+          set -euo pipefail
+          if [[ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" != pk_test_* && "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" != pk_live_* ]]; then
+            echo 'Clerk publishable key missing or invalid; refusing unauthenticated UI build.' >&2
+            exit 1
+          fi
+          npm run cf:build
 
       - name: Ensure multilingual Vectorize index
         env:

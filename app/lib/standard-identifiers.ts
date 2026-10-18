@@ -7,7 +7,8 @@ const STANDARD_PATTERN =
 const COMPACT_LOWERCASE_STANDARD_PATTERN =
   /\b[a-zö]{2,12}\d{1,6}(?:(?:\s*[-–—/:]\s*)\d{1,6}){1,5}\b/gu;
 
-const CLAUSE_PATTERN = /\b\d+(?:\.\d+){1,6}\b/g;
+// Annex clause labels are treated as structured references.
+const CLAUSE_PATTERN = /\b(?:[A-Z]{1,2}\.\d+(?:\.\d+){0,6}|\d+(?:\.\d+){1,6})\b/gi;
 
 export function normalizeStandardCode(value: string) {
   return value
@@ -42,5 +43,6 @@ export function standardCodesMatch(left: string, right: string) {
 
 export function extractClauseNumbers(value: unknown) {
   if (typeof value !== "string") return [] as string[];
-  return [...new Set(value.match(CLAUSE_PATTERN) || [])];
+  const found = value.match(CLAUSE_PATTERN) || [];
+  return [...new Set(found.map((part) => part.toUpperCase()))];
 }
