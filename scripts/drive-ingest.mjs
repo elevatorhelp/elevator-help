@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
+import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
 
 const execFileAsync = promisify(execFile);
 const OFFICE_EXTENSIONS = new Set([
@@ -221,17 +222,18 @@ function prioritizeChangedFiles(files) {
 function createIngestionPlan(files, records = {}, force = false) {
   const ordered = prioritizeChangedFiles(files);
   const evidence = ordered.filter((file) =>
-    needsEvidenceBackfill(records[file.id], fingerprint(file), force)
+    (needsEvidenceBackfill(records[file.id], fingerprint(file), force) ||
+      (records[file.id]?.name && (records[file.id].name !== file.name || records[file.id].sourcePath !== file.sourcePath)))
   );
   if (evidence.length) return { phase: "evidence", files: evidence };
 
   const raw = ordered.filter((file) =>
-    needsRawBackfill(records[file.id], fingerprint(file), force)
+    (needsRawBackfill(records[file.id], fingerprint(file), force) || records[file.id]?.metadataRefreshPendingRaw)
   );
   if (raw.length) return { phase: "raw", files: raw };
 
   const map = ordered.filter((file) =>
-    needsMapBackfill(records[file.id], fingerprint(file), force)
+    (needsMapBackfill(records[file.id], fingerprint(file), force) || records[file.id]?.metadataRefreshPendingMap)
   );
   return { phase: "map", files: map };
 }
@@ -371,9 +373,8 @@ async function deleteIds(ids, token) {
 
 async function processEvidenceIndex(
   file, accessToken, ingestToken,
-  { startChunk = 0, initialIds = [], onProgress = null } = {}
+  { startChunk = 0, initialIds = [], onProgress = null, onIdentity = null } = {}
 ) {
-  const languageHint = detectLanguageHint(file.name);
   const groupHint = documentGroupHint(file.name);
   let pages;
   if (file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase())) {
@@ -389,6 +390,11 @@ async function processEvidenceIndex(
     pages = Array.isArray(extracted.text) ? extracted.text : [extracted.text];
   }
 
+  const identity = resolveDocumentIdentity({fileId: file.id, fileName: file.name,
+    sourcePath: file.sourcePath, text: pages.slice(0, 3).join(' ')});
+  const languageHint = identity.language;
+  if (typeof onIdentity === 'function') onIdentity(identity);
+  console.log(`Document identity: ${JSON.stringify(identity)}`);
   const chunks = [];
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     const pageChunks = splitIntoChunks(pages[pageIndex]);
@@ -517,7 +523,7 @@ async function processPdf(
   const { totalPages, text } = await extractText(pdf, { mergePages: false });
   const pages = Array.isArray(text) ? text : [text];
   const chunks = [];
-  const languageHint = detectLanguageHint(file.name);
+  const languageHint = detectDocumentLanguage(pages.slice(0, 3).join(' '), file.name);
   const groupHint = documentGroupHint(file.name);
 
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
@@ -603,7 +609,7 @@ async function processText(
     chunkIndex,
     modifiedTime: file.modifiedTime || undefined,
     sourceFingerprint: fingerprint(file),
-    languageHint: detectLanguageHint(file.name),
+    languageHint: detectDocumentLanguage(text, file.name),
     documentGroupHint: documentGroupHint(file.name),
   }));
   const ids = Array.isArray(initialRawIds) ? [...initialRawIds] : [];
@@ -659,6 +665,12 @@ async function main() {
   const foundIds = new Set(allFiles.map((file) => file.id));
   for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : scope.files)) {
     if (!foundIds.has(fileId)) {
+      // A single incomplete Drive scan must never erase archived evidence.
+      if ((old.missingScanCount || 0) < 1) {
+        scope.files[fileId] = {...old, missingScanCount: 1};
+        console.log(`Missing Drive file ${fileId}; awaiting a second complete scan before deletion`);
+        continue;
+      }
       const oldIds = Array.from(
         new Set([
           ...(Array.isArray(old.ids) ? old.ids : []),
@@ -676,6 +688,9 @@ async function main() {
     }
   }
 
+  for (const file of allFiles) {
+    if (scope.files[file.id]?.missingScanCount) delete scope.files[file.id].missingScanCount;
+  }
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST);
   const changed = plan.files;
   console.log(
@@ -700,6 +715,10 @@ async function main() {
     };
 
     if (needsEvidence) {
+      if (previous.name && (previous.name !== file.name || previous.sourcePath !== file.sourcePath)) {
+        next.metadataRefreshPendingRaw = true;
+        next.metadataRefreshPendingMap = true;
+      }
       console.log(`Exact-evidence index backfill required for ${file.name}`);
 
       const canResumeEvidence =
@@ -716,6 +735,7 @@ async function main() {
         delete next.evidenceNextChunk;
       }
       const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken, {
+        onIdentity: (identity) => { next.documentIdentity = identity; },
         startChunk: canResumeEvidence ? previous.evidenceNextChunk : 0,
         initialIds: canResumeEvidence ? previous.partialEvidenceIds : [],
         onProgress: async ({ ids, nextChunk }) => {
@@ -823,6 +843,7 @@ async function main() {
       next.rawEmbeddingVersion = RAW_EMBEDDING_VERSION;
       next.rawFingerprint = currentFingerprint;
       next.rawIndexedAt = new Date().toISOString();
+      delete next.metadataRefreshPendingRaw;
       delete next.partialRawIds;
       delete next.partialRawEmbeddingVersion;
       delete next.partialRawFingerprint;
@@ -840,6 +861,7 @@ async function main() {
         next.mapVersion = DOCUMENT_MAP_VERSION;
         next.mapFingerprint = currentFingerprint;
         next.mapIndexedAt = new Date().toISOString();
+        delete next.metadataRefreshPendingMap;
         next.fingerprint = currentFingerprint;
         next.indexedAt = new Date().toISOString();
         scope.files[file.id] = next;
@@ -919,6 +941,7 @@ async function main() {
       next.mapVersion = DOCUMENT_MAP_VERSION;
       next.mapFingerprint = currentFingerprint;
       next.mapIndexedAt = new Date().toISOString();
+      delete next.metadataRefreshPendingMap;
       delete next.partialMapIds;
       delete next.partialMapVersion;
       delete next.partialMapFingerprint;
