@@ -892,7 +892,7 @@ async function main() {
       // interrupted nodes must not survive while a fresh map is being built.
       if (!canResumeMap && Array.isArray(previous.partialMapIds) && previous.partialMapIds.length) {
         console.log(
-          `Removing ${previous.partialMapIds.length} stale partial map vectors for ${file.name}`
+          `Removing ${previous.partialMapIds.length} stale partial map vectors for archive document`
         );
         await deleteIds(previous.partialMapIds, ingestToken);
         delete next.partialMapIds;
