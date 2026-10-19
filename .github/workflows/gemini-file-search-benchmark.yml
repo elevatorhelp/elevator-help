@@ -1,0 +1,35 @@
+name: Gemini File Search Synthetic Benchmark
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gemini-file-search-synthetic-benchmark
+  cancel-in-progress: false
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate synthetic benchmark
+        run: |
+          node --check scripts/benchmark-gemini-file-search.mjs
+          node scripts/benchmark-retrieval-12.mjs
+      - name: Run five bounded Gemini requests
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+          GEMINI_FILE_SEARCH_STORE: fileSearchStores/elevatorhelpbenchmark-1xdy4jx1k4cb
+          GEMINI_FILE_SEARCH_MODEL: gemini-3.8-flash
+        run: |
+          test -n "$GEMINI_API_KEY" || { echo 'Missing benchmark secret'; exit 1; }
+          node scripts/benchmark-gemini-file-search.mjs | tee benchmark-results.json
+          node --input-type=module -e "import fs from 'node:fs'; const x=JSON.parse(fs.readFileSync('benchmark-results.json')); if(x.results?.length!==5) process.exit(1);"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gemini-file-search-synthetic-results
+          path: benchmark-results.json
+          retention-days: 7
