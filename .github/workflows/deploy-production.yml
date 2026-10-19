@@ -1,8 +1,12 @@
 name: Deploy production
 
-# Production deployment is deliberate: merge only after required checks PASS,
-# then start this workflow manually from the verified main revision.
+# Production deployment is deliberate: verified main only. This workflow's
+# own reviewed change can trigger a guarded deployment; manual dispatch remains.
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-production.yml'
   workflow_dispatch:
 
 concurrency:
@@ -14,6 +18,7 @@ permissions:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout verified revision
