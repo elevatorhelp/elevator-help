@@ -150,4 +150,22 @@ if (createIngestionPlan([renamed], {'same-drive-id':{...original,name:renamed.na
 if (createIngestionPlan([renamed], {'same-drive-id':{...original,name:renamed.name,sourcePath:renamed.sourcePath,metadataRefreshPendingMap:true}}).phase !== 'map') {
   throw new Error('Rename must refresh document-map metadata after raw vectors');
 }
-console.log("PASS: incremental multilingual ingestion contract and rename/move metadata refresh");
+// A live evidence backlog must not block semantic/map work on already prepared files.
+const phaseFiles = [
+  { id: 'new', name: 'new.pdf', sourcePath: 'a/new.pdf', md5Checksum: 'n' },
+  { id: 'vector', name: 'vector.pdf', sourcePath: 'b/vector.pdf', md5Checksum: 'v' },
+  { id: 'mapped', name: 'mapped.pdf', sourcePath: 'c/mapped.pdf', md5Checksum: 'm' },
+];
+const phaseRecords = {
+  vector: { evidenceFingerprint: 'v', archiveIndexVersion: ARCHIVE_INDEX_VERSION, evidenceIds: ['ev'] },
+  mapped: { evidenceFingerprint: 'm', archiveIndexVersion: ARCHIVE_INDEX_VERSION, evidenceIds: ['em'], rawFingerprint: 'm', rawEmbeddingVersion: RAW_EMBEDDING_VERSION, ids: ['vm'] },
+};
+for (const [preference, expectedId] of [['evidence', 'new'], ['raw', 'vector'], ['map', 'mapped']]) {
+  const plan = createIngestionPlan(phaseFiles, phaseRecords, false, preference);
+  if (plan.files[0]?.id !== expectedId || plan.phase !== preference) {
+    throw new Error(`Phase fairness failed for ${preference}: ${plan.phase}/${plan.files[0]?.id}`);
+  }
+}
+const unsafeMap = createIngestionPlan(phaseFiles, {}, false, 'map');
+if (unsafeMap.phase !== 'evidence') throw new Error('Map must not bypass per-document prerequisites');
+console.log("PASS: incremental multilingual ingestion, phase fairness and rename/move metadata refresh");
