@@ -85,8 +85,28 @@ async function indexArchiveChunks(
   const ftsEnabled = await archiveFtsEnabled(db);
   const now = Date.now();
   const statements: any[] = [];
+  // Repeated archive scans must not rewrite unchanged evidence, compact JSON,
+  // or FTS rows. D1's free-tier row-write quota is shared with live traffic.
+  const existingRows = await Promise.all(chunks.map((chunk) =>
+    db.prepare(`SELECT c.text, c.source_file_id, c.file_name, c.source_path,
+      c.page, c.chunk_index, c.content_type, c.source_fingerprint,
+      EXISTS(SELECT 1 FROM archive_chunk_search s WHERE s.chunk_id = c.id) AS has_search
+      FROM archive_chunks c WHERE c.id = ?`).bind(chunk.id).first(),
+  ));
   chunks.forEach((chunk, index) => {
     const metadata = enriched[index];
+    const existing = existingRows[index];
+    if (existing && existing.has_search === 1 &&
+      existing.text === chunk.text &&
+      existing.source_file_id === chunk.sourceFileId &&
+      existing.file_name === chunk.fileName &&
+      existing.source_path === chunk.sourcePath &&
+      existing.page === chunk.page &&
+      existing.chunk_index === chunk.chunkIndex &&
+      existing.content_type === (metadata?.contentType || null) &&
+      existing.source_fingerprint === (chunk.sourceFingerprint || null)) {
+      return;
+    }
     const sourceLabels = [
       ...chunk.sourcePath.split(/[\\/]/g),
       chunk.fileName.replace(/\.[^.]+$/i, ""),
