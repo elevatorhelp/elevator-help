@@ -380,7 +380,7 @@ async function processEvidenceIndex(
   if (file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase())) {
     pages = [await downloadText(file.id, accessToken)];
   } else {
-    console.log(`Downloading ${file.sourcePath}`);
+    console.log('Downloading archive document (source path redacted)');
     const original = await downloadDocument(file, accessToken);
     const bytes = file.mimeType === "application/pdf" || GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType)
       ? original
@@ -394,15 +394,15 @@ async function processEvidenceIndex(
   // Do not treat a successful PDF parse as evidence that readable text exists.
   const readablePages = pages.filter((page) => normalizeText(page).length >= MIN_CHUNK_LENGTH).length;
   if (readablePages === 0) {
-    console.warn(`EXTRACTION_REVIEW_REQUIRED: no readable text in ${file.sourcePath}; OCR or source repair needed`);
+    console.warn(`EXTRACTION_REVIEW_REQUIRED: no readable text in (source redacted); OCR or source repair needed`);
   } else if (readablePages < pages.length) {
-    console.warn(`EXTRACTION_PARTIAL: ${readablePages}/${pages.length} readable pages in ${file.sourcePath}`);
+    console.warn(`EXTRACTION_PARTIAL: ${readablePages}/${pages.length} readable pages (source redacted)`);
   }
   const identity = resolveDocumentIdentity({fileId: file.id, fileName: file.name,
     sourcePath: file.sourcePath, text: pages.slice(0, 3).join(' ')});
   const languageHint = identity.language;
   if (typeof onIdentity === 'function') onIdentity(identity);
-  console.log(`Document identity: ${JSON.stringify(identity)}`);
+  console.log(`Document identity resolved: type=${identity.documentType || 'unknown'}, language=${identity.language || 'unknown'}`);
   const chunks = [];
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     const pageChunks = splitIntoChunks(pages[pageIndex]);
@@ -522,7 +522,7 @@ async function processPdf(
     onMapProgress = null,
   } = {}
 ) {
-  console.log(`Downloading ${file.sourcePath}`);
+  console.log('Downloading archive document (source path redacted)');
   const original = await downloadDocument(file, accessToken);
   const bytes = file.mimeType === "application/pdf" || GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType)
     ? original
@@ -638,7 +638,7 @@ async function processText(
       await onRawProgress({ ids: [...ids], nextChunk: nextRawChunk });
     }
   }
-  console.log(`Indexed ${nextRawChunk}/${chunks.length} text chunks from ${file.sourcePath}`);
+  console.log(`Indexed ${nextRawChunk}/${chunks.length} text chunks (source path redacted)`);
   return {
     ids,
     rawComplete: nextRawChunk >= chunks.length,
@@ -665,7 +665,7 @@ async function main() {
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
 
-  console.log(`Found ${files.length} supported documents in Drive scope ${DRIVE_FOLDER_ID}`);
+  console.log(`Found ${files.length} supported documents in configured Drive scope`);
   console.log(
     `Gemini ingestion safety budget: at most ${ingestionBudget.snapshot().limit} calls in this process.`
   );
@@ -676,7 +676,7 @@ async function main() {
       // A single incomplete Drive scan must never erase archived evidence.
       if ((old.missingScanCount || 0) < 1) {
         scope.files[fileId] = {...old, missingScanCount: 1};
-        console.log(`Missing Drive file ${fileId}; awaiting a second complete scan before deletion`);
+        console.log(`Missing Drive file (ID redacted); awaiting a second complete scan before deletion`);
         continue;
       }
       const oldIds = Array.from(
@@ -689,7 +689,7 @@ async function main() {
         ])
       );
       if (oldIds.length) {
-        console.log(`Removing ${oldIds.length} vectors for deleted Drive file ${fileId}`);
+        console.log(`Removing ${oldIds.length} vectors for deleted Drive file (ID redacted)`);
         await deleteIds(oldIds, ingestToken);
       }
       delete scope.files[fileId];
@@ -727,7 +727,7 @@ async function main() {
         next.metadataRefreshPendingRaw = true;
         next.metadataRefreshPendingMap = true;
       }
-      console.log(`Exact-evidence index backfill required for ${file.name}`);
+      console.log('Exact-evidence index backfill required for archive document');
 
       const canResumeEvidence =
         previous.partialArchiveIndexVersion === ARCHIVE_INDEX_VERSION &&
@@ -773,11 +773,11 @@ async function main() {
       scope.files[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
-      console.log(`Exact-evidence checkpoint saved for ${file.name}`);
+      console.log(`Exact-evidence checkpoint saved for archive document`);
     }
 
     if (needsRaw) {
-      console.log(`Raw-vector backfill required for ${file.name}`);
+      console.log('Raw-vector backfill required for archive document');
       const canResumeRaw =
         previous.partialRawEmbeddingVersion === RAW_EMBEDDING_VERSION &&
         previous.partialRawFingerprint === currentFingerprint &&
@@ -837,7 +837,7 @@ async function main() {
         scope.files[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
-        console.log(`Raw-vector progress checkpoint saved for ${file.name}`);
+        console.log(`Raw-vector progress checkpoint saved for archive document`);
         continue;
       }
 
@@ -860,7 +860,7 @@ async function main() {
       scope.files[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
-      console.log(`Raw-vector checkpoint saved for ${file.name}`);
+      console.log(`Raw-vector checkpoint saved for archive document`);
     }
 
     if (needsMap) {
@@ -877,7 +877,7 @@ async function main() {
         await saveState(state);
         continue;
       }
-      console.log(`Document-map backfill required for ${file.name}`);
+      console.log('Document-map backfill required for archive document');
       const canResumeMap =
         previous.partialMapVersion === DOCUMENT_MAP_VERSION &&
         previous.partialMapFingerprint === currentFingerprint &&
@@ -933,7 +933,7 @@ async function main() {
         scope.files[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
-        console.log(`Document-map progress checkpoint saved for ${file.name}`);
+        console.log(`Document-map progress checkpoint saved for archive document`);
         continue;
       }
       const newMapIdSet = new Set(newMapIds);
@@ -958,7 +958,7 @@ async function main() {
       scope.files[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
-      console.log(`Document-map checkpoint saved for ${file.name}`);
+      console.log(`Document-map checkpoint saved for archive document`);
     }
 
     if (next.rawFingerprint === currentFingerprint && next.mapFingerprint === currentFingerprint) {
