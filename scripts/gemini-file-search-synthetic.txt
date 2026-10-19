@@ -1,0 +1,5 @@
+SYNTHETIC BENCHMARK DOCUMENT — NOT REAL TECHNICAL GUIDANCE
+Benchmark manual: Fault E42 means simulated encoder communication failure.
+Benchmark manual: Fault E24 means simulated motor temperature warning.
+Benchmark catalog: Varidor is the named automatic door family.
+Benchmark catalog: Hydraulic pump models are unrelated to door operators.
