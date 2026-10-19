@@ -219,23 +219,31 @@ function prioritizeChangedFiles(files) {
   });
 }
 
-function createIngestionPlan(files, records = {}, force = false) {
+function createIngestionPlan(files, records = {}, force = false, preferredPhase = "evidence") {
   const ordered = prioritizeChangedFiles(files);
   const evidence = ordered.filter((file) =>
     (needsEvidenceBackfill(records[file.id], fingerprint(file), force) ||
       (records[file.id]?.name && (records[file.id].name !== file.name || records[file.id].sourcePath !== file.sourcePath)))
   );
-  if (evidence.length) return { phase: "evidence", files: evidence };
-
+  const evidencePending = new Set(evidence.map((file) => file.id));
   const raw = ordered.filter((file) =>
+    !evidencePending.has(file.id) &&
     (needsRawBackfill(records[file.id], fingerprint(file), force) || records[file.id]?.metadataRefreshPendingRaw)
   );
-  if (raw.length) return { phase: "raw", files: raw };
-
+  const rawPending = new Set(raw.map((file) => file.id));
   const map = ordered.filter((file) =>
+    !evidencePending.has(file.id) && !rawPending.has(file.id) &&
     (needsMapBackfill(records[file.id], fingerprint(file), force) || records[file.id]?.metadataRefreshPendingMap)
   );
-  return { phase: "map", files: map };
+  const queues = { evidence, raw, map };
+  const phaseOrder = ["evidence", "raw", "map"];
+  const preferredIndex = phaseOrder.indexOf(preferredPhase);
+  const start = preferredIndex < 0 ? 0 : preferredIndex;
+  for (let offset = 0; offset < phaseOrder.length; offset++) {
+    const phase = phaseOrder[(start + offset) % phaseOrder.length];
+    if (queues[phase].length) return { phase, files: queues[phase] };
+  }
+  return { phase: "map", files: [] };
 }
 
 function normalizeText(text) {
@@ -699,7 +707,12 @@ async function main() {
   for (const file of allFiles) {
     if (scope.files[file.id]?.missingScanCount) delete scope.files[file.id].missingScanCount;
   }
-  const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST);
+  // Rotate priority every six hours so a live Evidence backlog cannot starve vectors/maps.
+  // Dependency gates in createIngestionPlan ensure raw follows evidence and map follows raw per file.
+  const phaseOrder = ["evidence", "raw", "map"];
+  const preferredPhase = phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
+  const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
+  console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   const changed = plan.files;
   console.log(
     `${changed.length} document(s) need the ${plan.phase} phase; exact evidence, semantic vectors and document maps advance archive-wide without file-specific routing`
