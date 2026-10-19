@@ -2,6 +2,7 @@ name: Deploy production
 
 # Production deployment is deliberate: verified main only. This workflow's
 # own reviewed change can trigger a guarded deployment; manual dispatch remains.
+# 2026-10-19: release the audited D1 write guard and private-log redaction from main.
 on:
   push:
     branches: [main]
