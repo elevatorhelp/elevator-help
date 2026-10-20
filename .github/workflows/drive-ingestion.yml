@@ -106,6 +106,15 @@ jobs:
           restore-keys: |
             drive-ingestion-state-
 
+      # GitHub Actions caches are evictable. Losing the checkpoint must not
+      # silently trigger a paid full-archive reindex.
+      - name: Require restored ingestion checkpoint
+        run: |
+          if [ ! -s .ingestion-state/drive.json ]; then
+            echo "::error::INGESTION_STATE_MISSING: no persisted checkpoint was restored. Restore or explicitly bootstrap state before ingestion."
+            exit 1
+          fi
+
       - name: Guard Google JWT grant type
         run: |
           sed -i 's#urn:ietf:params:oauth-grant-type:jwt-bearer#urn:ietf:params:oauth:grant-type:jwt-bearer#g' scripts/drive-ingest.mjs
