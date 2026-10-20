@@ -22,7 +22,8 @@
     "test:safe-markdown": "node --experimental-strip-types scripts/test-safe-markdown.ts",
     "build": "next build --webpack",
     "cf:build": "opennextjs-cloudflare build",
-    "deploy": "opennextjs-cloudflare build && wrangler deploy"
+    "deploy": "opennextjs-cloudflare build && wrangler deploy",
+    "test:worker-leases": "node --test scripts/test-offline-worker-leases.mjs"
   },
   "dependencies": {
     "@clerk/backend": "^3.23.2",
