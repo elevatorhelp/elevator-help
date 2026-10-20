@@ -296,10 +296,14 @@ console.log("PASS: full-backlog and eligible-queue counters");
 const stateTestDir = await mkdtemp(join(tmpdir(), "elevator-ingestion-state-"));
 try {
   const stateFile = join(stateTestDir, "drive.json");
-  const fresh = await readIngestionState(stateFile);
+  const fresh = await readIngestionState(stateFile, true);
   if (fresh.version !== 3 || Object.keys(fresh.scopes).length !== 0) {
     throw new Error("Missing checkpoint must initialize an empty state");
   }
+  let rejectedMissing = false;
+  try { await readIngestionState(stateFile); }
+  catch (error) { rejectedMissing = String(error).includes("INGESTION_STATE_MISSING"); }
+  if (!rejectedMissing) throw new Error("Missing checkpoint must fail closed by default");
   const sample = { version: 3, scopes: { archive: { files: { a: { rawNextChunk: 3 } } } } };
   await writeIngestionState(sample, stateFile);
   const restored = await readIngestionState(stateFile);

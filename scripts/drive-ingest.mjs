@@ -408,12 +408,18 @@ function canResumeMap(previous, currentFingerprint) {
 
 // A partially written or corrupted checkpoint must never be mistaken for an
 // empty archive: that could trigger a costly, archive-wide re-ingestion.
-async function readIngestionState(filePath = STATE_PATH) {
+async function readIngestionState(
+  filePath = STATE_PATH,
+  allowEmpty = process.env.ALLOW_EMPTY_INGESTION_STATE === "true"
+) {
   let content;
   try {
     content = await readFile(filePath, "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") return { version: 3, scopes: {} };
+    if (error?.code === "ENOENT") {
+      if (allowEmpty) return { version: 3, scopes: {} };
+      throw new Error("INGESTION_STATE_MISSING: explicit bootstrap required before ingestion");
+    }
     throw new Error("INGESTION_STATE_READ_FAILED", { cause: error });
   }
   let parsed;
