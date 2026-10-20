@@ -169,3 +169,29 @@ for (const [preference, expectedId] of [['evidence', 'new'], ['raw', 'vector'], 
 const unsafeMap = createIngestionPlan(phaseFiles, {}, false, 'map');
 if (unsafeMap.phase !== 'evidence') throw new Error('Map must not bypass per-document prerequisites');
 console.log("PASS: incremental multilingual ingestion, phase fairness and rename/move metadata refresh");
+
+// Stress-test the scheduler against a perpetually replenished Evidence queue.
+// Existing raw/map-ready documents must still receive turns as priority rotates.
+const stressFiles = [
+  { id: "raw-ready", name: "raw.pdf", sourcePath: "b/raw.pdf", md5Checksum: "r" },
+  { id: "map-ready", name: "map.pdf", sourcePath: "c/map.pdf", md5Checksum: "m" },
+];
+const stressRecords = {
+  "raw-ready": { evidenceFingerprint: "r", archiveIndexVersion: ARCHIVE_INDEX_VERSION, evidenceIds: ["er"] },
+  "map-ready": { evidenceFingerprint: "m", archiveIndexVersion: ARCHIVE_INDEX_VERSION, evidenceIds: ["em"], rawFingerprint: "m", rawEmbeddingVersion: RAW_EMBEDDING_VERSION, ids: ["rm"] },
+};
+const observed = new Set();
+for (let cycle = 0; cycle < 18; cycle++) {
+  const incoming = { id: `new-${cycle}`, name: `new-${cycle}.pdf`, sourcePath: `a/new-${cycle}.pdf`, md5Checksum: `n-${cycle}` };
+  const preferred = ["evidence", "raw", "map"][cycle % 3];
+  const plan = createIngestionPlan([incoming, ...stressFiles], stressRecords, false, preferred);
+  observed.add(plan.phase);
+  if (plan.phase !== preferred) throw new Error(`Live backlog fairness: expected ${preferred}, got ${plan.phase}`);
+}
+if (observed.size !== 3) throw new Error("A continuously growing evidence backlog starved a processing phase");
+// The six-hour UTC rotation is independent of each scheduled run's phase.
+// A non-divisor schedule may repeat phases, so validate the actual 3/9/15/21 UTC cadence.
+const scheduledHours = [3, 9, 15, 21];
+const scheduledPhases = scheduledHours.map(hour => ["evidence", "raw", "map"][Math.floor(hour / 6) % 3]);
+if (new Set(scheduledPhases).size !== 3) throw new Error("Scheduled runs do not cover all phases");
+console.log("PASS: live backlog stress and scheduled phase rotation");
