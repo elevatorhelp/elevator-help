@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   ARCHIVE_INDEX_VERSION,
   DOCUMENT_MAP_VERSION,
@@ -9,6 +12,8 @@ import {
   canResumeEvidence,
   canResumeRaw,
   canResumeMap,
+  readIngestionState,
+  writeIngestionState,
   estimateRawGeminiCalls,
   needsMapBackfill,
   needsEvidenceBackfill,
@@ -286,3 +291,35 @@ if (JSON.stringify(backlog.pendingCounts) !== JSON.stringify({ evidence: 1, raw:
   throw new Error("Backlog diagnostics must include blocked phases without leaking file metadata");
 }
 console.log("PASS: full-backlog and eligible-queue counters");
+
+// Atomic checkpoint writes and fail-closed recovery after corruption.
+const stateTestDir = await mkdtemp(join(tmpdir(), "elevator-ingestion-state-"));
+try {
+  const stateFile = join(stateTestDir, "drive.json");
+  const fresh = await readIngestionState(stateFile);
+  if (fresh.version !== 3 || Object.keys(fresh.scopes).length !== 0) {
+    throw new Error("Missing checkpoint must initialize an empty state");
+  }
+  const sample = { version: 3, scopes: { archive: { files: { a: { rawNextChunk: 3 } } } } };
+  await writeIngestionState(sample, stateFile);
+  const restored = await readIngestionState(stateFile);
+  if (JSON.stringify(restored) !== JSON.stringify(sample)) {
+    throw new Error("Atomic checkpoint roundtrip failed");
+  }
+  if ((await readdir(stateTestDir)).some(name => name.endsWith(".tmp"))) {
+    throw new Error("Atomic checkpoint must not leave temporary files");
+  }
+  await writeFile(stateFile, '{"version":3,"scopes":', "utf8");
+  let rejectedCorrupt = false;
+  try { await readIngestionState(stateFile); }
+  catch (error) { rejectedCorrupt = String(error).includes("INGESTION_STATE_CORRUPT"); }
+  if (!rejectedCorrupt) throw new Error("Corrupt checkpoint must fail closed");
+  await writeFile(stateFile, '[]', "utf8");
+  let rejectedInvalid = false;
+  try { await readIngestionState(stateFile); }
+  catch (error) { rejectedInvalid = String(error).includes("INGESTION_STATE_CORRUPT"); }
+  if (!rejectedInvalid) throw new Error("Invalid checkpoint structure must fail closed");
+} finally {
+  await rm(stateTestDir, { recursive: true, force: true });
+}
+console.log("PASS: atomic checkpoint persistence and fail-closed recovery");

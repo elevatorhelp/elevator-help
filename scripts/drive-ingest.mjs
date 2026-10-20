@@ -1,5 +1,5 @@
 import { createHash, createSign } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -346,11 +346,7 @@ function fingerprint(file) {
 }
 
 async function loadState() {
-  try {
-    return JSON.parse(await readFile(STATE_PATH, "utf8"));
-  } catch {
-    return { version: 3, scopes: {} };
-  }
+  return readIngestionState();
 }
 
 function needsRawBackfill(previous, currentFingerprint, force = false) {
@@ -410,9 +406,45 @@ function canResumeMap(previous, currentFingerprint) {
     previous.mapNextPage > 1;
 }
 
+// A partially written or corrupted checkpoint must never be mistaken for an
+// empty archive: that could trigger a costly, archive-wide re-ingestion.
+async function readIngestionState(filePath = STATE_PATH) {
+  let content;
+  try {
+    content = await readFile(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return { version: 3, scopes: {} };
+    throw new Error("INGESTION_STATE_READ_FAILED", { cause: error });
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("INGESTION_STATE_CORRUPT: invalid JSON; refusing automatic reindex");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+      !parsed.scopes || typeof parsed.scopes !== "object" ||
+      Array.isArray(parsed.scopes)) {
+    throw new Error("INGESTION_STATE_CORRUPT: invalid checkpoint structure");
+  }
+  return parsed;
+}
+
+async function writeIngestionState(state, filePath = STATE_PATH) {
+  await mkdir(dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    // Rename within the same directory is atomic on the GitHub Actions runner.
+    await rename(temporaryPath, filePath);
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => {});
+    throw error;
+  }
+}
+
 async function saveState(state) {
-  await mkdir(dirname(STATE_PATH), { recursive: true });
-  await writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  return writeIngestionState(state);
 }
 
 async function callJsonEndpoint(endpoint, payload, token, label) {
@@ -1104,5 +1136,7 @@ export {
   canResumeEvidence,
   canResumeRaw,
   canResumeMap,
+  readIngestionState,
+  writeIngestionState,
   estimateRawGeminiCalls,
 };
