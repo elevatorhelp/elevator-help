@@ -14,15 +14,8 @@ on:
         description: Maximum changed documents to advance in this bounded run
         required: false
         default: "3"
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/drive-ingestion.yml'
-      - 'scripts/drive-ingest.mjs'
-      - 'scripts/document-identity.mjs'
-      - 'app/api/document-map-ingest/route.ts'
-      - 'app/api/drive-ingest-batch/route.ts'
-      - 'app/lib/multilingual-embedding.ts'
+  # Code merges must not initiate an unplanned paid archive ingestion.
+  # Ingestion is limited to its existing schedule or explicit manual dispatch.
 
 concurrency:
   group: elevator-help-drive-ingestion
