@@ -818,7 +818,7 @@ async function main() {
       }
       console.log('Exact-evidence index backfill required for archive document');
 
-      const resumeEvidence = resumeEvidence(previous, currentFingerprint);
+      const resumeEvidence = canResumeEvidence(previous, currentFingerprint);
       if (!resumeEvidence) {
         delete next.partialEvidenceIds;
         delete next.partialArchiveIndexVersion;
@@ -827,8 +827,8 @@ async function main() {
       }
       const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken, {
         onIdentity: (identity) => { next.documentIdentity = identity; },
-        startChunk: canResumeEvidence ? previous.evidenceNextChunk : 0,
-        initialIds: canResumeEvidence ? previous.partialEvidenceIds : [],
+        startChunk: resumeEvidence ? previous.evidenceNextChunk : 0,
+        initialIds: resumeEvidence ? previous.partialEvidenceIds : [],
         onProgress: async ({ ids, nextChunk }) => {
           next.partialEvidenceIds = ids;
           next.partialArchiveIndexVersion = ARCHIVE_INDEX_VERSION;
