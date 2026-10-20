@@ -450,7 +450,11 @@ async function writeIngestionState(state, filePath = STATE_PATH) {
 }
 
 async function saveState(state) {
-  return writeIngestionState(state);
+  try {
+    return await writeIngestionState(state);
+  } catch (error) {
+    throw new Error("INGESTION_STATE_WRITE_FAILED: stopping to avoid uncheckpointed writes", { cause: error });
+  }
 }
 
 async function callJsonEndpoint(endpoint, payload, token, label) {
@@ -1098,6 +1102,11 @@ async function main() {
       await saveState(state);
     }
     } catch (error) {
+      // State persistence failures are systemic, not document-local. Continuing
+      // would incur writes/API costs that cannot be resumed safely.
+      if (String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
+        throw error;
+      }
       // Preserve successful checkpoints and allow other files in this bounded
       // run to advance; still fail the workflow so the problem is visible.
       // Do not emit raw endpoint error bodies: they can contain private source metadata.
