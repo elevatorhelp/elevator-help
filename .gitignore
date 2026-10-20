@@ -4,3 +4,23 @@
 node_modules/
 .next/
 *.tsbuildinfo
+
+# Never commit local secrets or service-account credentials.
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.pem
+*.p12
+*.pfx
+*.key
+
+# Local state, databases and backups must not enter public Git history.
+.ingestion-state/
+*.sqlite
+*.sqlite3
+*.db
+*.sql.gz
+*.dump
+*.backup
