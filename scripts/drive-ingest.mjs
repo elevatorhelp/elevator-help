@@ -236,14 +236,30 @@ function createIngestionPlan(files, records = {}, force = false, preferredPhase 
     (needsMapBackfill(records[file.id], fingerprint(file), force) || records[file.id]?.metadataRefreshPendingMap)
   );
   const queues = { evidence, raw, map };
+  // Report both the full backlog and the work currently eligible after
+  // per-document prerequisites. These are counts only, not private filenames.
+  const pendingCounts = {
+    evidence: evidence.length,
+    raw: ordered.filter((file) =>
+      needsRawBackfill(records[file.id], fingerprint(file), force) ||
+      records[file.id]?.metadataRefreshPendingRaw
+    ).length,
+    map: ordered.filter((file) =>
+      needsMapBackfill(records[file.id], fingerprint(file), force) ||
+      records[file.id]?.metadataRefreshPendingMap
+    ).length,
+  };
+  const readyCounts = {
+    evidence: evidence.length, raw: raw.length, map: map.length,
+  };
   const phaseOrder = ["evidence", "raw", "map"];
   const preferredIndex = phaseOrder.indexOf(preferredPhase);
   const start = preferredIndex < 0 ? 0 : preferredIndex;
   for (let offset = 0; offset < phaseOrder.length; offset++) {
     const phase = phaseOrder[(start + offset) % phaseOrder.length];
-    if (queues[phase].length) return { phase, files: queues[phase] };
+    if (queues[phase].length) return { phase, files: queues[phase], pendingCounts, readyCounts };
   }
-  return { phase: "map", files: [] };
+  return { phase: "map", files: [], pendingCounts, readyCounts };
 }
 
 // A phase can contain more pending files than MAX_FILES permits in one run.
@@ -776,6 +792,8 @@ async function main() {
   const preferredPhase = phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
+  console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
+  console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);
   const changed = plan.files;
   console.log(
     `${changed.length} document(s) need the ${plan.phase} phase; exact evidence, semantic vectors and document maps advance archive-wide without file-specific routing`

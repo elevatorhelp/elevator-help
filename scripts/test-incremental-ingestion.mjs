@@ -278,3 +278,11 @@ if (canResumeEvidence({ ...evidenceCheckpoint, evidenceNextChunk: 3 }, "same") |
   throw new Error("Malformed or incomplete checkpoints must restart safely");
 }
 console.log("PASS: interrupted Evidence/Raw/Map checkpoint integrity and fingerprint guards");
+
+// Distinguish total unfinished archive stages from currently eligible work.
+const backlog = createIngestionPlan(phaseFiles, phaseRecords, false, "raw");
+if (JSON.stringify(backlog.pendingCounts) !== JSON.stringify({ evidence: 1, raw: 2, map: 3 }) ||
+    JSON.stringify(backlog.readyCounts) !== JSON.stringify({ evidence: 1, raw: 1, map: 1 })) {
+  throw new Error("Backlog diagnostics must include blocked phases without leaking file metadata");
+}
+console.log("PASS: full-backlog and eligible-queue counters");
