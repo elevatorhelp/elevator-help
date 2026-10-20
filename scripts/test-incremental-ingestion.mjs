@@ -6,6 +6,9 @@ import {
   createIngestionCallBudget,
   createIngestionPlan,
   selectFairIngestionBatch,
+  canResumeEvidence,
+  canResumeRaw,
+  canResumeMap,
   estimateRawGeminiCalls,
   needsMapBackfill,
   needsEvidenceBackfill,
@@ -234,3 +237,44 @@ if (selectFairIngestionBatch(pending, 0, cursor).files.length !== 0 ||
   throw new Error("A zero-file run must preserve the cursor without writes");
 }
 console.log("PASS: persistent cursor fairness across failures, completion and new arrivals");
+
+// Interrupted chunk batches must resume exactly at the first unprocessed chunk.
+const evidenceCheckpoint = {
+  partialArchiveIndexVersion: ARCHIVE_INDEX_VERSION,
+  partialEvidenceFingerprint: "same",
+  partialEvidenceIds: ["e0", "e1"],
+  evidenceNextChunk: 2,
+};
+const rawCheckpoint = {
+  partialRawEmbeddingVersion: RAW_EMBEDDING_VERSION,
+  partialRawFingerprint: "same",
+  partialRawIds: ["r0", "r1"],
+  rawNextChunk: 2,
+};
+const mapCheckpoint = {
+  partialMapVersion: DOCUMENT_MAP_VERSION,
+  partialMapFingerprint: "same",
+  partialMapIds: ["m0"],
+  mapNextPage: 7,
+};
+if (!canResumeEvidence(evidenceCheckpoint, "same") ||
+    !canResumeRaw(rawCheckpoint, "same") ||
+    !canResumeMap(mapCheckpoint, "same")) {
+  throw new Error("Valid interrupted checkpoints must resume");
+}
+for (const [resume, checkpoint] of [
+  [canResumeEvidence, evidenceCheckpoint],
+  [canResumeRaw, rawCheckpoint],
+  [canResumeMap, mapCheckpoint],
+]) {
+  if (resume(checkpoint, "changed")) {
+    throw new Error("A changed source fingerprint must invalidate the checkpoint");
+  }
+}
+if (canResumeEvidence({ ...evidenceCheckpoint, evidenceNextChunk: 3 }, "same") ||
+    canResumeRaw({ ...rawCheckpoint, rawNextChunk: 3 }, "same") ||
+    canResumeRaw({ ...rawCheckpoint, partialRawIds: [] }, "same") ||
+    canResumeMap({ ...mapCheckpoint, mapNextPage: 1 }, "same")) {
+  throw new Error("Malformed or incomplete checkpoints must restart safely");
+}
+console.log("PASS: interrupted Evidence/Raw/Map checkpoint integrity and fingerprint guards");

@@ -366,6 +366,34 @@ function needsMapBackfill(previous, currentFingerprint, force = false) {
   );
 }
 
+// Resume only checkpoints that describe a complete, contiguous processed prefix.
+// An inconsistent chunk count must restart at zero instead of silently skipping data.
+function canResumeEvidence(previous, currentFingerprint) {
+  return previous?.partialArchiveIndexVersion === ARCHIVE_INDEX_VERSION &&
+    previous?.partialEvidenceFingerprint === currentFingerprint &&
+    Array.isArray(previous?.partialEvidenceIds) &&
+    Number.isInteger(previous?.evidenceNextChunk) &&
+    previous.evidenceNextChunk > 0 &&
+    previous.partialEvidenceIds.length === previous.evidenceNextChunk;
+}
+
+function canResumeRaw(previous, currentFingerprint) {
+  return previous?.partialRawEmbeddingVersion === RAW_EMBEDDING_VERSION &&
+    previous?.partialRawFingerprint === currentFingerprint &&
+    Array.isArray(previous?.partialRawIds) &&
+    Number.isInteger(previous?.rawNextChunk) &&
+    previous.rawNextChunk > 0 &&
+    previous.partialRawIds.length === previous.rawNextChunk;
+}
+
+function canResumeMap(previous, currentFingerprint) {
+  return previous?.partialMapVersion === DOCUMENT_MAP_VERSION &&
+    previous?.partialMapFingerprint === currentFingerprint &&
+    Array.isArray(previous?.partialMapIds) &&
+    Number.isInteger(previous?.mapNextPage) &&
+    previous.mapNextPage > 1;
+}
+
 async function saveState(state) {
   await mkdir(dirname(STATE_PATH), { recursive: true });
   await writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
@@ -758,7 +786,7 @@ async function main() {
     changed, MAX_FILES, scope.phaseCursors[plan.phase] ?? null
   );
   const selected = batch.files;
-  if (selected.length) {
+  if (selected.length && !TARGET_FILE_ID) {
     // Advance and checkpoint before any network call. A failed file cannot
     // pin the entire archive to the same first batch on the next scheduled run.
     scope.phaseCursors[plan.phase] = batch.nextCursor;
@@ -790,14 +818,8 @@ async function main() {
       }
       console.log('Exact-evidence index backfill required for archive document');
 
-      const canResumeEvidence =
-        previous.partialArchiveIndexVersion === ARCHIVE_INDEX_VERSION &&
-        previous.partialEvidenceFingerprint === currentFingerprint &&
-        Array.isArray(previous.partialEvidenceIds) &&
-        Number.isInteger(previous.evidenceNextChunk) &&
-        previous.evidenceNextChunk > 0 &&
-        previous.partialEvidenceIds.length === previous.evidenceNextChunk;
-      if (!canResumeEvidence) {
+      const resumeEvidence = resumeEvidence(previous, currentFingerprint);
+      if (!resumeEvidence) {
         delete next.partialEvidenceIds;
         delete next.partialArchiveIndexVersion;
         delete next.partialEvidenceFingerprint;
@@ -839,16 +861,11 @@ async function main() {
 
     if (needsRaw) {
       console.log('Raw-vector backfill required for archive document');
-      const canResumeRaw =
-        previous.partialRawEmbeddingVersion === RAW_EMBEDDING_VERSION &&
-        previous.partialRawFingerprint === currentFingerprint &&
-        Array.isArray(previous.partialRawIds) &&
-        Number.isInteger(previous.rawNextChunk) &&
-        previous.rawNextChunk > 0;
-      const rawStartChunk = canResumeRaw ? previous.rawNextChunk : 0;
-      const initialRawIds = canResumeRaw ? previous.partialRawIds : [];
+      const resumeRaw = canResumeRaw(previous, currentFingerprint);
+      const rawStartChunk = resumeRaw ? previous.rawNextChunk : 0;
+      const initialRawIds = resumeRaw ? previous.partialRawIds : [];
 
-      if (!canResumeRaw) {
+      if (!resumeRaw) {
         delete next.partialRawIds;
         delete next.partialRawEmbeddingVersion;
         delete next.partialRawFingerprint;
@@ -939,19 +956,14 @@ async function main() {
         continue;
       }
       console.log('Document-map backfill required for archive document');
-      const canResumeMap =
-        previous.partialMapVersion === DOCUMENT_MAP_VERSION &&
-        previous.partialMapFingerprint === currentFingerprint &&
-        Array.isArray(previous.partialMapIds) &&
-        Number.isInteger(previous.mapNextPage) &&
-        previous.mapNextPage > 1;
-      const mapStartPage = canResumeMap ? previous.mapNextPage : 1;
-      const initialMapIds = canResumeMap ? previous.partialMapIds : [];
+      const resumeMap = canResumeMap(previous, currentFingerprint);
+      const mapStartPage = resumeMap ? previous.mapNextPage : 1;
+      const initialMapIds = resumeMap ? previous.partialMapIds : [];
 
       // A partial map belongs to the exact source fingerprint that created it.
       // If the Drive file changed (or the map schema/version changed), those
       // interrupted nodes must not survive while a fresh map is being built.
-      if (!canResumeMap && Array.isArray(previous.partialMapIds) && previous.partialMapIds.length) {
+      if (!resumeMap && Array.isArray(previous.partialMapIds) && previous.partialMapIds.length) {
         console.log(
           `Removing ${previous.partialMapIds.length} stale partial map vectors for archive document`
         );
@@ -1032,7 +1044,11 @@ async function main() {
     } catch (error) {
       // Preserve successful checkpoints and allow other files in this bounded
       // run to advance; still fail the workflow so the problem is visible.
-      console.error("Archive document processing failed (source redacted):", error);
+      // Do not emit raw endpoint error bodies: they can contain private source metadata.
+      const failureKind = String(error?.message || "").includes("INGESTION_GEMINI_BUDGET_EXCEEDED")
+        ? "INGESTION_GEMINI_BUDGET_EXCEEDED"
+        : error instanceof Error ? error.name : "UnknownError";
+      console.error("Archive document processing failed (source redacted); category:", failureKind);
       fileErrors.push(error);
     }
   }
@@ -1067,5 +1083,8 @@ export {
   createIngestionCallBudget,
   createIngestionPlan,
   selectFairIngestionBatch,
+  canResumeEvidence,
+  canResumeRaw,
+  canResumeMap,
   estimateRawGeminiCalls,
 };
