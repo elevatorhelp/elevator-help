@@ -41,6 +41,9 @@ jobs:
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
+      - name: Test privacy of stored learning candidates
+        run: npm run test:cortex-learning
+
       - name: Test standards presentation
         run: npm run test:standards-presentation
 
