@@ -120,7 +120,10 @@ jobs:
           DRIVE_FOLDER_ID: ${{ inputs.folder_id || '1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5' }}
           # Free D1 tier: bound scheduled writes; manual runs can override.
           MAX_FILES: ${{ inputs.max_files || '2' }}
-          MAX_GEMINI_CALLS: "30"
+          # Raise only the bounded Gemini call budget (30 -> 60), not D1 file throughput.
+          # scripts/drive-ingest.mjs rejects any value above 60; raw/map resume via checkpoints.
+          # Rollback: set this back to 30. No additional subscription or API purchase.
+          MAX_GEMINI_CALLS: "60"
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
         run: node scripts/drive-ingest.mjs

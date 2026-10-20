@@ -35,6 +35,31 @@ try {
 if (!budgetBlocked) {
   throw new Error("Ingestion budget must stop work before exceeding its limit");
 }
+const acceleratedBudget = createIngestionCallBudget(60);
+acceleratedBudget.reserve(60, "bounded accelerated backfill");
+if (acceleratedBudget.snapshot().remaining !== 0) {
+  throw new Error("Accelerated ingestion must account for every reserved call");
+}
+let overHardCeilingRejected = false;
+try {
+  createIngestionCallBudget(61);
+} catch (error) {
+  overHardCeilingRejected = String(error).includes("MAX_GEMINI_CALLS");
+}
+if (!overHardCeilingRejected) {
+  throw new Error("Gemini ingestion hard ceiling must reject >60 calls per run");
+}
+let acceleratedOverflowRejected = false;
+try {
+  acceleratedBudget.reserve(1, "unexpected extra Gemini call");
+} catch (error) {
+  acceleratedOverflowRejected = String(error).includes("INGESTION_GEMINI_BUDGET_EXCEEDED");
+}
+if (!acceleratedOverflowRejected) {
+  throw new Error("Accelerated ingestion must still fail closed at the call cap");
+}
+console.log("PASS: bounded 60-call acceleration, hard ceiling and cost stop");
+
 
 if (
   ARCHIVE_INDEX_VERSION !== 3 ||
