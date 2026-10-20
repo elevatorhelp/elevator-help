@@ -42,12 +42,15 @@ const RAW_EMBEDDING_VERSION = 3;
 const ARCHIVE_INDEX_VERSION = 3;
 const GEMINI_CALLS_PER_RAW_BATCH = 2;
 const GEMINI_CALLS_PER_MAP_WINDOW = 3;
+// Hard stop against unbounded prepaid Gemini API usage in a single archive run.
+// Workflow can raise its bounded run to 60 calls; the script rejects higher values.
+const MAX_GEMINI_CALLS_HARD_CEILING = 60;
 const MAX_GEMINI_CALLS = Number(process.env.MAX_GEMINI_CALLS || "30");
 
 function createIngestionCallBudget(limitValue = MAX_GEMINI_CALLS) {
   const limit = Number(limitValue);
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw new Error("MAX_GEMINI_CALLS must be a positive integer");
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_GEMINI_CALLS_HARD_CEILING) {
+    throw new Error(`MAX_GEMINI_CALLS must be an integer between 1 and ${MAX_GEMINI_CALLS_HARD_CEILING}`);
   }
   let reserved = 0;
   return {
