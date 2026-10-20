@@ -46,4 +46,6 @@ const results=[false,true].map(expanded=>{
  return {mode:expanded?'alias-expansion':'exact',synthetic:true,total:rows.length,passed:rows.filter(r=>r.expected===r.found).length,rows};
 });
 assert(results.every(r=>r.rows.filter(x=>x.expected===null).every(x=>x.found===null)),'Absent evidence must abstain');
+assert(results.every(r=>r.rows.filter(x=>x.id.startsWith('maker-') || x.id==='contradiction').every(x=>x.found===x.expected)),'Manufacturer-scoped retrieval must not mix error codes');
+assert(results.every(r=>r.rows.filter(x=>x.id==='roof-current').every(x=>x.found===x.expected)),'Current revision must win');
 console.log(JSON.stringify({note:'Toy lexical baseline, not actual production RAG',results},null,2));
