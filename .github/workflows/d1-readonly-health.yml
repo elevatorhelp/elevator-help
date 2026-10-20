@@ -1,0 +1,53 @@
+name: D1 Read-only Health
+
+on:
+  push:
+    branches: [qa/d1-readonly-health-20261020]
+    paths:
+      - '.github/workflows/d1-readonly-health.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: d1-readonly-health
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout read-only diagnostics
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install pinned project dependencies
+        run: npm ci
+      - name: Verify production D1 metadata (read-only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx wrangler d1 info elevator-help-cortex
+      - name: Check production D1 aggregate health (SELECT only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute elevator-help-cortex --remote --command "SELECT (SELECT COUNT(*) FROM archive_chunks) AS evidence_chunks, (SELECT COUNT(DISTINCT source_file_id) FROM archive_chunks) AS evidence_documents, (SELECT COUNT(*) FROM archive_chunk_search) AS compact_reference_rows, (SELECT COUNT(*) FROM archive_chunk_search_fts) AS fts_reference_rows, (SELECT COUNT(*) FROM daily_question_usage) AS usage_records, (SELECT COUNT(*) FROM learning_candidates) AS learning_candidates;"
+      - name: Verify time-travel restore window (read-only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 time-travel info elevator-help-cortex
