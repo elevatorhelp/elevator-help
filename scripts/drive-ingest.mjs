@@ -246,6 +246,41 @@ function createIngestionPlan(files, records = {}, force = false, preferredPhase 
   return { phase: "map", files: [] };
 }
 
+// A phase can contain more pending files than MAX_FILES permits in one run.
+// Persisting a cursor prevents a permanently failing or unusually large file
+// at the front of the alphabetical queue from blocking all later documents.
+function ingestionSortKey(file) {
+  return `${String(file.sourcePath || file.name || "")}\u0000${String(file.id || "")}`;
+}
+
+function selectFairIngestionBatch(files, maxFiles, lastCursor = null) {
+  const ordered = [...files].sort((a, b) =>
+    ingestionSortKey(a).localeCompare(ingestionSortKey(b), "en")
+  );
+  const requested = Number(maxFiles);
+  const count = Number.isFinite(requested)
+    ? Math.min(ordered.length, Math.max(0, Math.floor(requested)))
+    : 0;
+  if (!count) return { files: [], nextCursor: lastCursor };
+
+  // The cursor is a stable path + Drive ID, not an array offset: completed
+  // files disappear from the queue, while newly uploaded files can be added.
+  const nextIndex = lastCursor == null
+    ? 0
+    : ordered.findIndex((file) =>
+        ingestionSortKey(file).localeCompare(lastCursor, "en") > 0
+      );
+  const start = nextIndex < 0 ? 0 : nextIndex;
+  const selected = Array.from(
+    { length: count },
+    (_, index) => ordered[(start + index) % ordered.length]
+  );
+  return {
+    files: selected,
+    nextCursor: ingestionSortKey(selected[selected.length - 1]),
+  };
+}
+
 function normalizeText(text) {
   return String(text || "")
     .replace(/\u0000/g, "")
@@ -718,9 +753,22 @@ async function main() {
     `${changed.length} document(s) need the ${plan.phase} phase; exact evidence, semantic vectors and document maps advance archive-wide without file-specific routing`
   );
 
-  const selected = changed.slice(0, Math.max(0, MAX_FILES));
+  scope.phaseCursors ||= {};
+  const batch = selectFairIngestionBatch(
+    changed, MAX_FILES, scope.phaseCursors[plan.phase] ?? null
+  );
+  const selected = batch.files;
+  if (selected.length) {
+    // Advance and checkpoint before any network call. A failed file cannot
+    // pin the entire archive to the same first batch on the next scheduled run.
+    scope.phaseCursors[plan.phase] = batch.nextCursor;
+    state.scopes[DRIVE_FOLDER_ID] = scope;
+    await saveState(state);
+  }
 
+  const fileErrors = [];
   for (const file of selected) {
+    try {
     const previous = scope.files[file.id] || {};
     const currentFingerprint = fingerprint(file);
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
@@ -981,6 +1029,12 @@ async function main() {
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
     }
+    } catch (error) {
+      // Preserve successful checkpoints and allow other files in this bounded
+      // run to advance; still fail the workflow so the problem is visible.
+      console.error("Archive document processing failed (source redacted):", error);
+      fileErrors.push(error);
+    }
   }
 
   state.scopes[DRIVE_FOLDER_ID] = scope;
@@ -988,8 +1042,11 @@ async function main() {
 
   const budget = ingestionBudget.snapshot();
   console.log(
-    `Done. Processed ${selected.length} file(s); ${Math.max(0, changed.length - selected.length)} changed file(s) remain. Gemini calls reserved: ${budget.reserved}/${budget.limit}.`
+    `Done. Attempted ${selected.length} file(s); ${fileErrors.length} failed; ${Math.max(0, changed.length - selected.length)} not selected this run. Gemini calls reserved: ${budget.reserved}/${budget.limit}.`
   );
+  if (fileErrors.length) {
+    throw new Error(`INGESTION_DOCUMENT_FAILURES: ${fileErrors.length}/${selected.length} document(s) failed; see redacted error logs`);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -1009,5 +1066,6 @@ export {
   needsRawBackfill,
   createIngestionCallBudget,
   createIngestionPlan,
+  selectFairIngestionBatch,
   estimateRawGeminiCalls,
 };

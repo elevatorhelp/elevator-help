@@ -5,6 +5,7 @@ import {
   fingerprint,
   createIngestionCallBudget,
   createIngestionPlan,
+  selectFairIngestionBatch,
   estimateRawGeminiCalls,
   needsMapBackfill,
   needsEvidenceBackfill,
@@ -195,3 +196,41 @@ const scheduledHours = [3, 9, 15, 21];
 const scheduledPhases = scheduledHours.map(hour => ["evidence", "raw", "map"][Math.floor(hour / 6) % 3]);
 if (new Set(scheduledPhases).size !== 3) throw new Error("Scheduled runs do not cover all phases");
 console.log("PASS: live backlog stress and scheduled phase rotation");
+
+// Cursor-based file fairness: a bad first file must not starve other files.
+const pending = Array.from({ length: 7 }, (_, index) => ({
+  id: `file-${index}`, name: `file-${index}.pdf`,
+  sourcePath: `archive/file-${index}.pdf`, md5Checksum: `hash-${index}`,
+}));
+let cursor = null;
+const visited = new Set();
+for (let run = 0; run < 4; run++) {
+  const batch = selectFairIngestionBatch(pending, 2, cursor);
+  if (batch.files.length !== 2) throw new Error("MAX_FILES must bound each run");
+  batch.files.forEach((file) => visited.add(file.id));
+  cursor = batch.nextCursor;
+}
+if (visited.size !== pending.length) {
+  throw new Error("A persistent first-file failure must not starve later files");
+}
+// Cursor must survive successful files leaving the queue, and newly arrived
+// files sorting before it must be processed after wraparound.
+const afterCompletion = selectFairIngestionBatch(
+  [pending[0], pending[4], pending[5], pending[6]], 2,
+  selectFairIngestionBatch(pending, 2, null).nextCursor
+);
+if (afterCompletion.files.map((file) => file.id).join(",") !== "file-4,file-5") {
+  throw new Error("Cursor must remain stable when completed files disappear");
+}
+const wrap = selectFairIngestionBatch(
+  [pending[0], pending[6]], 2,
+  selectFairIngestionBatch(pending.slice(5), 2, null).nextCursor
+);
+if (wrap.files.map((file) => file.id).join(",") !== "file-0,file-6") {
+  throw new Error("Cursor must wrap to newly arrived earlier-sorted documents");
+}
+if (selectFairIngestionBatch(pending, 0, cursor).files.length !== 0 ||
+    selectFairIngestionBatch(pending, 0, cursor).nextCursor !== cursor) {
+  throw new Error("A zero-file run must preserve the cursor without writes");
+}
+console.log("PASS: persistent cursor fairness across failures, completion and new arrivals");
