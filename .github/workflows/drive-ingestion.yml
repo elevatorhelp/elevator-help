@@ -14,15 +14,8 @@ on:
         description: Maximum changed documents to advance in this bounded run
         required: false
         default: "3"
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/drive-ingestion.yml'
-      - 'scripts/drive-ingest.mjs'
-      - 'scripts/document-identity.mjs'
-      - 'app/api/document-map-ingest/route.ts'
-      - 'app/api/drive-ingest-batch/route.ts'
-      - 'app/lib/multilingual-embedding.ts'
+  # Code merges must not initiate an unplanned paid archive ingestion.
+  # Ingestion is limited to its existing schedule or explicit manual dispatch.
 
 concurrency:
   group: elevator-help-drive-ingestion
@@ -105,6 +98,15 @@ jobs:
           key: drive-ingestion-state-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             drive-ingestion-state-
+
+      # GitHub Actions caches are evictable. Losing the checkpoint must not
+      # silently trigger a paid full-archive reindex.
+      - name: Require restored ingestion checkpoint
+        run: |
+          if [ ! -s .ingestion-state/drive.json ]; then
+            echo "::error::INGESTION_STATE_MISSING: no persisted checkpoint was restored. Restore or explicitly bootstrap state before ingestion."
+            exit 1
+          fi
 
       - name: Guard Google JWT grant type
         run: |

@@ -1,5 +1,5 @@
 import { createHash, createSign } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -236,14 +236,65 @@ function createIngestionPlan(files, records = {}, force = false, preferredPhase 
     (needsMapBackfill(records[file.id], fingerprint(file), force) || records[file.id]?.metadataRefreshPendingMap)
   );
   const queues = { evidence, raw, map };
+  // Report both the full backlog and the work currently eligible after
+  // per-document prerequisites. These are counts only, not private filenames.
+  const pendingCounts = {
+    evidence: evidence.length,
+    raw: ordered.filter((file) =>
+      needsRawBackfill(records[file.id], fingerprint(file), force) ||
+      records[file.id]?.metadataRefreshPendingRaw
+    ).length,
+    map: ordered.filter((file) =>
+      needsMapBackfill(records[file.id], fingerprint(file), force) ||
+      records[file.id]?.metadataRefreshPendingMap
+    ).length,
+  };
+  const readyCounts = {
+    evidence: evidence.length, raw: raw.length, map: map.length,
+  };
   const phaseOrder = ["evidence", "raw", "map"];
   const preferredIndex = phaseOrder.indexOf(preferredPhase);
   const start = preferredIndex < 0 ? 0 : preferredIndex;
   for (let offset = 0; offset < phaseOrder.length; offset++) {
     const phase = phaseOrder[(start + offset) % phaseOrder.length];
-    if (queues[phase].length) return { phase, files: queues[phase] };
+    if (queues[phase].length) return { phase, files: queues[phase], pendingCounts, readyCounts };
   }
-  return { phase: "map", files: [] };
+  return { phase: "map", files: [], pendingCounts, readyCounts };
+}
+
+// A phase can contain more pending files than MAX_FILES permits in one run.
+// Persisting a cursor prevents a permanently failing or unusually large file
+// at the front of the alphabetical queue from blocking all later documents.
+function ingestionSortKey(file) {
+  return `${String(file.sourcePath || file.name || "")}\u0000${String(file.id || "")}`;
+}
+
+function selectFairIngestionBatch(files, maxFiles, lastCursor = null) {
+  const ordered = [...files].sort((a, b) =>
+    ingestionSortKey(a).localeCompare(ingestionSortKey(b), "en")
+  );
+  const requested = Number(maxFiles);
+  const count = Number.isFinite(requested)
+    ? Math.min(ordered.length, Math.max(0, Math.floor(requested)))
+    : 0;
+  if (!count) return { files: [], nextCursor: lastCursor };
+
+  // The cursor is a stable path + Drive ID, not an array offset: completed
+  // files disappear from the queue, while newly uploaded files can be added.
+  const nextIndex = lastCursor == null
+    ? 0
+    : ordered.findIndex((file) =>
+        ingestionSortKey(file).localeCompare(lastCursor, "en") > 0
+      );
+  const start = nextIndex < 0 ? 0 : nextIndex;
+  const selected = Array.from(
+    { length: count },
+    (_, index) => ordered[(start + index) % ordered.length]
+  );
+  return {
+    files: selected,
+    nextCursor: ingestionSortKey(selected[selected.length - 1]),
+  };
 }
 
 function normalizeText(text) {
@@ -295,11 +346,7 @@ function fingerprint(file) {
 }
 
 async function loadState() {
-  try {
-    return JSON.parse(await readFile(STATE_PATH, "utf8"));
-  } catch {
-    return { version: 3, scopes: {} };
-  }
+  return readIngestionState();
 }
 
 function needsRawBackfill(previous, currentFingerprint, force = false) {
@@ -331,9 +378,83 @@ function needsMapBackfill(previous, currentFingerprint, force = false) {
   );
 }
 
+// Resume only checkpoints that describe a complete, contiguous processed prefix.
+// An inconsistent chunk count must restart at zero instead of silently skipping data.
+function canResumeEvidence(previous, currentFingerprint) {
+  return previous?.partialArchiveIndexVersion === ARCHIVE_INDEX_VERSION &&
+    previous?.partialEvidenceFingerprint === currentFingerprint &&
+    Array.isArray(previous?.partialEvidenceIds) &&
+    Number.isInteger(previous?.evidenceNextChunk) &&
+    previous.evidenceNextChunk > 0 &&
+    previous.partialEvidenceIds.length === previous.evidenceNextChunk;
+}
+
+function canResumeRaw(previous, currentFingerprint) {
+  return previous?.partialRawEmbeddingVersion === RAW_EMBEDDING_VERSION &&
+    previous?.partialRawFingerprint === currentFingerprint &&
+    Array.isArray(previous?.partialRawIds) &&
+    Number.isInteger(previous?.rawNextChunk) &&
+    previous.rawNextChunk > 0 &&
+    previous.partialRawIds.length === previous.rawNextChunk;
+}
+
+function canResumeMap(previous, currentFingerprint) {
+  return previous?.partialMapVersion === DOCUMENT_MAP_VERSION &&
+    previous?.partialMapFingerprint === currentFingerprint &&
+    Array.isArray(previous?.partialMapIds) &&
+    Number.isInteger(previous?.mapNextPage) &&
+    previous.mapNextPage > 1;
+}
+
+// A partially written or corrupted checkpoint must never be mistaken for an
+// empty archive: that could trigger a costly, archive-wide re-ingestion.
+async function readIngestionState(
+  filePath = STATE_PATH,
+  allowEmpty = process.env.ALLOW_EMPTY_INGESTION_STATE === "true"
+) {
+  let content;
+  try {
+    content = await readFile(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      if (allowEmpty) return { version: 3, scopes: {} };
+      throw new Error("INGESTION_STATE_MISSING: explicit bootstrap required before ingestion");
+    }
+    throw new Error("INGESTION_STATE_READ_FAILED", { cause: error });
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("INGESTION_STATE_CORRUPT: invalid JSON; refusing automatic reindex");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+      !parsed.scopes || typeof parsed.scopes !== "object" ||
+      Array.isArray(parsed.scopes)) {
+    throw new Error("INGESTION_STATE_CORRUPT: invalid checkpoint structure");
+  }
+  return parsed;
+}
+
+async function writeIngestionState(state, filePath = STATE_PATH) {
+  await mkdir(dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    // Rename within the same directory is atomic on the GitHub Actions runner.
+    await rename(temporaryPath, filePath);
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => {});
+    throw error;
+  }
+}
+
 async function saveState(state) {
-  await mkdir(dirname(STATE_PATH), { recursive: true });
-  await writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  try {
+    return await writeIngestionState(state);
+  } catch (error) {
+    throw new Error("INGESTION_STATE_WRITE_FAILED: stopping to avoid uncheckpointed writes", { cause: error });
+  }
 }
 
 async function callJsonEndpoint(endpoint, payload, token, label) {
@@ -713,14 +834,29 @@ async function main() {
   const preferredPhase = phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
+  console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
+  console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);
   const changed = plan.files;
   console.log(
     `${changed.length} document(s) need the ${plan.phase} phase; exact evidence, semantic vectors and document maps advance archive-wide without file-specific routing`
   );
 
-  const selected = changed.slice(0, Math.max(0, MAX_FILES));
+  scope.phaseCursors ||= {};
+  const batch = selectFairIngestionBatch(
+    changed, MAX_FILES, scope.phaseCursors[plan.phase] ?? null
+  );
+  const selected = batch.files;
+  if (selected.length && !TARGET_FILE_ID) {
+    // Advance and checkpoint before any network call. A failed file cannot
+    // pin the entire archive to the same first batch on the next scheduled run.
+    scope.phaseCursors[plan.phase] = batch.nextCursor;
+    state.scopes[DRIVE_FOLDER_ID] = scope;
+    await saveState(state);
+  }
 
+  const fileErrors = [];
   for (const file of selected) {
+    try {
     const previous = scope.files[file.id] || {};
     const currentFingerprint = fingerprint(file);
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
@@ -742,14 +878,8 @@ async function main() {
       }
       console.log('Exact-evidence index backfill required for archive document');
 
-      const canResumeEvidence =
-        previous.partialArchiveIndexVersion === ARCHIVE_INDEX_VERSION &&
-        previous.partialEvidenceFingerprint === currentFingerprint &&
-        Array.isArray(previous.partialEvidenceIds) &&
-        Number.isInteger(previous.evidenceNextChunk) &&
-        previous.evidenceNextChunk > 0 &&
-        previous.partialEvidenceIds.length === previous.evidenceNextChunk;
-      if (!canResumeEvidence) {
+      const resumeEvidence = canResumeEvidence(previous, currentFingerprint);
+      if (!resumeEvidence) {
         delete next.partialEvidenceIds;
         delete next.partialArchiveIndexVersion;
         delete next.partialEvidenceFingerprint;
@@ -757,8 +887,8 @@ async function main() {
       }
       const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken, {
         onIdentity: (identity) => { next.documentIdentity = identity; },
-        startChunk: canResumeEvidence ? previous.evidenceNextChunk : 0,
-        initialIds: canResumeEvidence ? previous.partialEvidenceIds : [],
+        startChunk: resumeEvidence ? previous.evidenceNextChunk : 0,
+        initialIds: resumeEvidence ? previous.partialEvidenceIds : [],
         onProgress: async ({ ids, nextChunk }) => {
           next.partialEvidenceIds = ids;
           next.partialArchiveIndexVersion = ARCHIVE_INDEX_VERSION;
@@ -791,16 +921,11 @@ async function main() {
 
     if (needsRaw) {
       console.log('Raw-vector backfill required for archive document');
-      const canResumeRaw =
-        previous.partialRawEmbeddingVersion === RAW_EMBEDDING_VERSION &&
-        previous.partialRawFingerprint === currentFingerprint &&
-        Array.isArray(previous.partialRawIds) &&
-        Number.isInteger(previous.rawNextChunk) &&
-        previous.rawNextChunk > 0;
-      const rawStartChunk = canResumeRaw ? previous.rawNextChunk : 0;
-      const initialRawIds = canResumeRaw ? previous.partialRawIds : [];
+      const resumeRaw = canResumeRaw(previous, currentFingerprint);
+      const rawStartChunk = resumeRaw ? previous.rawNextChunk : 0;
+      const initialRawIds = resumeRaw ? previous.partialRawIds : [];
 
-      if (!canResumeRaw) {
+      if (!resumeRaw) {
         delete next.partialRawIds;
         delete next.partialRawEmbeddingVersion;
         delete next.partialRawFingerprint;
@@ -891,19 +1016,14 @@ async function main() {
         continue;
       }
       console.log('Document-map backfill required for archive document');
-      const canResumeMap =
-        previous.partialMapVersion === DOCUMENT_MAP_VERSION &&
-        previous.partialMapFingerprint === currentFingerprint &&
-        Array.isArray(previous.partialMapIds) &&
-        Number.isInteger(previous.mapNextPage) &&
-        previous.mapNextPage > 1;
-      const mapStartPage = canResumeMap ? previous.mapNextPage : 1;
-      const initialMapIds = canResumeMap ? previous.partialMapIds : [];
+      const resumeMap = canResumeMap(previous, currentFingerprint);
+      const mapStartPage = resumeMap ? previous.mapNextPage : 1;
+      const initialMapIds = resumeMap ? previous.partialMapIds : [];
 
       // A partial map belongs to the exact source fingerprint that created it.
       // If the Drive file changed (or the map schema/version changed), those
       // interrupted nodes must not survive while a fresh map is being built.
-      if (!canResumeMap && Array.isArray(previous.partialMapIds) && previous.partialMapIds.length) {
+      if (!resumeMap && Array.isArray(previous.partialMapIds) && previous.partialMapIds.length) {
         console.log(
           `Removing ${previous.partialMapIds.length} stale partial map vectors for archive document`
         );
@@ -981,6 +1101,21 @@ async function main() {
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
     }
+    } catch (error) {
+      // State persistence failures are systemic, not document-local. Continuing
+      // would incur writes/API costs that cannot be resumed safely.
+      if (String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
+        throw error;
+      }
+      // Preserve successful checkpoints and allow other files in this bounded
+      // run to advance; still fail the workflow so the problem is visible.
+      // Do not emit raw endpoint error bodies: they can contain private source metadata.
+      const failureKind = String(error?.message || "").includes("INGESTION_GEMINI_BUDGET_EXCEEDED")
+        ? "INGESTION_GEMINI_BUDGET_EXCEEDED"
+        : error instanceof Error ? error.name : "UnknownError";
+      console.error("Archive document processing failed (source redacted); category:", failureKind);
+      fileErrors.push(error);
+    }
   }
 
   state.scopes[DRIVE_FOLDER_ID] = scope;
@@ -988,8 +1123,11 @@ async function main() {
 
   const budget = ingestionBudget.snapshot();
   console.log(
-    `Done. Processed ${selected.length} file(s); ${Math.max(0, changed.length - selected.length)} changed file(s) remain. Gemini calls reserved: ${budget.reserved}/${budget.limit}.`
+    `Done. Attempted ${selected.length} file(s); ${fileErrors.length} failed; ${Math.max(0, changed.length - selected.length)} not selected this run. Gemini calls reserved: ${budget.reserved}/${budget.limit}.`
   );
+  if (fileErrors.length) {
+    throw new Error(`INGESTION_DOCUMENT_FAILURES: ${fileErrors.length}/${selected.length} document(s) failed; see redacted error logs`);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -1009,5 +1147,11 @@ export {
   needsRawBackfill,
   createIngestionCallBudget,
   createIngestionPlan,
+  selectFairIngestionBatch,
+  canResumeEvidence,
+  canResumeRaw,
+  canResumeMap,
+  readIngestionState,
+  writeIngestionState,
   estimateRawGeminiCalls,
 };
