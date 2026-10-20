@@ -56,6 +56,9 @@ jobs:
       - name: Test incremental archive ingestion
         run: npm run test:incremental-ingestion
 
+      - name: Test archive capacity lower-bound calculations (offline)
+        run: npm run test:archive-capacity
+
       - name: Test document identity and language detection
         run: node scripts/test-document-identity.mjs
 
