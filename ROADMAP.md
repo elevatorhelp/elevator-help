@@ -2,7 +2,7 @@
 
 **Canonical plan — one source of truth.** Updated 2026-10-20.
 **Owner:** elevator.help project owner. **Implementation:** engineering/Codex with GitHub PR + CI + production evidence.
-**Target Beta sign-off:** **2026-11-13**. **Target Gamma sign-off:** **2026-12-11**.
+**Target Beta sign-off:** **2026-11-13**. **Owner-approved target Gamma sign-off:** **2026-12-11**.
 **GitHub privacy/repository decision and execution:** **2026-12-14 to 2026-12-18, AFTER Gamma**.
 These are timeboxed **targets**, not claims that the work is complete or unconditional delivery guarantees. Feasibility must be checked on 2026-10-23 and explicitly escalated if impossible.
 
@@ -137,7 +137,7 @@ Deliver a **multilingual Super GPT for elevator engineering**: natural DE/EN/FA 
 
 **NOT PROVEN:** full archive indexing across all three phases; production end-to-end citation correctness; backup and restore drill; broad human Beta; multimodal uploads; sandboxed Excel; validated FAQ/My Elevator; managed File Search benchmark result. Latest archived source counts are historical snapshots, not current completion evidence.
 
-**Open supporting tickets:** #39 (phase fairness/backlog), #40 (Docling/MarkItDown/other tools), #25 (Gamma tracking). Experimental PRs #42/#45 are not pre-approved for merge.
+**Open supporting tickets:** #50 (critical ingestion capacity blocker), #39 (phase fairness/backlog), #40 (Docling/MarkItDown/other tools), #25 (Gamma tracking). Experimental PRs #42/#45 are not pre-approved for merge.
 
 ## 6. Weekly status update template (update IN THIS FILE, not in a new roadmap)
 
@@ -157,4 +157,54 @@ Deliver a **multilingual Super GPT for elevator engineering**: natural DE/EN/FA 
 - GitHub #39 — phase scheduling/backlog
 - GitHub #40 — extraction/tool benchmarks
 
-**Next authorized task:** M0 read-only evidence and feasibility assessment. No change to production ingestion rate or architecture until evidence and approval.
+**Next authorized task:** M0 read-only evidence and feasibility assessment (#50). No change to production ingestion rate or architecture until evidence and approval.
+
+
+## 8. HOW we deliver — execution operating model (approved Gamma target: 2026-12-11)
+
+**Delivery is not a background claim.** The assistant is the **technical coordinator and implementer when connected tools permit**: inspects GitHub/workflows, decomposes work, authors safe changes in isolated branches, requests CI evidence, merges only after gates, reviews production logs, and reports concrete blockers. Existing GitHub Actions runs are real scheduled work; they are not autonomous code developers. Codex Tasks currently reports **zero registered environments** (checked 2026-10-20); do not depend on an imaginary always-on Codex worker. Recheck environment connectivity before assigning a durable Codex coding task. If the user wants scheduled proactive summaries, explicitly create and verify a real automation rather than promising unscheduled follow-up.
+
+### Work management — one queue, no circular discussion
+
+1. **ROADMAP.md is the canonical backlog/order**; one active milestone at a time. Use one GitHub issue per independent actionable blocker/work package, each linked to the milestone, evidence and Definition of Done. **Issue #50 is the first active critical blocker.** Issues #39/#40 support it.
+2. **Each issue must have:** observable problem, exact files/flows in scope, owner/tool, due date, acceptance tests, estimated effort and API/Cloudflare cost impact, rollback/stop condition. Do not open speculative implementation PRs.
+3. **Work in 24–48h slices:** diagnose → minimal change → targeted regression test → Build Check → PR review → merge → production/real retrieval proof → update roadmap. If one slice fails, isolate it and stop; don't hide failure behind a new feature.
+4. **No more than one risky ingestion/retrieval PR active at a time.** Independent read-only benchmarks and docs may proceed in parallel; no competing writes to D1/Vectorize or simultaneous changes to ingest scheduling.
+5. **Daily checkpoint while active:** read the latest scheduled ingestion run and backlog, last successful production deploy, CI failures, quota/expense indicators and critical security issues; log metrics, run URL and any blocker. A scheduled GitHub Actions monitoring/reporting workflow can be implemented after permissions and data minimization are reviewed; **not yet installed**.
+6. **Friday release checkpoint:** record Done / In progress / Blocked, test links, pending phase work, measured throughput, cost and forecast in the table above. If a milestone slips, escalate the same day with two options: safe acceleration (measured time/cost) or explicit re-scope/re-date with owner approval. Do not quietly change the target.
+7. **User involvement is exception-based:** only approve extra spend, external processing of private/paid standards, production destructive migration, security-sensitive account changes, or material product scope/date changes. Routine read-only analysis, documentation, test development and isolated PRs are engineering responsibilities.
+8. **Safety/quality before calendar:** zero unverified normative citations, cross-account data leakage or untested restore paths in a release. Optional SEO polish and nonessential UI extras can be deferred only with explicit owner approval, never by silently declaring Gamma done.
+
+### Actual capacity blocker and required intervention (2026-10-20)
+
+[Live Archive run 39438032661](https://github.com/elevatorhelp/elevator-help/actions/runs/39438032661) reports **241 supported documents; Evidence backlog 142, raw-vector backlog 194, document-map backlog 194** (eligible now: Evidence 142, raw 70, map 0). It attempted **2 Evidence files** and indexed **52 exact chunks** with **0/30 Gemini calls reserved**. These are **530 phase-document operations**, not 530 distinct files.
+
+At four scheduled runs/day × two files/run, the theoretical floor is **530/8 = 66.25 days** without failures, new uploads, API limits or uneven document sizes. To clear in ~17 days by Nov 6 requires **≥32 phase-document operations/day** (roughly **8 per run**) as a bare minimum; target **40/day** with margin only if D1/Gemini quotas, CI minutes, checkpoint safety and cost allow it. A fixed larger \`MAX_FILES\` alone is not a validated solution; raw and map phases consume Gemini budget and can hit write/throughput ceilings. **M2 is blocked at current settings.**
+
+[D1 read-only health run 39439194167](https://github.com/elevatorhelp/elevator-help/actions/runs/39439194167) showed 7,882 evidence chunks and 2,814 D1 rows written in 24h, with no detected orphan/missing compact/identifier/clause rows. This does not prove Vectorize completion, safe future D1 capacity, or backup restorability.
+
+**Immediate execution ticket:** [#50 — measure and safely accelerate archive throughput](https://github.com/elevatorhelp/elevator-help/issues/50).
+
+### 72-hour first delivery slice (Oct 20–23)
+
+| When | Concrete action | Responsible path | Output and stop condition |
+| --- | --- | --- | --- |
+| **Oct 20** | Read current ingestion + D1 health logs; quantify phase backlog, baseline capacity, actual constraints | Assistant + GitHub read-only | **DONE**: 530 phase operations, ~67-day theoretical floor at current rate, source-linked issue #50 |
+| **Oct 21** | Inspect multiple recent runs and ingestion code; profile per-phase duration/calls/writes and error cases; establish D1 and Gemini limits | Assistant/GitHub diagnostics, no production writes | Measured throughput and bottleneck table; escalate if quotas/permissions unavailable |
+| **Oct 22** | Design/test safe accelerated schedule, checkpoint recovery and rollback; draft 12-case File Search comparison using synthetic/public docs | Engineering PRs, CI only; no unapproved private source upload | Minimal PR(s) and test evidence; no increase in paid spend without approval |
+| **Oct 23** | Capacity/feasibility go/no-go: forecast Nov 6 archive gate and Dec 11 Gamma; owner decision only if higher cost/risks needed | Assistant reports with issue #50 and ROADMAP update | Written option A safe acceleration vs B revised timeline/scope |
+
+### Per-milestone delivery loop
+
+| Phase | Engineering work | Evidence of completion | Hard gate |
+| --- | --- | --- | --- |
+| **M0–M1** | Diagnose and remove ingestion bottleneck; secure checkpoint/backup; benchmark extraction tools | Backlog trend, quota-safe runs, restart and D1 restore proof | No paid mass reindex or unapproved cost |
+| **M2** | Whole-archive convergence and 12-case File Search benchmark; choose selective adoption or retain C | All 3 phase counts + representative exact citations + measured File Search result | No migration by assumption; no one-folder proof |
+| **M3** | Fix Golden QA failures and user-facing Beta defects | Independent DE/EN/FA tests, clause/version/error QA and real auth/mobile | Human sign-off; no critical false standards claims |
+| **M4–M6** | Gamma features in order: private uploads → safe Excel → My Elevator → verified FAQ | Each feature has privacy/security tests, real scenario and demo on production | No macros, cross-account leakage, invented engineering facts |
+| **M7** | End-to-end reliability, restore drill, privacy/cost and final release | Full acceptance matrix, rollback runbook, measured costs and explicit approval | Zero critical safety/privacy/recovery blockers |
+| **M8** | GitHub visibility/structure **last** | CI/deploy/ingestion/auth retested after change | Only after M7 sign-off |
+
+### Reporting format
+
+Every status report starts with **current milestone / last verified completed item / active blocker / next measurable action / estimated finish vs deadline / user decision required?**. A status without a run, PR, test or measurement must be labeled **unverified**. No filler or indefinite "working on it" claims.
