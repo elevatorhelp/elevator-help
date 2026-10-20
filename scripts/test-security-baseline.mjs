@@ -3,6 +3,12 @@ import { readFileSync, readdirSync } from "node:fs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
+
+const gitignore = read(".gitignore");
+for (const pattern of [".env", ".env.*", "!.env.example", ".dev.vars", "*.pem", "*.key", ".ingestion-state/", "*.sqlite", "*.db"]) {
+  assert.ok(gitignore.split(/\r?\n/).includes(pattern), "Missing sensitive-file ignore rule: " + pattern);
+}
+
 const health = read("app/api/health/gemini/route.ts");
 assert.doesNotMatch(health, /generativelanguage\.googleapis\.com|generateContent/);
 
