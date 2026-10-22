@@ -461,14 +461,24 @@ async function saveState(state) {
 }
 
 async function callJsonEndpoint(endpoint, payload, token, label) {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    // Node fetch throws TypeError for transport failures. Do not expose
+    // endpoint URLs, request bodies, source names or upstream error causes.
+    if (error instanceof TypeError) {
+      throw new Error("INGESTION_ENDPOINT_TRANSPORT_FAILURE", { cause: error });
+    }
+    throw error;
+  }
 
   const text = await response.text();
   let data;
