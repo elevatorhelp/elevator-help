@@ -1,4 +1,4 @@
-import {stagedVectorId,recordStagedBatch,publishCompleteStagedGeneration} from "../../lib/ingestion-generation-publication";
+import {stagedVectorId,recordStagedBatch,publishExactStagedManifest} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
@@ -403,14 +403,15 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_DISABLED"},{status:409});
       const lease = parseIngestionLease(body?.lease);
       const documentId = body?.documentId;
-      const expectedChunks = body?.expectedChunks;
+      const manifestIds = body?.manifestIds;
+      const sourceFingerprint = body?.sourceFingerprint;
       if (!lease || typeof documentId !== "string" || lease.jobKey !== documentId ||
-          !Number.isSafeInteger(expectedChunks) || expectedChunks < 1)
+          !Array.isArray(manifestIds) || typeof sourceFingerprint !== "string")
         return NextResponse.json({ok:false,error:"INVALID_PUBLICATION_REQUEST"},{status:400});
       const {env: publishEnv} = getCloudflareContext();
       try {
-        const published = await publishCompleteStagedGeneration(
-          (publishEnv as any).CORTEX_DB,lease,documentId,expectedChunks);
+        const published = await publishExactStagedManifest(
+          (publishEnv as any).CORTEX_DB,lease,documentId,sourceFingerprint,manifestIds);
         return NextResponse.json({ok:published,published},
           {status:published?200:409});
       } catch {
@@ -609,7 +610,9 @@ export async function POST(request: NextRequest) {
     if (staged) {
       // Staging is intentionally NOT published per batch: a multi-batch file
       // must be fully staged and validated before a single final CAS commit.
-      await recordStagedBatch(archiveDb,publicationLease!,sourceId,chunks.map(v=>v.id));
+      if(chunks.some(v=>!v.sourceFingerprint || v.sourceFingerprint !== chunks[0].sourceFingerprint))
+        return NextResponse.json({ok:false,error:"STAGED_FINGERPRINT_MISMATCH"},{status:409});
+      await recordStagedBatch(archiveDb,publicationLease!,sourceId,chunks.map(v=>v.id),chunks[0].sourceFingerprint);
       return NextResponse.json({ok:true,staged:true,published:false,ids:multilingualVectors.map(v=>v.id)});
     } else {
       await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
