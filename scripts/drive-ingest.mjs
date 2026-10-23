@@ -41,6 +41,13 @@ if(STAGED_LEASE && (!TARGET_FILE_ID || STAGED_LEASE.jobKey !== TARGET_FILE_ID ||
     typeof STAGED_LEASE.owner !== "string" || !Number.isSafeInteger(STAGED_LEASE.generation) ||
     STAGED_LEASE.generation < 1))
   throw new Error("STAGING_REQUIRES_SINGLE_FILE_VALID_LEASE");
+// Opt-in single-document QA only. Do not use on production routes or normal schedules.
+const STAGED_AUTO_LEASE = process.env.STAGED_AUTO_LEASE === "true";
+if (STAGED_AUTO_LEASE && (
+  !TARGET_FILE_ID || STAGED_LEASE ||
+  new URL(INGEST_ENDPOINT).hostname !== "elevator-help-pr61-app-qa.baharmand.workers.dev"
+)) throw new Error("STAGED_AUTO_LEASE_REQUIRES_ISOLATED_SINGLE_DOCUMENT");
+let activeStagedLease = STAGED_LEASE;
 const BATCH_SIZE = 8;
 const CHUNK_SIZE = 2200;
 const CHUNK_OVERLAP = 250;
@@ -509,8 +516,16 @@ async function callIngest(payload, token) {
   if (payload?.action === "upsert") {
     ingestionBudget.reserve(GEMINI_CALLS_PER_RAW_BATCH, "raw chunk batch");
   }
+  if (STAGED_AUTO_LEASE && activeStagedLease &&
+      (payload?.action === "upsert" || payload?.action === "publish_staged")) {
+    const renewed = await callJsonEndpoint(INGEST_ENDPOINT,
+      {action:"lease_renew",lease:activeStagedLease,durationMs:180000},
+      token,"Lease renewal");
+    if(!renewed?.renewed)throw new Error("STAGED_LEASE_RENEWAL_FAILED");
+  }
   return callJsonEndpoint(INGEST_ENDPOINT,
-    STAGED_LEASE && payload?.action === "upsert" ? {...payload,lease:STAGED_LEASE} : payload,
+    activeStagedLease && payload?.action === "upsert" ?
+      {...payload,lease:activeStagedLease} : payload,
     token, "Ingestion endpoint");
 }
 
@@ -910,6 +925,17 @@ async function main() {
   const fileErrors = [];
   for (const file of selected) {
     try {
+    if(STAGED_AUTO_LEASE) {
+      // The current staged pilot only supports RAW. Evidence/map require an
+      // independent generation-aware storage protocol before they can run.
+      if(plan.phase !== "raw")throw new Error("STAGED_EVIDENCE_MAP_NOT_READY");
+      const claim=await callJsonEndpoint(INGEST_ENDPOINT,{
+        action:"lease_claim",documentId:file.id,
+        owner:"qa-"+process.pid+"-"+Date.now().toString(36),durationMs:180000
+      },ingestToken,"Lease claim");
+      if(!claim?.lease)throw new Error("STAGED_LEASE_CLAIM_FAILED");
+      activeStagedLease=claim.lease;
+    }
     const previous = scope.files[file.id] || {};
     const currentFingerprint = fingerprint(file);
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
@@ -1033,7 +1059,7 @@ async function main() {
         continue;
       }
 
-      if (STAGED_LEASE) {
+      if (activeStagedLease) {
         if (!newIds.length || new Set(newIds).size !== newIds.length)
           throw new Error("STAGING_INVALID_CHUNK_MANIFEST");
         // The source revision and exact list of chunk identifiers are checked
@@ -1041,7 +1067,7 @@ async function main() {
         // A rejected publish MUST NOT mark raw indexing complete.
         const publish = await callIngest({
           action: "publish_staged",
-          lease: STAGED_LEASE,
+          lease: activeStagedLease,
           documentId: file.id,
           sourceFingerprint: currentFingerprint,
           manifestIds: newIds,
@@ -1053,7 +1079,7 @@ async function main() {
       const staleRawIds = (Array.isArray(previous.ids) ? previous.ids : []).filter(
         (id) => !newIdSet.has(id)
       );
-      if (staleRawIds.length && !STAGED_LEASE) await deleteIds(staleRawIds, ingestToken);
+      if (staleRawIds.length && !activeStagedLease) await deleteIds(staleRawIds, ingestToken);
 
       next.ids = newIds;
       next.rawEmbeddingVersion = RAW_EMBEDDING_VERSION;
