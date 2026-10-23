@@ -67,6 +67,9 @@ jobs:
       - name: Test compact and legacy exact-evidence index
         run: node --experimental-sqlite --experimental-strip-types scripts/test-compact-evidence.mjs
 
+      - name: Test D1 lease SQL contract (offline SQLite)
+        run: node --disable-warning=ExperimentalWarning --test scripts/test-d1-lease-sql.mjs
+
       - name: Test adaptive ingestion planner (Issue #60)
         run: node --test scripts/adaptive-ingestion-controller.test.mjs
 
