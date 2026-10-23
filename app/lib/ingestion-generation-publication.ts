@@ -11,7 +11,7 @@
  * yet wired to generation filtering. Never enable concurrent ingestion solely
  * because this module exists.
  */
-import {assertActiveIngestionLease, type IngestionLease} from "./ingestion-lease-guard";
+import {assertActiveIngestionLease, type IngestionLease} from "./ingestion-lease-guard.ts";
 export function stagedVectorId(id:string,generation:number):string {
  if(!id||!Number.isSafeInteger(generation)||generation<1)throw Error("INVALID_STAGING_ID");
  return `g${generation}:${id}`;
