@@ -1,3 +1,4 @@
+import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
 import {stagedVectorId,recordStagedBatch,publishExactStagedManifest} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
@@ -383,6 +384,29 @@ export async function POST(request: NextRequest) {
     }
 
     const body: any = await request.json();
+    // Standalone document-scoped lease actions run BEFORE the normal lease preflight.
+    // They require the same private INGESTION_TOKEN; never enable public access.
+    if (body?.action === "lease_claim" || body?.action === "lease_renew") {
+      if (runtimeValue("INGESTION_STAGED_PUBLICATION") !== "true" ||
+          runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")
+        return NextResponse.json({ok:false,error:"STAGED_LEASE_DISABLED"},{status:409});
+      const db=(runtimeEnv as any).CORTEX_DB;
+      try {
+        const duration=leaseDuration(body?.durationMs);
+        if(body.action === "lease_claim") {
+          const lease=await claimIngestionLease(db,body?.documentId,body?.owner,duration);
+          return NextResponse.json({ok:Boolean(lease),lease},
+            {status:lease?200:409});
+        }
+        const lease=parseIngestionLease(body?.lease);
+        if(!lease)return NextResponse.json({ok:false,error:"INVALID_LEASE"},{status:400});
+        const renewed=await renewIngestionLease(db,lease,duration);
+        return NextResponse.json({ok:renewed,renewed},{status:renewed?200:409});
+      } catch {
+        return NextResponse.json({ok:false,error:"LEASE_ACTION_FAILED"},{status:409});
+      }
+    }
+
     const guardWrite = async <T,>(operation: () => Promise<T>): Promise<T> => {
       if (runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true") return operation();
       const lease = parseIngestionLease(body?.lease);
