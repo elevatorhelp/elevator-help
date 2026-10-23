@@ -1,0 +1,25 @@
+{
+  "name": "elevator-help-pr61-isolated-qa",
+  "main": "workers/qa-staged-publication.ts",
+  "compatibility_date": "2026-10-22",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "d1_databases": [
+    {
+      "binding": "CORTEX_DB",
+      "database_name": "elevator-help-lease-test-01",
+      "database_id": "02716877-15e3-4478-9e24-f1ba6e5dfb00"
+    }
+  ],
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "elevator-help-staging-test"
+    },
+    {
+      "binding": "VECTORIZE_V2",
+      "index_name": "elevator-help-staging-test"
+    }
+  ]
+}
