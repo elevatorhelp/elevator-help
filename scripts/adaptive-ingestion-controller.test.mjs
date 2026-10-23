@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {planIngestion} from "./adaptive-ingestion-controller.mjs";
@@ -15,3 +16,11 @@ test("explicit zero cap disables processing",()=>assert.equal(planIngestion({que
 test("explicit cap below baseline is respected",()=>assert.equal(planIngestion({queues,policy:{maxFiles:1}}).maxFiles,1));
 test("cursor wraps around",()=>assert.equal(planIngestion({queues,cursor:4}).phase,"raw"));
 test("missing telemetry respects explicit cap",()=>assert.equal(planIngestion({queues,policy:{adaptiveEnabled:true,maxFiles:1}}).maxFiles,1));
+
+test("real ingester integration remains opt-in and bounded",async()=>{
+ const source=await readFile(new URL("./drive-ingest.mjs",import.meta.url),"utf8");
+ assert.match(source,/INGESTION_CONTROLLER_ENABLED === "true"/);
+ assert.match(source,/planIngestion\(/);
+ assert.match(source,/maxFiles: MAX_FILES, adaptiveEnabled: false/);
+ assert.match(source,/scope.nextPhaseCursor = capacity.nextCursor/);
+});
