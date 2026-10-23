@@ -1,0 +1,13 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {planIngestion} from "./adaptive-ingestion-controller.mjs";
+const queues={evidence:5,raw:5,map:5};
+const metrics={observedAt:1000,d1Remaining:1000,geminiRemaining:100,runtimeRemainingMs:100000,d1PerFile:10,geminiPerFile:2,runtimePerFileMs:1000};
+test("baseline stays at two when disabled",()=>assert.equal(planIngestion({queues}).maxFiles,2));
+test("rotates phase with durable cursor",()=>assert.equal(planIngestion({queues,cursor:1}).phase,"raw"));
+test("skips empty phases",()=>assert.equal(planIngestion({queues:{map:3}}).phase,"map"));
+test("returns no work for empty queues",()=>assert.equal(planIngestion().maxFiles,0));
+test("adaptive scales only with fresh bounded telemetry",()=>assert.equal(planIngestion({queues,telemetry:metrics,policy:{adaptiveEnabled:true,maxFiles:10},now:1000}).maxFiles,5));
+test("stale telemetry falls back to baseline",()=>assert.equal(planIngestion({queues,telemetry:metrics,policy:{adaptiveEnabled:true,maxFiles:10},now:1000000}).maxFiles,2));
+test("budget exhaustion stops work",()=>assert.equal(planIngestion({queues,telemetry:{...metrics,geminiRemaining:0},policy:{adaptiveEnabled:true,maxFiles:10},now:1000}).maxFiles,0));
+test("never exceeds hard max",()=>assert.equal(planIngestion({queues:{evidence:100},telemetry:metrics,policy:{adaptiveEnabled:true,maxFiles:3},now:1000}).maxFiles,3));
