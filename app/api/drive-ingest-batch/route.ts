@@ -1,4 +1,4 @@
-import {stagedVectorId,publishStagedGeneration} from "../../lib/ingestion-generation-publication";
+import {stagedVectorId} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
@@ -587,8 +587,9 @@ export async function POST(request: NextRequest) {
     await guardWrite(() => vectorize.upsert(legacyVectors));
     await guardWrite(() => vectorizeV2.upsert(multilingualVectors));
     if (staged) {
-      const published = await publishStagedGeneration(archiveDb, publicationLease!, sourceId);
-      if (!published) return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_REJECTED"},{status:409});
+      // Staging is intentionally NOT published per batch: a multi-batch file
+      // must be fully staged and validated before a single final CAS commit.
+      return NextResponse.json({ok:true,staged:true,published:false,ids:multilingualVectors.map(v=>v.id)});
     } else {
       await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
     }
