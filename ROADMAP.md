@@ -312,3 +312,12 @@ Every status report starts with **current milestone / last verified completed it
 **Existing PR comparison at 2026-10-24:** PR #61 head `f44a751f` is divergent from `main` (GitHub comparison: ahead 126 / behind 43, not necessarily 43 conflicts), mergeability reported false. Keep Draft while resolving.
 
 **Automation housekeeping:** the stale hourly read-only QA Supervisor (focused on old #53/#54 heads) was disabled because it was not advancing #61. Old development worker already disabled. Six-hour read-only Backfill Watch remains active to detect real scheduled ingestion regression; it does not write code or ingest documents. This is not evidence of an active autonomous coding worker.
+
+
+## PR #61 execution update — 2026-10-24 (isolated, not release approval)
+
+- Previous real QA PASS evidence: [real Drive single-document three-layer publish](https://github.com/elevatorhelp/elevator-help/actions/runs/40027136453), [Gemini/Vectorize readback](https://github.com/elevatorhelp/elevator-help/actions/runs/40020881922), [real Drive exact retrieval and isolated recovery fencing](https://github.com/elevatorhelp/elevator-help/actions/runs/40031171317). These cover QA scenarios, not full Production readiness.
+- NEW offline regression: `scripts/test-ingestion-multibatch-recovery.ts` (commit `3756c410`) exercises two durable receipt batches, lease renewal, simulated crash/expiry, successor generation, stale worker fencing, idempotent replay, exact-manifest rejection, complete publication. Wired into `Build Check` by commit `70b7a094`.
+- **Verification status at edit time: UNVERIFIED on GitHub Actions**, no exact-head CI run returned yet; this is offline SQLite contract coverage, **NOT** an end-to-end multi-page Drive→Worker→answer demonstration. Do not mark real multi-batch acceptance complete.
+- Remaining blockers: authentic multi-page, multi-batch Drive pilot with persistent file checkpoint and lease renewal across real API calls; crash/restart and full RAW+Evidence+Map completion with verified customer-facing retrieval; merge latest main/security changes without regressions; exact-final-head Build Check and integration CI; isolated migration/rollback and parallel workload stress before production.
+- PR stays **Draft**. No merge, Production deployment, production staged flags, paid service upgrades or production D1/Vectorize changes are authorized.
