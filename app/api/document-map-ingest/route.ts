@@ -1,3 +1,5 @@
+import {stagedVectorId} from "../../lib/ingestion-generation-publication";
+import {recordStagedMap} from "../../lib/ingestion-full-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
@@ -274,24 +276,24 @@ ${JSON.stringify(pages)}
 
 export async function POST(request: NextRequest) {
   try {
-    // Knowledge-map vectors have no generation-qualified publication yet.
-    // In staged QA, reject before Gemini charges, vector writes or D1 writes.
     const { env: runtimeEnv } = getCloudflareContext();
-    if (((runtimeEnv as any).INGESTION_STAGED_PUBLICATION ??
-         process.env.INGESTION_STAGED_PUBLICATION) === "true") {
-      return NextResponse.json(
-        { ok: false, error: "STAGED_DOCUMENT_MAP_PUBLICATION_NOT_IMPLEMENTED" },
-        { status: 409 },
-      );
-    }
-    const expectedToken = process.env.INGESTION_TOKEN;
+    const runtimeValue=(name:string):string|undefined=>{
+      const value=(runtimeEnv as any)[name];
+      return typeof value==="string"?value:process.env[name];
+    };
+    const staged=runtimeValue("INGESTION_STAGED_PUBLICATION")==="true";
+    const complete=runtimeValue("INGESTION_COMPLETE_PUBLICATION")==="true";
+    if(staged && !complete)
+      return NextResponse.json({ok:false,
+        error:"STAGED_DOCUMENT_MAP_PUBLICATION_NOT_IMPLEMENTED"},{status:409});
+    const expectedToken = runtimeValue("INGESTION_TOKEN");
     const auth = request.headers.get("authorization") || "";
     if (!expectedToken || auth !== `Bearer ${expectedToken}`)
       return unauthorized();
 
     const body: any = await request.json();
     const guardWrite = async <T,>(operation: () => Promise<T>): Promise<T> => {
-      if (process.env.INGESTION_LEASE_PREFLIGHT !== "true") return operation();
+      if (runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true") return operation();
       const lease = parseIngestionLease(body?.lease);
       if (!lease) throw new Error("INGESTION_LEASE_REQUIRED");
       const { env: leaseEnv } = getCloudflareContext();
@@ -300,7 +302,7 @@ export async function POST(request: NextRequest) {
 
     // Opt-in preflight only. Not sufficient for safe parallel Vectorize writes:
     // a lease may expire after validation, before an external side effect.
-    if (process.env.INGESTION_LEASE_PREFLIGHT === "true") {
+    if (runtimeValue("INGESTION_LEASE_PREFLIGHT") === "true") {
       const lease = parseIngestionLease(body?.lease);
       if (!lease) return NextResponse.json({ ok: false, error: "INGESTION_LEASE_REQUIRED" }, { status: 409 });
       const { env: leaseEnv } = getCloudflareContext();
@@ -313,6 +315,11 @@ export async function POST(request: NextRequest) {
 
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
+    const lease=staged?parseIngestionLease(body?.lease):null;
+    if(staged && (!lease||lease.jobKey!==document?.sourceFileId||
+      !document?.sourceFingerprint||runtimeValue("INGESTION_LEASE_PREFLIGHT")!=="true"))
+      return NextResponse.json({ok:false,error:"INVALID_STAGED_MAP_LEASE"},{status:409});
+
 
     if (
       !document ||
@@ -355,7 +362,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = runtimeValue("GEMINI_API_KEY");
     const { env } = getCloudflareContext();
     const ai = (env as any).AI;
     const vectorize = (env as any).VECTORIZE;
@@ -448,12 +455,12 @@ export async function POST(request: NextRequest) {
     );
 
     const legacyVectors = vectors.map(({ id, metadata, index }) => ({
-      id,
+      id:staged?stagedVectorId(id,lease!.generation):id,
       values: embeddings[index],
       metadata: { ...metadata, embeddingVersion: 2 },
     }));
     const multilingualVectors = vectors.map(({ id, metadata, index }) => ({
-      id,
+      id:staged?stagedVectorId(id,lease!.generation):id,
       values: multilingualEmbeddings[index],
       metadata: {
         ...metadata,
@@ -463,6 +470,13 @@ export async function POST(request: NextRequest) {
 
     await guardWrite(() => vectorize.upsert(legacyVectors));
     await guardWrite(() => vectorizeV2.upsert(multilingualVectors));
+    if(staged && vectors.length){
+      for(let i=0;i<vectors.length;i+=20){
+        await recordStagedMap((env as any).CORTEX_DB,lease!,
+          document.sourceFileId,vectors.slice(i,i+20).map(v=>v.id),
+          document.sourceFingerprint!);
+      }
+    }
 
     return NextResponse.json({
       ok: true,
