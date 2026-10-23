@@ -274,6 +274,16 @@ ${JSON.stringify(pages)}
 
 export async function POST(request: NextRequest) {
   try {
+    // Knowledge-map vectors have no generation-qualified publication yet.
+    // In staged QA, reject before Gemini charges, vector writes or D1 writes.
+    const { env: runtimeEnv } = getCloudflareContext();
+    if (((runtimeEnv as any).INGESTION_STAGED_PUBLICATION ??
+         process.env.INGESTION_STAGED_PUBLICATION) === "true") {
+      return NextResponse.json(
+        { ok: false, error: "STAGED_DOCUMENT_MAP_PUBLICATION_NOT_IMPLEMENTED" },
+        { status: 409 },
+      );
+    }
     const expectedToken = process.env.INGESTION_TOKEN;
     const auth = request.headers.get("authorization") || "";
     if (!expectedToken || auth !== `Bearer ${expectedToken}`)
