@@ -1,3 +1,4 @@
+import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
 import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
 import {stagedVectorId,recordStagedBatch,publishExactStagedManifest} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
@@ -428,7 +429,46 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (body?.action === "publish_full") {
+      if(runtimeValue("INGESTION_COMPLETE_PUBLICATION") !== "true" ||
+         runtimeValue("INGESTION_STAGED_PUBLICATION") !== "true" ||
+         runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")
+        return NextResponse.json({ok:false,error:"FULL_PUBLICATION_DISABLED"},{status:409});
+      const lease=parseIngestionLease(body?.lease);
+      const rawIds=body?.rawIds, evidenceIds=body?.evidenceIds, mapIds=body?.mapIds;
+      if(!lease||lease.jobKey!==body?.documentId||
+         !Array.isArray(rawIds)||!Array.isArray(evidenceIds)||!Array.isArray(mapIds)||
+         typeof body?.sourceFingerprint!=="string")
+        return NextResponse.json({ok:false,error:"INVALID_FULL_PUBLICATION_REQUEST"},{status:400});
+      try{
+        const {env: fullEnv}=getCloudflareContext();
+        const db=(fullEnv as any).CORTEX_DB;
+        await assertActiveIngestionLease(db,lease);
+        // Vectorize acknowledgement is not search readiness. Verify *every*
+        // staged RAW/MAP vector in both bindings before changing D1 visibility.
+        const ids=[...rawIds,...mapIds].map((id:string)=>stagedVectorId(id,lease.generation));
+        if(ids.length>100000||ids.some((id:string)=>id.length>512))
+          return NextResponse.json({ok:false,error:"FULL_MANIFEST_TOO_LARGE"},{status:400});
+        for(const index of [(fullEnv as any).VECTORIZE,(fullEnv as any).VECTORIZE_V2]){
+          if(!index?.getByIds)return NextResponse.json({ok:false,error:"VECTOR_READ_UNAVAILABLE"},{status:409});
+          for(let start=0;start<ids.length;start+=20){
+            const expected=ids.slice(start,start+20);
+            const found=await index.getByIds(expected);
+            const actual=new Set((Array.isArray(found)?found:[]).map((x:any)=>x.id));
+            if(expected.some((id:string)=>!actual.has(id)))
+              return NextResponse.json({ok:false,error:"STAGED_VECTOR_NOT_READY"},{status:409});
+          }
+        }
+        const published=await publishFullGeneration(db,lease,body.sourceFingerprint,
+          rawIds,evidenceIds,mapIds);
+        return NextResponse.json({ok:published,published},{status:published?200:409});
+      }catch{
+        return NextResponse.json({ok:false,error:"FULL_PUBLICATION_FAILED"},{status:409});
+      }
+    }
     if (body?.action === "publish_staged") {
+      if (runtimeValue("INGESTION_COMPLETE_PUBLICATION") === "true")
+        return NextResponse.json({ok:false,error:"RAW_ONLY_PUBLICATION_DISABLED"},{status:409});
       if (runtimeValue("INGESTION_STAGED_PUBLICATION") !== "true" ||
           runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")
         return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_DISABLED"},{status:409});
@@ -460,7 +500,8 @@ export async function POST(request: NextRequest) {
     // Until evidence has generation-qualified storage and atomic publication,
     // reject these actions before any D1/Vectorize side effects.
     if (runtimeValue("INGESTION_STAGED_PUBLICATION") === "true" &&
-        (action === "index_evidence" || action === "delete")) {
+        (action === "delete" || (action === "index_evidence" &&
+          runtimeValue("INGESTION_COMPLETE_PUBLICATION") !== "true"))) {
       return NextResponse.json(
         { ok: false, error: "STAGED_EVIDENCE_PUBLICATION_NOT_IMPLEMENTED" },
         { status: 409 },
@@ -534,6 +575,31 @@ export async function POST(request: NextRequest) {
           { ok: false, error: "Chunk text is too large" },
           { status: 400 },
         );
+      }
+    }
+
+    if (action === "index_evidence" &&
+        runtimeValue("INGESTION_COMPLETE_PUBLICATION") === "true") {
+      const lease=parseIngestionLease(body?.lease);
+      if(!lease||chunks.some(chunk=>chunk.sourceFileId!==lease.jobKey))
+        return NextResponse.json({ok:false,error:"INVALID_STAGED_EVIDENCE_LEASE"},{status:409});
+      try{
+        for(const chunk of chunks){
+          const labels=[...chunk.sourcePath.split(/[\\/]/g),
+            chunk.fileName.replace(/\\.[^.]+$/,""),chunk.documentGroupHint];
+          const identifiers=extractReferenceIdentifiers(chunk.text,labels);
+          const clauses=extractClauseNumbers(chunk.text);
+          await stageExactEvidence(archiveDb,lease,{
+            id:chunk.id,text:chunk.text,sourceFileId:chunk.sourceFileId,
+            fileName:chunk.fileName,sourcePath:chunk.sourcePath,page:chunk.page,
+            chunkIndex:chunk.chunkIndex,sourceFingerprint:chunk.sourceFingerprint||"",
+            identifiersJson:JSON.stringify(identifiers),clausesJson:JSON.stringify(clauses)
+          });
+        }
+        return NextResponse.json({ok:true,staged:true,indexed:chunks.length,
+          ids:chunks.map(x=>x.id)});
+      }catch{
+        return NextResponse.json({ok:false,error:"STAGED_EVIDENCE_WRITE_FAILED"},{status:409});
       }
     }
 
