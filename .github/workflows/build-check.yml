@@ -76,6 +76,9 @@ jobs:
       - name: Test lease ownership loss during in-flight ingestion
         run: node --experimental-strip-types scripts/test-ingestion-lease-boundaries.ts
 
+      - name: Test crash-safe generation publication protocol
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-generation-publication.ts
+
       - name: Build
         run: npm run build
 
