@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/isolated-cloudflare-e2e.yml
+      - scripts/qa-isolated-cloudflare-e2e.mjs
 permissions:
   contents: read
 jobs:
