@@ -147,6 +147,11 @@ export async function searchArchiveEvidenceIndex(
   } catch (error) {
     // Older databases may have the compact JSON table but no FTS virtual
     // table. Preserve exact retrieval while the schema repair is deployed.
+    // A fresh isolated QA database can contain only staged evidence, without
+    // the legacy archive tables. Still query D1-published generations.
+    if (/no such table:\\s*(?:main\\.)?(?:archive_chunks|archive_chunk_search|archive_chunk_identifiers|archive_chunk_clauses)/i.test(String(error))) {
+      return publishedExactEvidence(archiveDb,keys,clauseKeys,[],Math.max(1,Math.min(100,limit)));
+    }
     if (!/no such table:\s*(?:main\.)?archive_chunk_search_fts/i.test(String(error))) throw error;
     const fallbackSql = sql.replace(
       /WHERE s\.rowid IN \(\s*SELECT rowid FROM archive_chunk_search_fts\s*WHERE archive_chunk_search_fts MATCH \?\s*\)/,
