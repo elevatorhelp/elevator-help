@@ -46,4 +46,33 @@ r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,
 assert.equal(r.status,200,"real application publish failed: "+JSON.stringify(r));
 assert.equal(r.published,true);
 console.log("PASS: actual Next.js API exact-manifest atomic publication");
+// Prove real read-after-publication: a successful API write alone is not retrieval evidence.
+const expectedIds=[doc+":1",doc+":2"].map(id=>"g1:"+id);
+const vectorUrl="https://api.cloudflare.com/client/v4/accounts/"+
+ encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)+
+ "/vectorize/v2/indexes/elevator-help-staging-test/get_by_ids";
+if(!process.env.CLOUDFLARE_API_TOKEN||!process.env.CLOUDFLARE_ACCOUNT_ID)
+ throw Error("QA_CLOUDFLARE_CREDENTIALS_REQUIRED");
+let verified=false;
+for(let attempt=0;attempt<12;attempt++){
+ const response=await fetch(vectorUrl,{method:"POST",headers:{
+  Authorization:"Bearer "+process.env.CLOUDFLARE_API_TOKEN,
+  "Content-Type":"application/json"
+ },body:JSON.stringify({ids:expectedIds})});
+ const payload=await response.json();
+ if(!response.ok||payload.success===false)
+  throw Error("QA_VECTORIZE_READ_FAILED_HTTP_"+response.status);
+ const records=Array.isArray(payload.result)?payload.result:
+  Array.isArray(payload.result?.vectors)?payload.result.vectors:[];
+ if(expectedIds.every(id=>records.some(v=>v.id===id))){verified=true;break;}
+ await new Promise(resolve=>setTimeout(resolve,3000));
+}
+assert.equal(verified,true,"staged vectors not readable from isolated Vectorize");
+const d1Read=execFileSync("npx",["wrangler","d1","execute",
+ "elevator-help-lease-test-01","--remote","--config","wrangler.qa-app.json",
+ "--command",`SELECT active_generation FROM ingestion_document_publications WHERE document_id=${quote(doc)}`,
+ "--json"],{encoding:"utf8",timeout:120000,stdio:["ignore","pipe","pipe"]});
+const queryRows=JSON.parse(d1Read).flatMap(item=>item.results||[]);
+assert.equal(Number(queryRows[0]?.active_generation),1,"D1 active generation mismatch");
+console.log("PASS: published Gemini-backed chunks retrieved from isolated Vectorize with active D1 generation");
 console.log("PASS: actual OpenNext API integration: real Gemini embeddings + two Vectorize writes + D1");
