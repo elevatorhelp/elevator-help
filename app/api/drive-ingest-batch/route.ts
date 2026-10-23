@@ -619,7 +619,13 @@ export async function POST(request: NextRequest) {
       // Staging is intentionally NOT published per batch: a multi-batch file
       // must be fully staged and validated before a single final CAS commit.
       await recordStagedBatch(archiveDb,publicationLease!,sourceId,chunks.map(v=>v.id),chunks[0].sourceFingerprint);
-      return NextResponse.json({ok:true,staged:true,published:false,ids:multilingualVectors.map(v=>v.id)});
+      return NextResponse.json({
+        ok:true,staged:true,published:false,
+        upserted:multilingualVectors.length,
+        rawEmbeddingVersion:RAW_EMBEDDING_VERSION,
+        archiveIndexVersion:ARCHIVE_INDEX_VERSION,
+        ids:multilingualVectors.map(v=>v.id)
+      });
     } else {
       await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
     }
