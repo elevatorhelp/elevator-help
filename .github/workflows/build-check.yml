@@ -73,6 +73,9 @@ jobs:
       - name: Test adaptive ingestion planner (Issue #60)
         run: node --test scripts/adaptive-ingestion-controller.test.mjs
 
+      - name: Test lease ownership loss during in-flight ingestion
+        run: node --experimental-strip-types scripts/test-ingestion-lease-boundaries.ts
+
       - name: Build
         run: npm run build
 
