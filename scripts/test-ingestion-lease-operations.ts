@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import {DatabaseSync} from "node:sqlite";
+import {claimIngestionLease,renewIngestionLease} from "../app/lib/ingestion-lease-operations.ts";
+const raw=new DatabaseSync(":memory:");
+raw.exec("CREATE TABLE ingestion_worker_leases(job_key TEXT PRIMARY KEY, owner TEXT NOT NULL, generation INTEGER NOT NULL, lease_until_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL)");
+const db={prepare:(sql)=>({all:async()=>({results:raw.prepare(sql).all()}),bind:(...args)=>({run:async()=>({meta:{changes:raw.prepare(sql).run(...args).changes}}),first:async()=>raw.prepare(sql).get(...args)})})};
+const a=await claimIngestionLease(db,"doc","worker-a",180000,1000);
+assert.equal(a?.generation,1);
+assert.equal(await claimIngestionLease(db,"doc","worker-b",180000,1001),null);
+assert.equal(await renewIngestionLease(db,a,180000,2000),true);
+const b=await claimIngestionLease(db,"doc","worker-b",180000,182001);
+assert.equal(b?.generation,2);
+assert.equal(await renewIngestionLease(db,a,180000,182002),false);
+assert.equal(await renewIngestionLease(db,b,180000,182002),true);
+console.log("PASS: atomic claim, renewal, expiration, takeover, stale fencing");
