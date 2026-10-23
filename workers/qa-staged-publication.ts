@@ -17,12 +17,13 @@ export default {async fetch(request:Request,env:Env):Promise<Response>{
    if(!/^qa-[a-z0-9-]{4,80}$/.test(owner))return respond({error:"bad_owner"},400);
    const now=Date.now();
    await db.prepare("INSERT OR IGNORE INTO ingestion_document_publications (document_id,job_key,active_generation,updated_at_ms) VALUES(?,?,0,?)").bind(doc,doc,now).run();
-   await db.prepare(`INSERT INTO ingestion_worker_leases(job_key,owner,generation,lease_until_ms)
-      VALUES(?,?,1,?) ON CONFLICT(job_key) DO UPDATE SET
+   await db.prepare(`INSERT INTO ingestion_worker_leases(job_key,owner,generation,lease_until_ms,updated_at_ms)
+      VALUES(?,?,1,?,?) ON CONFLICT(job_key) DO UPDATE SET
       owner=excluded.owner,generation=ingestion_worker_leases.generation+1,
-      lease_until_ms=excluded.lease_until_ms
+      lease_until_ms=excluded.lease_until_ms,
+      updated_at_ms=excluded.updated_at_ms
       WHERE ingestion_worker_leases.lease_until_ms<=?`)
-      .bind(doc,owner,now+180000,now).run();
+      .bind(doc,owner,now+180000,now,now).run();
    const lease=await db.prepare("SELECT job_key AS jobKey,owner,generation,lease_until_ms FROM ingestion_worker_leases WHERE job_key=?").bind(doc).first();
    if(lease?.owner!==owner)return respond({error:"lease_owned"},409);
    return respond({lease:{jobKey:doc,owner,generation:lease.generation}});
