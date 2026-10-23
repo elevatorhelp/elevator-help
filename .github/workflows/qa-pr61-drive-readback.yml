@@ -18,7 +18,7 @@ jobs:
       - name: Checkout exact PR61 source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: da3b4ba46bed7ffba995c347c8eef451c1703e64
+          ref: 7142a8cf0ac35ce41984d972f92e6ad81b94bdcf
       - name: Node 22
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -27,6 +27,21 @@ jobs:
         run: npm ci
       - name: Verify Next.js security floor
         run: node scripts/guard-next-security-baseline.mjs
+      - name: Regression for staged-only D1 without legacy FTS
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-staged-only-evidence.ts
+      - name: Build compatible QA-only OpenNext app
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts @opennextjs/cloudflare@1.20.12
+          test "$(node -p 'require("next/package.json").version')" = "16.4.2"
+          npm run cf:build
+      - name: Deploy QA Worker with corrected exact evidence reader
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler deploy --config wrangler.qa-app-deployed.json
       - name: Rotate disposable QA authorization only
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
