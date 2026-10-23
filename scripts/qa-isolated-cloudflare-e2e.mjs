@@ -54,7 +54,8 @@ for(let attempt=0;attempt<12;attempt++){
  try{
   const result=command(["vectorize","get-vectors",vectorIndex,"--ids",...records.map(x=>x.id)]);
   if(records.every(v=>result.includes(v.id))){seen=true;break}
- }catch{ /* indexing may still be queued */ }
+  if(attempt===0) console.log("Vectorize read response (test-only IDs):",result.slice(0,600));
+ }catch(error){ if(attempt===0) console.log("Vectorize get-vectors command failed; exit status:",error?.status,"stderr:",String(error?.stderr||"").slice(0,500)); }
  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5000);
 }
 assert(seen,"Vectorize failed real read-after-upsert verification");
