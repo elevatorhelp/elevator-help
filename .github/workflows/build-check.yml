@@ -97,6 +97,9 @@ jobs:
       - name: Test complete-document staged publication with crash recovery
         run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-complete-publication.ts
 
+      - name: Test multi-batch lease renewal and restart fencing
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-multibatch-recovery.ts
+
       - name: Build
         run: npm run build
 
