@@ -82,6 +82,9 @@ jobs:
       - name: Test staged Vectorize visibility against D1 publication
         run: node --experimental-strip-types scripts/test-ingestion-publication-visibility.ts
 
+      - name: Test complete-document staged publication with crash recovery
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-complete-publication.ts
+
       - name: Build
         run: npm run build
 
