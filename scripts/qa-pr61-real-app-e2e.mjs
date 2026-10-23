@@ -27,6 +27,15 @@ console.log("PASS: real OpenNext API /api/drive-ingest-batch active on isolated 
 r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1"]});
 assert.equal(r.status,409,"unwritten document must not publish");
 console.log("PASS: actual API rejects unpublished manifest");
+const evidence=await post({action:"index_evidence",lease,chunks:[{
+ id:doc+":evidence",text:"QA exact evidence must remain unpublished",
+ sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:0
+}]});
+assert.equal(evidence.status,409,"staged evidence write must be blocked");
+assert.equal(evidence.error,"STAGED_EVIDENCE_PUBLICATION_NOT_IMPLEMENTED");
+const deletion=await post({action:"delete",lease,ids:[doc+":evidence"]});
+assert.equal(deletion.status,409,"staged deletion must be blocked");
+console.log("PASS: unfinished staged evidence and deletion fail closed");
 if (process.env.QA_NEGATIVE_ONLY === "true") {
   const wrong=await post({action:"publish_staged",
     lease:{...lease,owner:"qa-invalid-owner"},documentId:doc,
