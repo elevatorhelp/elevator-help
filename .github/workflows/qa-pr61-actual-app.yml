@@ -37,7 +37,7 @@ jobs:
       - name: QA-only Next.js adapter compatibility pin
         run: |
           npm install --no-save --ignore-scripts next@16.3.8
-          npm ls next --depth=0
+          node -e "const v=require(\u0027next/package.json\u0027).version;if(v!==\u002716.3.8\u0027)process.exit(1);console.log(\u0027QA Next version verified:\u0027,v)"
       - name: Build actual OpenNext Worker
         run: npm run cf:build
       - name: Bootstrap isolated D1 only
