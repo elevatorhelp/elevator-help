@@ -1,3 +1,4 @@
+import {stagedVectorId,publishStagedGeneration} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
@@ -559,14 +560,25 @@ export async function POST(request: NextRequest) {
       return { chunk, metadata, index };
     });
 
+    // Opt-in staged publication. Only one source document per request, and its
+    // lease key must equal the sourceFileId. Otherwise fail closed.
+    const staged = process.env.INGESTION_STAGED_PUBLICATION === "true";
+    const publicationLease = staged ? parseIngestionLease(body?.lease) : null;
+    const sourceId = chunks[0]?.sourceFileId;
+    if (staged && (!publicationLease || !archiveDb ||
+        chunks.some((chunk) => chunk.sourceFileId !== sourceId) ||
+        publicationLease.jobKey !== sourceId ||
+        process.env.INGESTION_LEASE_PREFLIGHT !== "true")) {
+      return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_REQUIRES_DOCUMENT_LEASE"},{status:409});
+    }
     const legacyVectors = vectorRecords.map(({ chunk, metadata, index }) => ({
-      id: chunk.id,
+      id: staged ? stagedVectorId(chunk.id, publicationLease!.generation) : chunk.id,
       values: embeddings[index],
       metadata: { ...metadata, embeddingVersion: 2 },
     }));
     const multilingualVectors = vectorRecords.map(
       ({ chunk, metadata, index }) => ({
-        id: chunk.id,
+        id: staged ? stagedVectorId(chunk.id, publicationLease!.generation) : chunk.id,
         values: multilingualEmbeddings[index],
         metadata: { ...metadata, embeddingVersion: RAW_EMBEDDING_VERSION },
       }),
@@ -574,7 +586,12 @@ export async function POST(request: NextRequest) {
 
     await guardWrite(() => vectorize.upsert(legacyVectors));
     await guardWrite(() => vectorizeV2.upsert(multilingualVectors));
-    await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
+    if (staged) {
+      const published = await publishStagedGeneration(archiveDb, publicationLease!, sourceId);
+      if (!published) return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_REJECTED"},{status:409});
+    } else {
+      await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
+    }
 
     return NextResponse.json({
       ok: true,
