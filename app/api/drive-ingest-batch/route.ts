@@ -396,6 +396,11 @@ export async function POST(request: NextRequest) {
         const duration=leaseDuration(body?.durationMs);
         if(body.action === "lease_claim") {
           const lease=await claimIngestionLease(db,body?.documentId,body?.owner,duration);
+          if(lease){
+            await db.prepare("INSERT OR IGNORE INTO ingestion_document_publications "+
+              "(document_id,job_key,active_generation,updated_at_ms) VALUES(?,?,0,?)")
+              .bind(lease.jobKey,lease.jobKey,Date.now()).run();
+          }
           return NextResponse.json({ok:Boolean(lease),lease},
             {status:lease?200:409});
         }
