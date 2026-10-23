@@ -531,7 +531,14 @@ async function callIngest(payload, token) {
 
 async function callDocumentMap(payload, token) {
   ingestionBudget.reserve(GEMINI_CALLS_PER_MAP_WINDOW, "document-map window");
-  return callJsonEndpoint(DOCUMENT_MAP_ENDPOINT, payload, token, "Document-map endpoint");
+  if(STAGED_AUTO_LEASE && activeStagedLease){
+    const r=await callJsonEndpoint(INGEST_ENDPOINT,{action:"lease_renew",
+      lease:activeStagedLease,durationMs:180000},token,"Map lease renewal");
+    if(!r?.renewed)throw new Error("STAGED_MAP_LEASE_EXPIRED");
+  }
+  return callJsonEndpoint(DOCUMENT_MAP_ENDPOINT,
+    activeStagedLease ? {...payload,lease:activeStagedLease} : payload,
+    token, "Document-map endpoint");
 }
 
 async function deleteIds(ids, token) {
@@ -608,7 +615,7 @@ async function processEvidenceIndex(
     const batch = chunks.slice(index, index + BATCH_SIZE);
     const result = await callJsonEndpoint(
       INGEST_ENDPOINT,
-      { action: "index_evidence", chunks: batch },
+      { action: "index_evidence", chunks: batch, ...(activeStagedLease ? {lease:activeStagedLease} : {}) },
       ingestToken,
       "Archive evidence endpoint",
     );
@@ -827,6 +834,71 @@ async function processText(
   };
 }
 
+
+/** QA-only complete-document pilot. Skips the production phase scheduler.
+ * It never makes any production endpoint or D1 call: checked by the
+ * STAGED_AUTO_LEASE endpoint gate during module initialization.
+ */
+async function runIsolatedFullDocument(file,accessToken,ingestToken,state,scope){
+ const revision=fingerprint(file);
+ const claim=await callJsonEndpoint(INGEST_ENDPOINT,{
+  action:"lease_claim",documentId:file.id,
+  owner:"qa-"+process.pid+"-"+Date.now().toString(36),durationMs:180000
+ },ingestToken,"QA lease acquisition");
+ if(!claim?.lease)throw Error("STAGED_LEASE_CLAIM_FAILED");
+ activeStagedLease=claim.lease;
+ const evidenceIds=await processEvidenceIndex(file,accessToken,ingestToken);
+ if(!evidenceIds.length)throw Error("STAGED_EMPTY_EXACT_EVIDENCE");
+ const isText=file.mimeType==="text/plain"||
+   TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
+ const raw=isText?
+   await processText(file,accessToken,ingestToken):
+   await processPdf(file,accessToken,ingestToken,{ingestRaw:true,ingestMap:false});
+ if(!raw.rawComplete||!Array.isArray(raw.ids)||!raw.ids.length)
+   throw Error("STAGED_RAW_INCOMPLETE_CHECKPOINT_REQUIRED");
+ let mapIds=[];
+ if(!isText){
+  const map=await processPdf(file,accessToken,ingestToken,{
+   ingestRaw:false,ingestMap:true
+  });
+  if(!map.mapComplete)throw Error("STAGED_MAP_INCOMPLETE_CHECKPOINT_REQUIRED");
+  const prefix="g"+activeStagedLease.generation+":";
+  mapIds=(map.mapIds||[]).map(id=>{
+    if(!id.startsWith(prefix))throw Error("STAGED_MAP_ID_GENERATION_MISMATCH");
+    return id.slice(prefix.length);
+  });
+ }
+ // A file modified during extraction cannot publish under the scanned revision.
+ const metadata=await driveJson("https://www.googleapis.com/drive/v3/files/"+
+  encodeURIComponent(file.id)+"?fields=id,modifiedTime,size,md5Checksum",accessToken);
+ if(fingerprint({...file,...metadata})!==revision)
+  throw Error("STAGED_SOURCE_REVISION_CHANGED");
+ const request={action:"publish_full",documentId:file.id,lease:activeStagedLease,
+  sourceFingerprint:revision,rawIds:raw.ids,evidenceIds,mapIds};
+ let published=false;
+ for(let attempt=0;attempt<36;attempt++){
+  try{
+   const result=await callIngest(request,ingestToken);
+   if(result?.published){published=true;break;}
+  }catch(error){
+   const message=String(error?.message||"");
+   if(!message.includes("STAGED_VECTOR_NOT_READY"))
+     throw error;
+  }
+  await new Promise(resolve=>setTimeout(resolve,5000));
+ }
+ if(!published)throw Error("STAGED_PUBLICATION_READINESS_TIMEOUT");
+ scope.files[file.id]={...(scope.files[file.id]||{}),name:file.name,
+  sourcePath:file.sourcePath,modifiedTime:file.modifiedTime||null,
+  evidenceIds,ids:raw.ids,mapIds,evidenceFingerprint:revision,
+  rawFingerprint:revision,mapFingerprint:revision,fingerprint:revision,
+  archiveIndexVersion:ARCHIVE_INDEX_VERSION,rawEmbeddingVersion:RAW_EMBEDDING_VERSION,
+  mapVersion:DOCUMENT_MAP_VERSION,indexedAt:new Date().toISOString()};
+ state.scopes[DRIVE_FOLDER_ID]=scope;
+ await saveState(state);
+ console.log("PASS isolated Drive document complete: all layers published and checkpointed");
+}
+
 async function main() {
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
@@ -844,6 +916,12 @@ async function main() {
   state.scopes ||= {};
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
+
+  if(STAGED_AUTO_LEASE){
+    if(files.length!==1)throw Error("STAGING_REQUIRES_EXACT_ONE_DRIVE_DOCUMENT");
+    await runIsolatedFullDocument(files[0],accessToken,ingestToken,state,scope);
+    return;
+  }
 
   console.log(`Found ${files.length} supported documents in configured Drive scope`);
   console.log(
