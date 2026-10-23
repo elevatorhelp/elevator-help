@@ -18,7 +18,7 @@ jobs:
       - name: Checkout exact PR61 source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 6786d9532a7a53578fd656792e987a816d5f104d
+          ref: f44a751f511b4b61fffa7390e746ca08ec5121f0
       - name: Node 22
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
