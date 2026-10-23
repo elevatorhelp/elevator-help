@@ -368,7 +368,14 @@ ${JSON.stringify(payload)}
 
 export async function POST(request: NextRequest) {
   try {
-    const expectedToken = process.env.INGESTION_TOKEN;
+    // Cloudflare runtime secrets are env bindings; process.env is not guaranteed
+    // to mirror them (notably under deployed OpenNext Workers).
+    const { env: runtimeEnv } = getCloudflareContext();
+    const runtimeValue = (name: string): string | undefined => {
+      const value = (runtimeEnv as any)?.[name];
+      return typeof value === "string" ? value : process.env[name];
+    };
+    const expectedToken = runtimeValue("INGESTION_TOKEN");
     const auth = request.headers.get("authorization") || "";
 
     if (!expectedToken || auth !== `Bearer ${expectedToken}`) {
@@ -377,7 +384,7 @@ export async function POST(request: NextRequest) {
 
     const body: any = await request.json();
     const guardWrite = async <T,>(operation: () => Promise<T>): Promise<T> => {
-      if (process.env.INGESTION_LEASE_PREFLIGHT !== "true") return operation();
+      if (runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true") return operation();
       const lease = parseIngestionLease(body?.lease);
       if (!lease) throw new Error("INGESTION_LEASE_REQUIRED");
       const { env: leaseEnv } = getCloudflareContext();
@@ -386,7 +393,7 @@ export async function POST(request: NextRequest) {
 
     // Opt-in preflight only. Not sufficient for safe parallel Vectorize writes:
     // a lease may expire after validation, before an external side effect.
-    if (process.env.INGESTION_LEASE_PREFLIGHT === "true") {
+    if (runtimeValue("INGESTION_LEASE_PREFLIGHT") === "true") {
       const lease = parseIngestionLease(body?.lease);
       if (!lease) return NextResponse.json({ ok: false, error: "INGESTION_LEASE_REQUIRED" }, { status: 409 });
       const { env: leaseEnv } = getCloudflareContext();
@@ -398,8 +405,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (body?.action === "publish_staged") {
-      if (process.env.INGESTION_STAGED_PUBLICATION !== "true" ||
-          process.env.INGESTION_LEASE_PREFLIGHT !== "true")
+      if (runtimeValue("INGESTION_STAGED_PUBLICATION") !== "true" ||
+          runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")
         return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_DISABLED"},{status:409});
       const lease = parseIngestionLease(body?.lease);
       const documentId = body?.documentId;
@@ -521,13 +528,13 @@ export async function POST(request: NextRequest) {
 
     // Validate staged revision before any paid embeddings or external Vectorize writes.
     // Never persist a receipt for an inconsistent source revision.
-    if (process.env.INGESTION_STAGED_PUBLICATION === "true" &&
+    if (runtimeValue("INGESTION_STAGED_PUBLICATION") === "true" &&
         chunks.some((v) => !v.sourceFingerprint ||
           v.sourceFingerprint !== chunks[0].sourceFingerprint)) {
       return NextResponse.json({ok:false,error:"STAGED_FINGERPRINT_MISMATCH"},{status:409});
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = runtimeValue("GEMINI_API_KEY");
     const ai = (env as any).AI;
 
     if (!apiKey || !ai) {
@@ -591,13 +598,13 @@ export async function POST(request: NextRequest) {
 
     // Opt-in staged publication. Only one source document per request, and its
     // lease key must equal the sourceFileId. Otherwise fail closed.
-    const staged = process.env.INGESTION_STAGED_PUBLICATION === "true";
+    const staged = runtimeValue("INGESTION_STAGED_PUBLICATION") === "true";
     const publicationLease = staged ? parseIngestionLease(body?.lease) : null;
     const sourceId = chunks[0]?.sourceFileId;
     if (staged && (!publicationLease || !archiveDb ||
         chunks.some((chunk) => chunk.sourceFileId !== sourceId) ||
         publicationLease.jobKey !== sourceId ||
-        process.env.INGESTION_LEASE_PREFLIGHT !== "true")) {
+        runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")) {
       return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_REQUIRES_DOCUMENT_LEASE"},{status:409});
     }
     const legacyVectors = vectorRecords.map(({ chunk, metadata, index }) => ({
