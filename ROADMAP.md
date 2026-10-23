@@ -249,3 +249,12 @@ Every status report starts with **current milestone / last verified completed it
 6. **Update this same ROADMAP.md after each milestone** with exact run/PR/SHA, current measured counts, costs, blockers and owner decisions. No autonomous/background completion claims without a verified running automation.
 
 **Current decision:** preserve Architecture C, prioritize Raw recovery and measurable safe Live Archive acceleration, keep Beta/Gamma dates conditional on acceptance evidence, and defer nonblocking feature expansion. This document-only update does not authorize new spend, ingestion runs, production writes or merges without CI.
+
+
+## Security dependency invariant — 2026-10-23 (mandatory; never silently downgrade)
+
+- **Next.js minimum approved security baseline: 16.4.2**. This floor is an operational requirement, not an experiment; future dependency changes must preserve or upgrade it. Downgrade is prohibited absent an explicit documented security review and owner approval.
+- The repository must keep `package.json` and `package-lock.json` consistent. `scripts/guard-next-security-baseline.mjs` is the CI gate and must run before `npm ci` on main and every PR. Do not delete or bypass this check to fix a compatibility issue.
+- A QA-only temporary Next.js 16.3.8 install was used to diagnose an OpenNext integration bug on GitHub Actions; it **did not alter committed dependencies or Production**. It must not become the project's permanent solution.
+- Actual Cloudflare QA confirmed Next.js **16.4.2** works with **@opennextjs/cloudflare 1.20.12** (GitHub run https://github.com/elevatorhelp/elevator-help/actions/runs/39987350819). Preferred compatibility fix: upgrade OpenNext with reviewed manifest + lockfile change and repeat exact-head CI; **never downgrade Next.js** to resolve this.
+- Until upgraded dependencies are committed and tested, do not infer the temporary QA upgrade is a Production release. PR #61 remains Draft pending separate real Gemini ingestion gates.
