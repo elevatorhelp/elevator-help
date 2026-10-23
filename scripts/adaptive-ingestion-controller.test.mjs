@@ -11,3 +11,7 @@ test("adaptive scales only with fresh bounded telemetry",()=>assert.equal(planIn
 test("stale telemetry falls back to baseline",()=>assert.equal(planIngestion({queues,telemetry:metrics,policy:{adaptiveEnabled:true,maxFiles:10},now:1000000}).maxFiles,2));
 test("budget exhaustion stops work",()=>assert.equal(planIngestion({queues,telemetry:{...metrics,geminiRemaining:0},policy:{adaptiveEnabled:true,maxFiles:10},now:1000}).maxFiles,0));
 test("never exceeds hard max",()=>assert.equal(planIngestion({queues:{evidence:100},telemetry:metrics,policy:{adaptiveEnabled:true,maxFiles:3},now:1000}).maxFiles,3));
+test("explicit zero cap disables processing",()=>assert.equal(planIngestion({queues,policy:{maxFiles:0}}).maxFiles,0));
+test("explicit cap below baseline is respected",()=>assert.equal(planIngestion({queues,policy:{maxFiles:1}}).maxFiles,1));
+test("cursor wraps around",()=>assert.equal(planIngestion({queues,cursor:4}).phase,"raw"));
+test("missing telemetry respects explicit cap",()=>assert.equal(planIngestion({queues,policy:{adaptiveEnabled:true,maxFiles:1}}).maxFiles,1));
