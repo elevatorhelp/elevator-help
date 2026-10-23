@@ -1,0 +1,23 @@
+name: Isolated Vectorize test index
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create isolated test index
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          if npx --yes wrangler@4.125.0 vectorize list --json | grep -q 'elevator-help-staging-test'; then
+            echo 'Test index already exists; no changes made.'
+          else
+            npx --yes wrangler@4.125.0 vectorize create elevator-help-staging-test --dimensions=768 --metric=cosine
+          fi
+          npx --yes wrangler@4.125.0 vectorize list --json | grep -q 'elevator-help-staging-test'
