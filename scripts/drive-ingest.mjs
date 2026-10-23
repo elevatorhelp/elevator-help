@@ -518,7 +518,7 @@ async function callIngest(payload, token) {
     ingestionBudget.reserve(GEMINI_CALLS_PER_RAW_BATCH, "raw chunk batch");
   }
   if (STAGED_AUTO_LEASE && activeStagedLease &&
-      (payload?.action === "upsert" || payload?.action === "publish_staged")) {
+      (payload?.action === "upsert" || payload?.action === "publish_staged" || payload?.action === "publish_full")) {
     const renewed = await callJsonEndpoint(INGEST_ENDPOINT,
       {action:"lease_renew",lease:activeStagedLease,durationMs:180000},
       token,"Lease renewal");
