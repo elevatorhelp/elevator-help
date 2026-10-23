@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
-const base="http://127.0.0.1:8787/api/drive-ingest-batch";
+const base=(process.env.QA_APP_BASE_URL||"http://127.0.0.1:8787")+"/api/drive-ingest-batch";
 const secret=process.env.QA_INGESTION_TOKEN;
 if(!secret)throw Error("QA_INGESTION_TOKEN_REQUIRED");
 const run=(process.env.GITHUB_RUN_ID||Date.now().toString()).replace(/[^0-9]/g,"");
