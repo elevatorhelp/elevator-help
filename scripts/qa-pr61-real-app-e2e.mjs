@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import {execFileSync} from "node:child_process";
+const base="http://127.0.0.1:8787/api/drive-ingest-batch";
+const secret=process.env.QA_INGESTION_TOKEN;
+if(!secret)throw Error("QA_INGESTION_TOKEN_REQUIRED");
+const run=(process.env.GITHUB_RUN_ID||Date.now().toString()).replace(/[^0-9]/g,"");
+const doc="qa61-app-"+run,fp="qa-file-revision-"+run,owner="qa-owner-"+run;
+const sql=(q)=>{
+ const args=["wrangler","d1","execute","elevator-help-lease-test-01","--remote","--config","wrangler.qa-app.json","--command",q];
+ return execFileSync("npx",args,{encoding:"utf8",timeout:120000,stdio:["ignore","pipe","pipe"]});
+};
+const quote=v=>"'"+v.replaceAll("'","''")+"'";
+const now=Date.now();
+sql(`INSERT OR IGNORE INTO ingestion_document_publications(document_id,job_key,active_generation,updated_at_ms) VALUES(${quote(doc)},${quote(doc)},0,${now});
+INSERT INTO ingestion_worker_leases(job_key,owner,generation,lease_until_ms,updated_at_ms) VALUES(${quote(doc)},${quote(owner)},1,${now+420000},${now});`);
+const lease={jobKey:doc,owner,generation:1};
+async function post(payload){
+ const response=await fetch(base,{method:"POST",headers:{Authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify(payload)});
+ const data=await response.json();
+ return {status:response.status,...data};
+}
+let r=await post({action:"status",lease});
+assert.equal(r.status,200,"actual Next.js status route failed: "+JSON.stringify(r));
+assert.equal(r.legacyConfigured,true);assert.equal(r.multilingualConfigured,true);
+assert.equal(r.archiveIndexConfigured,true);
+console.log("PASS: real OpenNext API /api/drive-ingest-batch active on isolated bindings");
+r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1"]});
+assert.equal(r.status,409,"unwritten document must not publish");
+console.log("PASS: actual API rejects unpublished manifest");
+r=await post({action:"upsert",lease,chunks:[{id:doc+":1",text:"EN 81-20 QA test technical sentence one.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:0,sourceFingerprint:fp},{id:doc+":2",text:"EN 81-50 QA test technical sentence two.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:1,sourceFingerprint:fp}]});
+assert.equal(r.status,200,"real application upsert failed: "+JSON.stringify(r));
+assert.equal(r.staged,true);
+console.log("PASS: real Next.js API staged 2 raw document chunks");
+r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":wrong"]});
+assert.equal(r.status,409,"wrong manifest erroneously published");
+r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":2"]});
+assert.equal(r.status,200,"real application publish failed: "+JSON.stringify(r));
+assert.equal(r.published,true);
+console.log("PASS: actual Next.js API exact-manifest atomic publication");
+console.log("PASS: actual OpenNext API integration: real Gemini embeddings + two Vectorize writes + D1");
