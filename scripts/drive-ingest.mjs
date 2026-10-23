@@ -45,6 +45,7 @@ if(STAGED_LEASE && (!TARGET_FILE_ID || STAGED_LEASE.jobKey !== TARGET_FILE_ID ||
 const STAGED_AUTO_LEASE = process.env.STAGED_AUTO_LEASE === "true";
 if (STAGED_AUTO_LEASE && (
   !TARGET_FILE_ID || STAGED_LEASE ||
+  new URL(DOCUMENT_MAP_ENDPOINT).origin !== new URL(INGEST_ENDPOINT).origin ||
   new URL(INGEST_ENDPOINT).hostname !== "elevator-help-pr61-app-qa.baharmand.workers.dev"
 )) throw new Error("STAGED_AUTO_LEASE_REQUIRES_ISOLATED_SINGLE_DOCUMENT");
 let activeStagedLease = STAGED_LEASE;
