@@ -149,7 +149,7 @@ export async function searchArchiveEvidenceIndex(
     // table. Preserve exact retrieval while the schema repair is deployed.
     // A fresh isolated QA database can contain only staged evidence, without
     // the legacy archive tables. Still query D1-published generations.
-    if (/no such table:\\s*(?:main\\.)?(?:archive_chunks|archive_chunk_search|archive_chunk_identifiers|archive_chunk_clauses)/i.test(String(error))) {
+    if (/no such table:\s*(?:main\.)?(?:archive_chunks|archive_chunk_search|archive_chunk_identifiers|archive_chunk_clauses)/i.test(String(error))) {
       return publishedExactEvidence(archiveDb,keys,clauseKeys,[],Math.max(1,Math.min(100,limit)));
     }
     if (!/no such table:\s*(?:main\.)?archive_chunk_search_fts/i.test(String(error))) throw error;
@@ -164,7 +164,7 @@ export async function searchArchiveEvidenceIndex(
     } catch (fallbackError) {
       // QA databases deliberately contain only generation-staged evidence,
       // no legacy tables and no legacy FTS. Never mask unrelated SQL failures.
-      if (/no such table:\\s*(?:main\\.)?(?:archive_chunks|archive_chunk_search|archive_chunk_identifiers|archive_chunk_clauses)/i.test(String(fallbackError)))
+      if (/no such table:\s*(?:main\.)?(?:archive_chunks|archive_chunk_search|archive_chunk_identifiers|archive_chunk_clauses)/i.test(String(fallbackError)))
         return publishedExactEvidence(archiveDb,keys,clauseKeys,[],Math.max(1,Math.min(100,limit)));
       throw fallbackError;
     }
