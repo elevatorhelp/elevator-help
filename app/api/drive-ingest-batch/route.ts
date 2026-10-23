@@ -1,4 +1,4 @@
-import {stagedVectorId} from "../../lib/ingestion-generation-publication";
+import {stagedVectorId,recordStagedBatch,publishCompleteStagedGeneration} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
@@ -397,6 +397,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (body?.action === "publish_staged") {
+      if (process.env.INGESTION_STAGED_PUBLICATION !== "true" ||
+          process.env.INGESTION_LEASE_PREFLIGHT !== "true")
+        return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_DISABLED"},{status:409});
+      const lease = parseIngestionLease(body?.lease);
+      const documentId = body?.documentId;
+      const expectedChunks = body?.expectedChunks;
+      if (!lease || typeof documentId !== "string" || lease.jobKey !== documentId ||
+          !Number.isSafeInteger(expectedChunks) || expectedChunks < 1)
+        return NextResponse.json({ok:false,error:"INVALID_PUBLICATION_REQUEST"},{status:400});
+      const {env: publishEnv} = getCloudflareContext();
+      try {
+        const published = await publishCompleteStagedGeneration(
+          (publishEnv as any).CORTEX_DB,lease,documentId,expectedChunks);
+        return NextResponse.json({ok:published,published},
+          {status:published?200:409});
+      } catch {
+        return NextResponse.json({ok:false,error:"PUBLICATION_FAILED"},{status:409});
+      }
+    }
     const action = body?.action || "upsert";
     const { env } = getCloudflareContext();
     const vectorize = (env as any).VECTORIZE;
@@ -589,6 +609,7 @@ export async function POST(request: NextRequest) {
     if (staged) {
       // Staging is intentionally NOT published per batch: a multi-batch file
       // must be fully staged and validated before a single final CAS commit.
+      await recordStagedBatch(archiveDb,publicationLease!,sourceId,chunks.map(v=>v.id));
       return NextResponse.json({ok:true,staged:true,published:false,ids:multilingualVectors.map(v=>v.id)});
     } else {
       await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
