@@ -21,7 +21,10 @@ const response=await fetch(process.env.QA_APP_BASE_URL+"/api/qa-evidence-lookup"
  method:"POST",headers:{"Authorization":"Bearer "+process.env.QA_INGESTION_TOKEN,
  "Content-Type":"application/json"},body:JSON.stringify({query:candidate.label})
 });
-assert.equal(response.status,200,"published exact evidence lookup HTTP status");
+if(response.status!==200) {
+ const errorBody=await response.clone().json().catch(()=>({error:"NON_JSON"}));
+ throw Error("QA_EVIDENCE_LOOKUP_HTTP_"+response.status+"_"+String(errorBody.error||"UNKNOWN"));
+}
 const body=await response.json();
 assert.equal(body.ok,true);
 const match=body.results?.find(x=>x.sourceFileId===fileId&&x.chunkId===record.chunk_id);
