@@ -34,10 +34,11 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::CLOUDFLARE_API_TOKEN unavailable"; exit 1; }
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::CLOUDFLARE_ACCOUNT_ID unavailable"; exit 1; }
           if [ -z "$GEMINI_API_KEY" ]; then echo "::warning::Gemini key missing: testing real API lease and publication rejection only"; fi
-      - name: QA-only Next.js adapter compatibility pin
+      - name: QA-only OpenNext compatibility upgrade
         run: |
-          npm install --no-save --ignore-scripts next@16.3.8
-          test "$(node -p 'require("next/package.json").version')" = "16.3.8"
+          npm install --no-save --ignore-scripts @opennextjs/cloudflare@1.20.12
+          test "$(node -p 'require("next/package.json").version')" = "16.4.2"
+          test "$(node -p 'require("@opennextjs/cloudflare/package.json").version')" = "1.20.12"
       - name: Build actual OpenNext Worker
         run: npm run cf:build
       - name: Bootstrap isolated D1 only
