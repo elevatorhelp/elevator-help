@@ -431,6 +431,18 @@ export async function POST(request: NextRequest) {
     const vectorizeV2 = (env as any).VECTORIZE_V2;
     const archiveDb = (env as any).CORTEX_DB;
 
+    // The staged protocol currently covers RAW vectors only. Evidence rows use
+    // active unversioned D1 identifiers, while delete can remove live rows.
+    // Until evidence has generation-qualified storage and atomic publication,
+    // reject these actions before any D1/Vectorize side effects.
+    if (runtimeValue("INGESTION_STAGED_PUBLICATION") === "true" &&
+        (action === "index_evidence" || action === "delete")) {
+      return NextResponse.json(
+        { ok: false, error: "STAGED_EVIDENCE_PUBLICATION_NOT_IMPLEMENTED" },
+        { status: 409 },
+      );
+    }
+
     if (action === "status") {
       return NextResponse.json({
         ok: true,
