@@ -1,3 +1,4 @@
+import { assertActiveIngestionLease, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -374,6 +375,19 @@ export async function POST(request: NextRequest) {
     }
 
     const body: any = await request.json();
+    // Opt-in preflight only. Not sufficient for safe parallel Vectorize writes:
+    // a lease may expire after validation, before an external side effect.
+    if (process.env.INGESTION_LEASE_PREFLIGHT === "true") {
+      const lease = parseIngestionLease(body?.lease);
+      if (!lease) return NextResponse.json({ ok: false, error: "INGESTION_LEASE_REQUIRED" }, { status: 409 });
+      const { env: leaseEnv } = getCloudflareContext();
+      try {
+        await assertActiveIngestionLease((leaseEnv as any).CORTEX_DB, lease);
+      } catch {
+        return NextResponse.json({ ok: false, error: "INGESTION_LEASE_INVALID" }, { status: 409 });
+      }
+    }
+
     const action = body?.action || "upsert";
     const { env } = getCloudflareContext();
     const vectorize = (env as any).VECTORIZE;
