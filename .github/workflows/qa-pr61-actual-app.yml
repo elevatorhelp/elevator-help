@@ -38,7 +38,7 @@ jobs:
         run: |
           npm install --no-save --ignore-scripts @opennextjs/cloudflare@1.20.12
           test "$(node -p 'require("next/package.json").version')" = "16.4.2"
-          test "$(node -p 'require("@opennextjs/cloudflare/package.json").version')" = "1.20.12"
+          test "$(node -p 'require("./node_modules/@opennextjs/cloudflare/package.json").version')" = "1.20.12"
       - name: Build actual OpenNext Worker
         run: npm run cf:build
       - name: Bootstrap isolated D1 only
