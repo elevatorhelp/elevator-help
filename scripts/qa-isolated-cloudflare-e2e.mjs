@@ -50,12 +50,23 @@ try{
 }finally{unlinkSync(path)}
 // Writes may be asynchronous in Vectorize; never claim success until retrievable.
 let seen=false;
+const readUrl="https://api.cloudflare.com/client/v4/accounts/"+
+ encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)+
+ "/vectorize/v2/indexes/"+vectorIndex+"/get_by_ids";
 for(let attempt=0;attempt<12;attempt++){
- try{
-  const result=command(["vectorize","get-vectors",vectorIndex,"--ids",...records.map(x=>x.id)]);
-  if(records.every(v=>result.includes(v.id))){seen=true;break}
-  if(attempt===0) console.log("Vectorize read response (test-only IDs):",result.slice(0,600));
- }catch(error){ if(attempt===0) console.log("Vectorize get-vectors command failed; exit status:",error?.status,"stderr:",String(error?.stderr||"").slice(0,500)); }
+ const response=await fetch(readUrl,{
+  method:"POST",
+  headers:{Authorization:"Bearer "+process.env.CLOUDFLARE_API_TOKEN,"Content-Type":"application/json"},
+  body:JSON.stringify({ids:records.map(x=>x.id)})
+ });
+ const payload=await response.json();
+ if(!response.ok||payload.success===false)
+   throw Error("Vectorize API get_by_ids failed: HTTP "+response.status+
+    " code "+String(payload.errors?.[0]?.code||"unknown"));
+ const found=Array.isArray(payload.result)?payload.result:
+   Array.isArray(payload.result?.vectors)?payload.result.vectors:[];
+ if(attempt===0)console.log("Vectorize API read status:",response.status,"found:",found.length);
+ if(records.every(v=>found.some(item=>item.id===v.id))){seen=true;break;}
  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5000);
 }
 assert(seen,"Vectorize failed real read-after-upsert verification");
