@@ -1,4 +1,4 @@
-import {filterPublishedMatches} from "./ingestion-publication-visibility";
+import {filterPublishedMatches} from "./ingestion-publication-visibility.ts";
 import type { RouterResult } from "./router";
 import {
   createQueryBackend,
