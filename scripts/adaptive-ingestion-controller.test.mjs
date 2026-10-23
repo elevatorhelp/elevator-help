@@ -24,3 +24,22 @@ test("real ingester integration remains opt-in and bounded",async()=>{
  assert.match(source,/maxFiles: MAX_FILES, adaptiveEnabled: false/);
  assert.match(source,/scope.nextPhaseCursor = capacity.nextCursor/);
 });
+
+test("phase cursor and partial chunk checkpoint survive restart",async()=>{
+ const {mkdtemp,rm}=await import("node:fs/promises");
+ const {tmpdir}=await import("node:os");
+ const {join}=await import("node:path");
+ const {readIngestionState,writeIngestionState,canResumeRaw}=await import("./drive-ingest.mjs");
+ const dir=await mkdtemp(join(tmpdir(),"archive-restart-"));
+ const file=join(dir,"checkpoint.json");
+ try {
+  const state={version:3,scopes:{archive:{nextPhaseCursor:2,phaseCursors:{raw:"cursor"},files:{doc:{partialRawEmbeddingVersion:3,partialRawFingerprint:"v1",partialRawIds:["a","b"],rawNextChunk:2}}}}};
+  await writeIngestionState(state,file);
+  const restarted=await readIngestionState(file,false);
+  assert.equal(restarted.scopes.archive.nextPhaseCursor,2);
+  assert.equal(planIngestion({queues:{map:1},cursor:restarted.scopes.archive.nextPhaseCursor}).phase,"map");
+  assert.equal(canResumeRaw(restarted.scopes.archive.files.doc,"v1"),true);
+  assert.equal(canResumeRaw(restarted.scopes.archive.files.doc,"v2"),false);
+  await assert.rejects(readIngestionState(join(dir,"missing.json"),false),/INGESTION_STATE_MISSING/);
+ } finally {await rm(dir,{recursive:true,force:true});}
+});
