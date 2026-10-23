@@ -1,0 +1,46 @@
+name: D1 lease isolated verification
+run-name: Isolated D1 lease probe
+
+# This workflow is intentionally manual only. It must target an explicitly
+# provisioned disposable D1 database, NEVER the production database.
+on:
+  workflow_dispatch:
+    inputs:
+      database_name:
+        description: "Existing disposable D1 database name (must start with elevator-help-lease-test-)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-d1-lease-probe
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Verify isolated target
+        env:
+          TEST_DB: ${{ inputs.database_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TEST_DB" =~ ^elevator-help-lease-test-[a-zA-Z0-9_-]+$ ]] || { echo "::error::Not a disposable test database"; exit 1; }
+      - name: Verify D1 lease contract against remote disposable database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TEST_DB: ${{ inputs.database_name }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          node scripts/probe-d1-lease.mjs
