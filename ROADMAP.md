@@ -249,3 +249,10 @@ Every status report starts with **current milestone / last verified completed it
 6. **Update this same ROADMAP.md after each milestone** with exact run/PR/SHA, current measured counts, costs, blockers and owner decisions. No autonomous/background completion claims without a verified running automation.
 
 **Current decision:** preserve Architecture C, prioritize Raw recovery and measurable safe Live Archive acceleration, keep Beta/Gamma dates conditional on acceptance evidence, and defer nonblocking feature expansion. This document-only update does not authorize new spend, ingestion runs, production writes or merges without CI.
+
+### M1 / Issue #60 — D1 worker lease verification gate (2026-10-23)
+
+- Draft [PR #61](https://github.com/elevatorhelp/elevator-help/pull/61) adds an **opt-in**, baseline-capped ingestion phase planner; it is **disabled in production**. The restart/checkpoint regression passed Build Check [39941679374](https://github.com/elevatorhelp/elevator-help/actions/runs/39941679374) on commit `f3e49b6`.
+- The draft SQL lease/fencing design is in `docs/ingestion-d1-lease-schema.sql`. The SQLite contract regression is `scripts/test-d1-lease-sql.mjs`, added to Build Check on commit `74ae30cb`. **CI on this new commit is not yet verified.** Offline SQLite tests must not be described as actual Cloudflare D1 concurrency tests.
+- **Before any production D1 migration, parallel writers or higher throughput:** confirm latest-head CI; implement real atomic D1 claim/renew/complete using owner + generation + expiry and affected-row checks; test simultaneous claims, expiry/reclaim, stale-worker writes and external D1/Vectorize side effects; verify real D1 backup **and restore**, idempotent replay, partial RAW restart and checkpoint recovery. Explicitly verify cache-loss behavior and do not silently rebuild the archive.
+- Keep PR #61 Draft and feature flag off until those gates pass. No automatic merge or paid/production ingestion authorization is implied by green offline tests.
