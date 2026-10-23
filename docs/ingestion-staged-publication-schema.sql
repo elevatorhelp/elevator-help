@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS ingestion_staged_receipts (
  generation INTEGER NOT NULL,
  chunk_id TEXT NOT NULL,
  created_at_ms INTEGER NOT NULL,
+ source_fingerprint TEXT NOT NULL,
  PRIMARY KEY(document_id,generation,chunk_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ingestion_staged_receipts_generation
