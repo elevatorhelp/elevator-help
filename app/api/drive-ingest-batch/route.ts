@@ -602,7 +602,7 @@ export async function POST(request: NextRequest) {
           });
         }
         return NextResponse.json({ok:true,staged:true,indexed:chunks.length,
-          ids:chunks.map(x=>x.id)});
+          archiveIndexVersion:ARCHIVE_INDEX_VERSION,ids:chunks.map(x=>x.id)});
       }catch{
         return NextResponse.json({ok:false,error:"STAGED_EVIDENCE_WRITE_FAILED"},{status:409});
       }
