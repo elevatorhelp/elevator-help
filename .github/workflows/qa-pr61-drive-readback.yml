@@ -1,0 +1,54 @@
+name: PR61 Isolated Drive readback and recovery
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/qa-pr61-drive-readback.yml
+permissions:
+  contents: read
+concurrency:
+  group: qa-pr61-cloudflare-gemini
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact PR61 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: da3b4ba46bed7ffba995c347c8eef451c1703e64
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Verify Next.js security floor
+        run: node scripts/guard-next-security-baseline.mjs
+      - name: Rotate disposable QA authorization only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          QA_INGESTION_TOKEN=$(openssl rand -hex 32)
+          echo "::add-mask::$QA_INGESTION_TOKEN"
+          echo "QA_INGESTION_TOKEN=$QA_INGESTION_TOKEN" >> "$GITHUB_ENV"
+          printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put QA_INGESTION_TOKEN --config wrangler.qa-app-deployed.json > /dev/null
+          printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put INGESTION_TOKEN --config wrangler.qa-app-deployed.json > /dev/null
+      - name: Real Drive exact source retrieval and citation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          QA_APP_BASE_URL: https://elevator-help-pr61-app-qa.baharmand.workers.dev
+        run: node --experimental-strip-types scripts/qa-drive-evidence-readback.mjs
+      - name: Remote D1 interruption and lease takeover regression
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          QA_APP_BASE_URL: https://elevator-help-pr61-app-qa.baharmand.workers.dev
+        run: node scripts/qa-drive-recovery-live.mjs
