@@ -16,7 +16,9 @@ test("lease ownership, expiry, fencing and renewal",()=>{
   assert.equal(acquire("A",100,20),1);
   assert.equal(acquire("B",110,20),0);
   assert.equal(acquire("B",120,20),1);
-  assert.deepEqual(db.prepare("SELECT owner,generation FROM leases").get(),{owner:"B",generation:2});
+  const current=db.prepare("SELECT owner,generation FROM leases").get();
+  assert.equal(current.owner,"B");
+  assert.equal(current.generation,2);
   const renew=db.prepare("UPDATE leases SET lease_until_ms=?,updated_at_ms=? WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?");
   assert.equal(renew.run(150,121,"doc:v1:raw","A",1,121).changes,0);
   assert.equal(renew.run(150,121,"doc:v1:raw","B",2,121).changes,1);
