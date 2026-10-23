@@ -33,7 +33,7 @@ if (process.env.QA_NEGATIVE_ONLY === "true") {
     sourceFingerprint:fp,manifestIds:[doc+":1"]});
   assert.equal(wrong.status,409,"stale lease must fail");
   console.log("PASS: real OpenNext route rejects invalid ownership and unpublished manifest");
-  console.log("PARTIAL: positive real Gemini upsert requires GitHub GEMINI_API_KEY secret");
+  console.log("PARTIAL: positive real Gemini upsert requires GEMINI_API_KEY on the isolated Cloudflare QA Worker");
   process.exit(0);
 }
 r=await post({action:"upsert",lease,chunks:[{id:doc+":1",text:"EN 81-20 QA test technical sentence one.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:0,sourceFingerprint:fp},{id:doc+":2",text:"EN 81-50 QA test technical sentence two.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:1,sourceFingerprint:fp}]});
