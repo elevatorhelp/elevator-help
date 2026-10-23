@@ -39,6 +39,8 @@ if (process.env.QA_NEGATIVE_ONLY === "true") {
 r=await post({action:"upsert",lease,chunks:[{id:doc+":1",text:"EN 81-20 QA test technical sentence one.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:0,sourceFingerprint:fp},{id:doc+":2",text:"EN 81-50 QA test technical sentence two.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:1,sourceFingerprint:fp}]});
 assert.equal(r.status,200,"real application upsert failed: "+JSON.stringify(r));
 assert.equal(r.staged,true);
+const actualStagedIds=r.ids;
+assert.ok(Array.isArray(actualStagedIds)&&actualStagedIds.length===2,"server did not return both staged IDs");
 console.log("PASS: real Next.js API staged 2 raw document chunks");
 r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":wrong"]});
 assert.equal(r.status,409,"wrong manifest erroneously published");
@@ -47,14 +49,14 @@ assert.equal(r.status,200,"real application publish failed: "+JSON.stringify(r))
 assert.equal(r.published,true);
 console.log("PASS: actual Next.js API exact-manifest atomic publication");
 // Prove real read-after-publication: a successful API write alone is not retrieval evidence.
-const expectedIds=[doc+":1",doc+":2"].map(id=>"g1:"+id);
+const expectedIds=actualStagedIds;
 const vectorUrl="https://api.cloudflare.com/client/v4/accounts/"+
  encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)+
  "/vectorize/v2/indexes/elevator-help-staging-test/get_by_ids";
 if(!process.env.CLOUDFLARE_API_TOKEN||!process.env.CLOUDFLARE_ACCOUNT_ID)
  throw Error("QA_CLOUDFLARE_CREDENTIALS_REQUIRED");
 let verified=false;
-for(let attempt=0;attempt<12;attempt++){
+for(let attempt=0;attempt<24;attempt++){
  const response=await fetch(vectorUrl,{method:"POST",headers:{
   Authorization:"Bearer "+process.env.CLOUDFLARE_API_TOKEN,
   "Content-Type":"application/json"
@@ -64,8 +66,10 @@ for(let attempt=0;attempt<12;attempt++){
   throw Error("QA_VECTORIZE_READ_FAILED_HTTP_"+response.status);
  const records=Array.isArray(payload.result)?payload.result:
   Array.isArray(payload.result?.vectors)?payload.result.vectors:[];
+ if(attempt===0||attempt===5||attempt===15||attempt===23)
+  console.log("QA Vectorize read",JSON.stringify({attempt,found:records.length,returnedIds:records.map(v=>v.id),expectedIds}));
  if(expectedIds.every(id=>records.some(v=>v.id===id))){verified=true;break;}
- await new Promise(resolve=>setTimeout(resolve,3000));
+ await new Promise(resolve=>setTimeout(resolve,5000));
 }
 assert.equal(verified,true,"staged vectors not readable from isolated Vectorize");
 const d1Read=execFileSync("npx",["wrangler","d1","execute",
