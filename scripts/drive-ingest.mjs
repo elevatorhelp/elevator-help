@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
+import { planIngestion } from "./adaptive-ingestion-controller.mjs";
 
 const execFileAsync = promisify(execFile);
 const OFFICE_EXTENSIONS = new Set([
@@ -31,6 +32,15 @@ const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/ap
 const DOCUMENT_MAP_ENDPOINT =
   process.env.DOCUMENT_MAP_ENDPOINT || "https://elevator.help/api/document-map-ingest";
 const STATE_PATH = process.env.STATE_PATH || ".ingestion-state/drive.json";
+// Test-only bridge. A caller must provide a valid, server-issued per-document
+// lease. No production workflow sets this variable. Never use it for multi-file
+// or full-archive ingestion until durable lease acquisition/renewal is wired.
+const STAGED_LEASE_JSON = process.env.STAGED_INGESTION_LEASE_JSON || "";
+const STAGED_LEASE = STAGED_LEASE_JSON ? JSON.parse(STAGED_LEASE_JSON) : null;
+if(STAGED_LEASE && (!TARGET_FILE_ID || STAGED_LEASE.jobKey !== TARGET_FILE_ID ||
+    typeof STAGED_LEASE.owner !== "string" || !Number.isSafeInteger(STAGED_LEASE.generation) ||
+    STAGED_LEASE.generation < 1))
+  throw new Error("STAGING_REQUIRES_SINGLE_FILE_VALID_LEASE");
 const BATCH_SIZE = 8;
 const CHUNK_SIZE = 2200;
 const CHUNK_OVERLAP = 250;
@@ -499,7 +509,9 @@ async function callIngest(payload, token) {
   if (payload?.action === "upsert") {
     ingestionBudget.reserve(GEMINI_CALLS_PER_RAW_BATCH, "raw chunk batch");
   }
-  return callJsonEndpoint(INGEST_ENDPOINT, payload, token, "Ingestion endpoint");
+  return callJsonEndpoint(INGEST_ENDPOINT,
+    STAGED_LEASE && payload?.action === "upsert" ? {...payload,lease:STAGED_LEASE} : payload,
+    token, "Ingestion endpoint");
 }
 
 async function callDocumentMap(payload, token) {
@@ -855,8 +867,24 @@ async function main() {
   // Rotate priority every six hours so a live Evidence backlog cannot starve vectors/maps.
   // Dependency gates in createIngestionPlan ensure raw follows evidence and map follows raw per file.
   const phaseOrder = ["evidence", "raw", "map"];
-  const preferredPhase = phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
+  // Feature-gated planner: default remains the established production scheduler.
+  // Persist phase cursor alongside existing per-file checkpoints. No adaptive
+  // acceleration without separately verified fresh resource telemetry.
+  const controllerEnabled = process.env.INGESTION_CONTROLLER_ENABLED === "true";
+  const phaseCursor = Number.isSafeInteger(scope.nextPhaseCursor) && scope.nextPhaseCursor >= 0
+    ? scope.nextPhaseCursor % phaseOrder.length : 0;
+  const preferredPhase = controllerEnabled
+    ? phaseOrder[phaseCursor]
+    : phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
+  const capacity = controllerEnabled
+    ? planIngestion({
+        queues: plan.readyCounts,
+        cursor: phaseCursor,
+        // No trusted quota telemetry yet: always fail closed to existing MAX_FILES.
+        policy: { baselineFiles: MAX_FILES, maxFiles: MAX_FILES, adaptiveEnabled: false },
+      })
+    : null;
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
   console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);
@@ -867,13 +895,14 @@ async function main() {
 
   scope.phaseCursors ||= {};
   const batch = selectFairIngestionBatch(
-    changed, MAX_FILES, scope.phaseCursors[plan.phase] ?? null
+    changed, controllerEnabled ? capacity.maxFiles : MAX_FILES, scope.phaseCursors[plan.phase] ?? null
   );
   const selected = batch.files;
   if (selected.length && !TARGET_FILE_ID) {
     // Advance and checkpoint before any network call. A failed file cannot
     // pin the entire archive to the same first batch on the next scheduled run.
     scope.phaseCursors[plan.phase] = batch.nextCursor;
+    if (controllerEnabled) scope.nextPhaseCursor = capacity.nextCursor;
     state.scopes[DRIVE_FOLDER_ID] = scope;
     await saveState(state);
   }
@@ -1004,11 +1033,27 @@ async function main() {
         continue;
       }
 
+      if (STAGED_LEASE) {
+        if (!newIds.length || new Set(newIds).size !== newIds.length)
+          throw new Error("STAGING_INVALID_CHUNK_MANIFEST");
+        // The source revision and exact list of chunk identifiers are checked
+        // against durable receipt rows in a single D1 publication UPDATE.
+        // A rejected publish MUST NOT mark raw indexing complete.
+        const publish = await callIngest({
+          action: "publish_staged",
+          lease: STAGED_LEASE,
+          documentId: file.id,
+          sourceFingerprint: currentFingerprint,
+          manifestIds: newIds,
+        }, ingestToken);
+        if (!publish?.published) throw new Error("STAGING_PUBLICATION_NOT_CONFIRMED");
+      }
+
       const newIdSet = new Set(newIds);
       const staleRawIds = (Array.isArray(previous.ids) ? previous.ids : []).filter(
         (id) => !newIdSet.has(id)
       );
-      if (staleRawIds.length) await deleteIds(staleRawIds, ingestToken);
+      if (staleRawIds.length && !STAGED_LEASE) await deleteIds(staleRawIds, ingestToken);
 
       next.ids = newIds;
       next.rawEmbeddingVersion = RAW_EMBEDDING_VERSION;

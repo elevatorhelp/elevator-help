@@ -1,3 +1,5 @@
+import {stagedVectorId,recordStagedBatch,publishExactStagedManifest} from "../../lib/ingestion-generation-publication";
+import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -374,6 +376,48 @@ export async function POST(request: NextRequest) {
     }
 
     const body: any = await request.json();
+    const guardWrite = async <T,>(operation: () => Promise<T>): Promise<T> => {
+      if (process.env.INGESTION_LEASE_PREFLIGHT !== "true") return operation();
+      const lease = parseIngestionLease(body?.lease);
+      if (!lease) throw new Error("INGESTION_LEASE_REQUIRED");
+      const { env: leaseEnv } = getCloudflareContext();
+      return guardedIngestionSideEffect((leaseEnv as any).CORTEX_DB, lease, operation);
+    };
+
+    // Opt-in preflight only. Not sufficient for safe parallel Vectorize writes:
+    // a lease may expire after validation, before an external side effect.
+    if (process.env.INGESTION_LEASE_PREFLIGHT === "true") {
+      const lease = parseIngestionLease(body?.lease);
+      if (!lease) return NextResponse.json({ ok: false, error: "INGESTION_LEASE_REQUIRED" }, { status: 409 });
+      const { env: leaseEnv } = getCloudflareContext();
+      try {
+        await assertActiveIngestionLease((leaseEnv as any).CORTEX_DB, lease);
+      } catch {
+        return NextResponse.json({ ok: false, error: "INGESTION_LEASE_INVALID" }, { status: 409 });
+      }
+    }
+
+    if (body?.action === "publish_staged") {
+      if (process.env.INGESTION_STAGED_PUBLICATION !== "true" ||
+          process.env.INGESTION_LEASE_PREFLIGHT !== "true")
+        return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_DISABLED"},{status:409});
+      const lease = parseIngestionLease(body?.lease);
+      const documentId = body?.documentId;
+      const manifestIds = body?.manifestIds;
+      const sourceFingerprint = body?.sourceFingerprint;
+      if (!lease || typeof documentId !== "string" || lease.jobKey !== documentId ||
+          !Array.isArray(manifestIds) || typeof sourceFingerprint !== "string")
+        return NextResponse.json({ok:false,error:"INVALID_PUBLICATION_REQUEST"},{status:400});
+      const {env: publishEnv} = getCloudflareContext();
+      try {
+        const published = await publishExactStagedManifest(
+          (publishEnv as any).CORTEX_DB,lease,documentId,sourceFingerprint,manifestIds);
+        return NextResponse.json({ok:published,published},
+          {status:published?200:409});
+      } catch {
+        return NextResponse.json({ok:false,error:"PUBLICATION_FAILED"},{status:409});
+      }
+    }
     const action = body?.action || "upsert";
     const { env } = getCloudflareContext();
     const vectorize = (env as any).VECTORIZE;
@@ -407,10 +451,10 @@ export async function POST(request: NextRequest) {
       }
 
       await Promise.all([
-        vectorize.deleteByIds(ids),
-        vectorizeV2.deleteByIds(ids),
+        guardWrite(() => vectorize.deleteByIds(ids)),
+        guardWrite(() => vectorizeV2.deleteByIds(ids)),
       ]);
-      await removeArchiveChunks(archiveDb, ids);
+      await guardWrite(() => removeArchiveChunks(archiveDb, ids));
       return NextResponse.json({ ok: true, deleted: ids.length });
     }
 
@@ -451,7 +495,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "index_evidence") {
-      await indexArchiveChunks(
+      await guardWrite(() => indexArchiveChunks(
         archiveDb,
         chunks,
         chunks.map((chunk) => ({
@@ -466,7 +510,7 @@ export async function POST(request: NextRequest) {
           documentGroup: chunk.documentGroupHint || null,
           retrievalContext: null,
         })),
-      );
+      ));
       return NextResponse.json({
         ok: true,
         indexed: chunks.length,
@@ -537,22 +581,42 @@ export async function POST(request: NextRequest) {
       return { chunk, metadata, index };
     });
 
+    // Opt-in staged publication. Only one source document per request, and its
+    // lease key must equal the sourceFileId. Otherwise fail closed.
+    const staged = process.env.INGESTION_STAGED_PUBLICATION === "true";
+    const publicationLease = staged ? parseIngestionLease(body?.lease) : null;
+    const sourceId = chunks[0]?.sourceFileId;
+    if (staged && (!publicationLease || !archiveDb ||
+        chunks.some((chunk) => chunk.sourceFileId !== sourceId) ||
+        publicationLease.jobKey !== sourceId ||
+        process.env.INGESTION_LEASE_PREFLIGHT !== "true")) {
+      return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_REQUIRES_DOCUMENT_LEASE"},{status:409});
+    }
     const legacyVectors = vectorRecords.map(({ chunk, metadata, index }) => ({
-      id: chunk.id,
+      id: staged ? stagedVectorId(chunk.id, publicationLease!.generation) : chunk.id,
       values: embeddings[index],
       metadata: { ...metadata, embeddingVersion: 2 },
     }));
     const multilingualVectors = vectorRecords.map(
       ({ chunk, metadata, index }) => ({
-        id: chunk.id,
+        id: staged ? stagedVectorId(chunk.id, publicationLease!.generation) : chunk.id,
         values: multilingualEmbeddings[index],
         metadata: { ...metadata, embeddingVersion: RAW_EMBEDDING_VERSION },
       }),
     );
 
-    await vectorize.upsert(legacyVectors);
-    await vectorizeV2.upsert(multilingualVectors);
-    await indexArchiveChunks(archiveDb, chunks, enriched);
+    await guardWrite(() => vectorize.upsert(legacyVectors));
+    await guardWrite(() => vectorizeV2.upsert(multilingualVectors));
+    if (staged) {
+      // Staging is intentionally NOT published per batch: a multi-batch file
+      // must be fully staged and validated before a single final CAS commit.
+      if(chunks.some(v=>!v.sourceFingerprint || v.sourceFingerprint !== chunks[0].sourceFingerprint))
+        return NextResponse.json({ok:false,error:"STAGED_FINGERPRINT_MISMATCH"},{status:409});
+      await recordStagedBatch(archiveDb,publicationLease!,sourceId,chunks.map(v=>v.id),chunks[0].sourceFingerprint);
+      return NextResponse.json({ok:true,staged:true,published:false,ids:multilingualVectors.map(v=>v.id)});
+    } else {
+      await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
+    }
 
     return NextResponse.json({
       ok: true,

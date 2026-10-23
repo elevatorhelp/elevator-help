@@ -249,3 +249,29 @@ Every status report starts with **current milestone / last verified completed it
 6. **Update this same ROADMAP.md after each milestone** with exact run/PR/SHA, current measured counts, costs, blockers and owner decisions. No autonomous/background completion claims without a verified running automation.
 
 **Current decision:** preserve Architecture C, prioritize Raw recovery and measurable safe Live Archive acceleration, keep Beta/Gamma dates conditional on acceptance evidence, and defer nonblocking feature expansion. This document-only update does not authorize new spend, ingestion runs, production writes or merges without CI.
+
+### M1 / Issue #60 — D1 worker lease verification gate (2026-10-23)
+
+- Draft [PR #61](https://github.com/elevatorhelp/elevator-help/pull/61) adds an **opt-in**, baseline-capped ingestion phase planner; it is **disabled in production**. The restart/checkpoint regression passed Build Check [39941679374](https://github.com/elevatorhelp/elevator-help/actions/runs/39941679374) on commit `f3e49b6`.
+- The draft SQL lease/fencing design is in `docs/ingestion-d1-lease-schema.sql`. The SQLite contract regression is `scripts/test-d1-lease-sql.mjs`, added to Build Check on commit `74ae30cb`. **CI on this new commit is not yet verified.** Offline SQLite tests must not be described as actual Cloudflare D1 concurrency tests.
+- **Before any production D1 migration, parallel writers or higher throughput:** confirm latest-head CI; implement real atomic D1 claim/renew/complete using owner + generation + expiry and affected-row checks; test simultaneous claims, expiry/reclaim, stale-worker writes and external D1/Vectorize side effects; verify real D1 backup **and restore**, idempotent replay, partial RAW restart and checkpoint recovery. Explicitly verify cache-loss behavior and do not silently rebuild the archive.
+- Keep PR #61 Draft and feature flag off until those gates pass. No automatic merge or paid/production ingestion authorization is implied by green offline tests.
+
+#### Cloudflare D1 manual-console evidence — 2026-10-23
+
+- Owner provisioned an isolated D1 database `elevator-help-lease-test-01`; it is **not** the production or preview database. The SQL table `ingestion_worker_leases` was created successfully.
+- Four **sequential, manually executed D1 SQL checks** passed based on Console output/screenshots: (1) worker-A acquired `lease-test-01`; (2) worker-B's conflicting upsert left owner A/generation 1 unchanged; (3) simulated expiration allowed B to take over with generation 2; (4) stale A/generation 1 update left B/generation 2 and expiry unchanged.
+- Scope limit: these are real Cloudflare D1 queries, **not** two concurrent live workers. The simulated expiry used a synthetic timestamp; it does not prove clock discipline, race-free distributed scheduling, protected Vectorize writes, actual checkpoint restore or safe replay.
+- **Next gate:** run a genuinely concurrent acquisition test against the disposable D1 with two independent clients and verify exactly one winner; then add guarded writes/fencing to real ingestion endpoints and test stale-worker side effects, lease expiry mid-request, D1 backup/restore and RAW resume. Preserve feature flag OFF and PR #61 Draft until evidence is complete.
+
+#### Disposable Cloudflare D1 concurrency probe — 2026-10-23
+
+- User supplied GitHub Actions screenshot for manual `D1 lease isolated verification` on `main` commit `d07c422`: workflow `Success`, verify job green, duration 44 seconds. The workflow uses disposable `elevator-help-lease-test-01` and the probe contains two independent asynchronous Wrangler invocations competing for one lease. Screenshot confirms job success; direct job logs have **not** been inspected, so do not claim detailed timing or broader stress coverage.
+- Gate satisfied **for one isolated test run only**: concurrent claim result met the probe's assertions. This does **not** prove production safety or continuous multi-worker operation.
+- Still required: review logs, repeat/stress concurrency and clock-boundary cases, implement lease validation at every real side-effect boundary (D1 writes, Vectorize upsert/delete), handle expired owner mid-operation and crash replay, verify actual D1 backup/restore, then controlled multi-folder pilot with metrics. PR #61 remains Draft; no production activation.
+
+#### Real Cloudflare D1 Time Travel restore verified — 2026-10-23
+
+- **Isolated database only:** `elevator-help-lease-test-01`. User recorded a Time Travel bookmark before inserting synthetic `restore-test-01` / `restore-probe` into `ingestion_worker_leases`.
+- D1 Console showed the synthetic row existed before restore. User restored the isolated database to the saved bookmark via Cloudflare Time Travel and subsequently executed `SELECT COUNT(*) AS remaining FROM ingestion_worker_leases WHERE job_key = 'restore-test-01';`, yielding **`remaining = 0`** (screenshot evidence). This verifies a real point-in-time restore for this test row, not merely that the restore UI is present.
+- **Scope limit:** No production database was restored. This does not establish full ingestion checkpoint consistency, Vectorize rollback, archive reconciliation, or production disaster recovery. Those remain release blockers along with stale-worker side-effect fencing and repeated concurrency/stress tests.
