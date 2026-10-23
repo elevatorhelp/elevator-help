@@ -158,7 +158,15 @@ export async function searchArchiveEvidenceIndex(
       'WHERE 1=1',
     );
     if (fallbackSql === sql) throw error;
-    const result = await archiveDb.prepare(fallbackSql).bind(...bound.slice(1)).all();
-    return publishedExactEvidence(archiveDb,keys,clauseKeys,result?.results||[],Math.max(1,Math.min(100,limit)));
+    try {
+      const result = await archiveDb.prepare(fallbackSql).bind(...bound.slice(1)).all();
+      return publishedExactEvidence(archiveDb,keys,clauseKeys,result?.results||[],Math.max(1,Math.min(100,limit)));
+    } catch (fallbackError) {
+      // QA databases deliberately contain only generation-staged evidence,
+      // no legacy tables and no legacy FTS. Never mask unrelated SQL failures.
+      if (/no such table:\\s*(?:main\\.)?(?:archive_chunks|archive_chunk_search|archive_chunk_identifiers|archive_chunk_clauses)/i.test(String(fallbackError)))
+        return publishedExactEvidence(archiveDb,keys,clauseKeys,[],Math.max(1,Math.min(100,limit)));
+      throw fallbackError;
+    }
   }
 }
