@@ -515,7 +515,7 @@ async function deleteIds(ids, token) {
 
 async function processEvidenceIndex(
   file, accessToken, ingestToken,
-  { startChunk = 0, initialIds = [], onProgress = null, onIdentity = null } = {}
+  { startChunk = 0, initialIds = [], onProgress = null, onIdentity = null, onQuality = null } = {}
 ) {
   const groupHint = documentGroupHint(file.name);
   let pages;
@@ -534,11 +534,22 @@ async function processEvidenceIndex(
 
   // Extraction-quality gate: flag image-only PDFs without spending model tokens.
   // Do not treat a successful PDF parse as evidence that readable text exists.
-  const readablePages = pages.filter((page) => normalizeText(page).length >= MIN_CHUNK_LENGTH).length;
-  if (readablePages === 0) {
-    console.warn(`EXTRACTION_REVIEW_REQUIRED: no readable text in (source redacted); OCR or source repair needed`);
-  } else if (readablePages < pages.length) {
-    console.warn(`EXTRACTION_PARTIAL: ${readablePages}/${pages.length} readable pages (source redacted)`);
+  // An empty text layer is not proof of a bad page: it may be blank or
+  // image-only. Never mark these pages as verified without visual review.
+  const suspectPages = pages.flatMap((page, index) =>
+    normalizeText(page).length < MIN_CHUNK_LENGTH ? [index + 1] : []
+  );
+  const quality = {
+    status: suspectPages.length ? "review_required" : "text_layer_complete",
+    totalPages: pages.length,
+    readablePages: pages.length - suspectPages.length,
+    suspectPages,
+    // This is a text-layer check, not proof that tables/figures were captured.
+    check: "text_layer_minimum_length",
+  };
+  if (typeof onQuality === "function") onQuality(quality);
+  if (suspectPages.length) {
+    console.warn(`EXTRACTION_REVIEW_REQUIRED: ${quality.readablePages}/${quality.totalPages} readable pages; ${suspectPages.length} pages need visual review (source redacted)`);
   }
   const identity = resolveDocumentIdentity({fileId: file.id, fileName: file.name,
     sourcePath: file.sourcePath, text: pages.slice(0, 3).join(' ')});
@@ -900,6 +911,7 @@ async function main() {
       }
       const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken, {
         onIdentity: (identity) => { next.documentIdentity = identity; },
+        onQuality: (quality) => { next.extractionQuality = quality; },
         startChunk: resumeEvidence ? previous.evidenceNextChunk : 0,
         initialIds: resumeEvidence ? previous.partialEvidenceIds : [],
         onProgress: async ({ ids, nextChunk }) => {
