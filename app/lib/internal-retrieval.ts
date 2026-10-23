@@ -1,3 +1,4 @@
+import {filterPublishedMatches} from "./ingestion-publication-visibility";
 import type { RouterResult } from "./router";
 import {
   createQueryBackend,
@@ -302,7 +303,8 @@ export async function retrieveInternalEvidence(
     // for both the exact code and manufacturer identity.
     result = await vectorize.query(vector, options);
   }
-  const semanticCandidates = (result.matches || [])
+  const visibleMatches = await filterPublishedMatches(archiveDb, result.matches || []);
+  const semanticCandidates = visibleMatches
     .filter(authoritativeCandidate)
     .map((match: any) => ({
       id: String(match?.id || ""),
