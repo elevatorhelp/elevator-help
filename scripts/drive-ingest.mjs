@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
+import { planIngestion } from "./adaptive-ingestion-controller.mjs";
 
 const execFileAsync = promisify(execFile);
 const OFFICE_EXTENSIONS = new Set([
@@ -855,8 +856,24 @@ async function main() {
   // Rotate priority every six hours so a live Evidence backlog cannot starve vectors/maps.
   // Dependency gates in createIngestionPlan ensure raw follows evidence and map follows raw per file.
   const phaseOrder = ["evidence", "raw", "map"];
-  const preferredPhase = phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
+  // Feature-gated planner: default remains the established production scheduler.
+  // Persist phase cursor alongside existing per-file checkpoints. No adaptive
+  // acceleration without separately verified fresh resource telemetry.
+  const controllerEnabled = process.env.INGESTION_CONTROLLER_ENABLED === "true";
+  const phaseCursor = Number.isSafeInteger(scope.nextPhaseCursor) && scope.nextPhaseCursor >= 0
+    ? scope.nextPhaseCursor % phaseOrder.length : 0;
+  const preferredPhase = controllerEnabled
+    ? phaseOrder[phaseCursor]
+    : phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
+  const capacity = controllerEnabled
+    ? planIngestion({
+        queues: plan.readyCounts,
+        cursor: phaseCursor,
+        // No trusted quota telemetry yet: always fail closed to existing MAX_FILES.
+        policy: { baselineFiles: MAX_FILES, maxFiles: MAX_FILES, adaptiveEnabled: false },
+      })
+    : null;
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
   console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);
@@ -867,13 +884,14 @@ async function main() {
 
   scope.phaseCursors ||= {};
   const batch = selectFairIngestionBatch(
-    changed, MAX_FILES, scope.phaseCursors[plan.phase] ?? null
+    changed, controllerEnabled ? capacity.maxFiles : MAX_FILES, scope.phaseCursors[plan.phase] ?? null
   );
   const selected = batch.files;
   if (selected.length && !TARGET_FILE_ID) {
     // Advance and checkpoint before any network call. A failed file cannot
     // pin the entire archive to the same first batch on the next scheduled run.
     scope.phaseCursors[plan.phase] = batch.nextCursor;
+    if (controllerEnabled) scope.nextPhaseCursor = capacity.nextCursor;
     state.scopes[DRIVE_FOLDER_ID] = scope;
     await saveState(state);
   }
