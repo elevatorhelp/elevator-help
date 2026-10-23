@@ -34,6 +34,10 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::CLOUDFLARE_API_TOKEN unavailable"; exit 1; }
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::CLOUDFLARE_ACCOUNT_ID unavailable"; exit 1; }
           if [ -z "$GEMINI_API_KEY" ]; then echo "::warning::Gemini key missing: testing real API lease and publication rejection only"; fi
+      - name: QA-only Next.js adapter compatibility pin
+        run: |
+          npm install --no-save --ignore-scripts next@16.3.8
+          npm ls next --depth=0
       - name: Build actual OpenNext Worker
         run: npm run cf:build
       - name: Bootstrap isolated D1 only
