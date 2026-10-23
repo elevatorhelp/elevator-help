@@ -76,6 +76,9 @@ jobs:
       - name: Test adaptive ingestion planner (Issue #60)
         run: node --test scripts/adaptive-ingestion-controller.test.mjs
 
+      - name: Test automatic D1 lease acquisition and renewal
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-lease-operations.ts
+
       - name: Test lease ownership loss during in-flight ingestion
         run: node --experimental-strip-types scripts/test-ingestion-lease-boundaries.ts
 
