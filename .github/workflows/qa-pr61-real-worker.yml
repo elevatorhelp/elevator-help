@@ -45,7 +45,12 @@ jobs:
           trap 'kill "$WORKER_PID" 2>/dev/null || true' EXIT
           ready=0
           for attempt in $(seq 1 70); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8787/ 2>/dev/null; then ready=1; break; fi
+            status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              -H "X-QA-Token: $QA_RUN_TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data '{"documentId":"invalid"}' \
+              http://127.0.0.1:8787/lease || true)
+            if [ "$status" = "400" ]; then ready=1; break; fi
             if ! kill -0 "$WORKER_PID" 2>/dev/null; then break; fi
             sleep 2
           done
