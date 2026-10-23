@@ -1,6 +1,10 @@
 name: Isolated Vectorize test index
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/isolated-vectorize-test.yml
 permissions:
   contents: read
 jobs:
