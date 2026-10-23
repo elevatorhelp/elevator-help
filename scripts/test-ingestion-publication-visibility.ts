@@ -3,9 +3,9 @@ import {filterPublishedMatches} from "../app/lib/ingestion-publication-visibilit
 let generation=1;
 const db={prepare:()=>({bind:()=>({first:async()=>({active_generation:generation})})})};
 const matches=[{id:"legacy",metadata:{sourceFileId:"doc"}},{id:"g1:chunk",metadata:{sourceFileId:"doc"}},{id:"g2:chunk",metadata:{sourceFileId:"doc"}},{id:"g3:chunk",metadata:{}}];
-assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["legacy","g1:chunk"]);
+assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g1:chunk"]);
 generation=2;
-assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["legacy","g2:chunk"]);
+assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g2:chunk"]);
 assert.deepEqual((await filterPublishedMatches(null,matches)).map(x=>x.id),["legacy"]);
 assert.deepEqual((await filterPublishedMatches(db,matches,true)).map(x=>x.id),["g2:chunk"]);
 console.log("Staged Vectorize visibility respects published D1 generation and fails closed");
