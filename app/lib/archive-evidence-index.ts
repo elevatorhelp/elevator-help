@@ -39,7 +39,7 @@ async function publishedExactEvidence(
     const result=await db.prepare(sql).bind(...keys,...clauses,cap).all();
     staged=result?.results||[];
   } catch(error) {
-    if(!/no such table:\\s*(?:main\\.)?ingestion_staged_evidence/i.test(String(error)))
+    if(!/no such table:\s*(?:main\.)?ingestion_staged_evidence/i.test(String(error)))
       throw error;
   }
   const seen=new Set<string>();
@@ -59,7 +59,7 @@ async function publishedExactEvidence(
       ).bind(...documents).all();
       for(const entry of result?.results||[])published.add(String(entry.document_id));
     } catch(error){
-      if(!/no such table:\\s*(?:main\\.)?ingestion_document_publications/i.test(String(error)))
+      if(!/no such table:\s*(?:main\.)?ingestion_document_publications/i.test(String(error)))
         throw error;
       // Old schema: no documents can have an active staged generation.
     }
