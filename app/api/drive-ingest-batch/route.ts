@@ -1,4 +1,4 @@
-import { assertActiveIngestionLease, parseIngestionLease } from "../../lib/ingestion-lease-guard";
+import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -375,6 +375,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body: any = await request.json();
+    const guardWrite = async <T,>(operation: () => Promise<T>): Promise<T> => {
+      if (process.env.INGESTION_LEASE_PREFLIGHT !== "true") return operation();
+      const lease = parseIngestionLease(body?.lease);
+      if (!lease) throw new Error("INGESTION_LEASE_REQUIRED");
+      const { env: leaseEnv } = getCloudflareContext();
+      return guardedIngestionSideEffect((leaseEnv as any).CORTEX_DB, lease, operation);
+    };
+
     // Opt-in preflight only. Not sufficient for safe parallel Vectorize writes:
     // a lease may expire after validation, before an external side effect.
     if (process.env.INGESTION_LEASE_PREFLIGHT === "true") {
@@ -421,10 +429,10 @@ export async function POST(request: NextRequest) {
       }
 
       await Promise.all([
-        vectorize.deleteByIds(ids),
-        vectorizeV2.deleteByIds(ids),
+        guardWrite(() => vectorize.deleteByIds(ids)),
+        guardWrite(() => vectorizeV2.deleteByIds(ids)),
       ]);
-      await removeArchiveChunks(archiveDb, ids);
+      await guardWrite(() => removeArchiveChunks(archiveDb, ids));
       return NextResponse.json({ ok: true, deleted: ids.length });
     }
 
@@ -465,7 +473,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "index_evidence") {
-      await indexArchiveChunks(
+      await guardWrite(() => indexArchiveChunks(
         archiveDb,
         chunks,
         chunks.map((chunk) => ({
@@ -480,7 +488,7 @@ export async function POST(request: NextRequest) {
           documentGroup: chunk.documentGroupHint || null,
           retrievalContext: null,
         })),
-      );
+      ));
       return NextResponse.json({
         ok: true,
         indexed: chunks.length,
@@ -564,9 +572,9 @@ export async function POST(request: NextRequest) {
       }),
     );
 
-    await vectorize.upsert(legacyVectors);
-    await vectorizeV2.upsert(multilingualVectors);
-    await indexArchiveChunks(archiveDb, chunks, enriched);
+    await guardWrite(() => vectorize.upsert(legacyVectors));
+    await guardWrite(() => vectorizeV2.upsert(multilingualVectors));
+    await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
 
     return NextResponse.json({
       ok: true,
