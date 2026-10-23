@@ -12,14 +12,24 @@ export async function claimIngestionLease(db:any,jobKey:string,owner:string,dura
  const identity=parseIngestionLease({jobKey,owner,generation:1});
  if(!identity||!db?.prepare)throw Error("INVALID_LEASE_REQUEST");
  leaseDuration(durationMs);
- const r=await db.prepare(`INSERT INTO ingestion_worker_leases
+ const columns=await db.prepare("PRAGMA table_info(ingestion_worker_leases)").all();
+ const hasTimestamp=columns?.results?.some((row:any)=>row.name==="updated_at_ms");
+ const insertSql=hasTimestamp ? `INSERT INTO ingestion_worker_leases
  (job_key,owner,generation,lease_until_ms,updated_at_ms)
  VALUES(?,?,1,?,?)
  ON CONFLICT(job_key) DO UPDATE SET
  owner=excluded.owner,generation=ingestion_worker_leases.generation+1,
  lease_until_ms=excluded.lease_until_ms,updated_at_ms=excluded.updated_at_ms
- WHERE ingestion_worker_leases.lease_until_ms<=?`)
- .bind(jobKey,owner,now+durationMs,now,now).run();
+ WHERE ingestion_worker_leases.lease_until_ms<=?` :
+ `INSERT INTO ingestion_worker_leases
+ (job_key,owner,generation,lease_until_ms) VALUES(?,?,1,?)
+ ON CONFLICT(job_key) DO UPDATE SET
+ owner=excluded.owner,generation=ingestion_worker_leases.generation+1,
+ lease_until_ms=excluded.lease_until_ms
+ WHERE ingestion_worker_leases.lease_until_ms<=?`;
+ const r=await db.prepare(insertSql)
+ .bind(...(hasTimestamp?[jobKey,owner,now+durationMs,now,now]:
+   [jobKey,owner,now+durationMs,now])).run();
  if(Number(r?.meta?.changes)!==1)return null;
  const row=await db.prepare("SELECT owner,generation,lease_until_ms FROM ingestion_worker_leases WHERE job_key=?").bind(jobKey).first();
  if(row?.owner!==owner||Number(row.lease_until_ms)<=now)return null;
@@ -28,9 +38,13 @@ export async function claimIngestionLease(db:any,jobKey:string,owner:string,dura
 export async function renewIngestionLease(db:any,lease:IngestionLease,durationMs=180000,now=Date.now()):Promise<boolean>{
  if(!parseIngestionLease(lease))throw Error("INVALID_LEASE_REQUEST");
  leaseDuration(durationMs);
- const r=await db.prepare(`UPDATE ingestion_worker_leases
- SET lease_until_ms=?,updated_at_ms=?
- WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?`)
- .bind(now+durationMs,now,lease.jobKey,lease.owner,lease.generation,now).run();
+ const columns=await db.prepare("PRAGMA table_info(ingestion_worker_leases)").all();
+ const hasTimestamp=columns?.results?.some((row:any)=>row.name==="updated_at_ms");
+ const sql=hasTimestamp?
+   "UPDATE ingestion_worker_leases SET lease_until_ms=?,updated_at_ms=? WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?":
+   "UPDATE ingestion_worker_leases SET lease_until_ms=? WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?";
+ const r=await db.prepare(sql)
+ .bind(...(hasTimestamp?[now+durationMs,now,lease.jobKey,lease.owner,lease.generation,now]:
+  [now+durationMs,lease.jobKey,lease.owner,lease.generation,now])).run();
  return Number(r?.meta?.changes)===1;
 }
