@@ -1,6 +1,6 @@
 # elevator.help — Architecture, Tooling & Reuse Handoff
 
-Snapshot: 2026-10-18. This is a **verified code/config inventory plus explicitly marked roadmap**, not a declaration that the archive is fully indexed. Keep this alongside `SUPER_GPT_VISION.md`, `ROADMAP.md`, and `ARCHIVE_INDEX_ROLLOUT.md` for future projects.
+Original inventory snapshot: 2026-10-18; reconciliation note: 2026-10-23. This is a **verified code/config inventory plus explicitly marked roadmap**, not a declaration that the archive is fully indexed. Keep this alongside `SUPER_GPT_VISION.md`, `ROADMAP.md`, and `ARCHIVE_INDEX_ROLLOUT.md` for future projects.
 
 ## Mission and invariants
 
@@ -10,7 +10,7 @@ A domain-capable, multilingual, evidence-grounded elevator assistant (not a PDF 
 
 | Layer | Current implementation | Evidence in repository |
 |---|---|---|
-| UI/API | Next.js 16.3.8, React 19.2.8, TypeScript 5.9; App Router | `package.json`, `app/api/ask/route.ts` |
+| UI/API | Next.js 16.4.2 (security PR #57, confirmed in main package.json on 2026-10-23), React 19.2.8, TypeScript 5.9; App Router | `package.json`, `app/api/ask/route.ts` |
 | Hosting | Cloudflare Workers via OpenNext 1.20.10 and Wrangler 4.125.0 | `open-next.config.ts`, `wrangler.jsonc` |
 | Authentication | Clerk backend and Next.js integrations; auth required | `package.json`, `wrangler.jsonc`, `app/lib/request-auth.ts` |
 | Reasoning | Gemini API as model brain; configured call budgets | `app/lib/gemini-cost-control.ts`, `wrangler.jsonc` |
