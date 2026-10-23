@@ -519,6 +519,14 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Validate staged revision before any paid embeddings or external Vectorize writes.
+    // Never persist a receipt for an inconsistent source revision.
+    if (process.env.INGESTION_STAGED_PUBLICATION === "true" &&
+        chunks.some((v) => !v.sourceFingerprint ||
+          v.sourceFingerprint !== chunks[0].sourceFingerprint)) {
+      return NextResponse.json({ok:false,error:"STAGED_FINGERPRINT_MISMATCH"},{status:409});
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
     const ai = (env as any).AI;
 
@@ -610,8 +618,6 @@ export async function POST(request: NextRequest) {
     if (staged) {
       // Staging is intentionally NOT published per batch: a multi-batch file
       // must be fully staged and validated before a single final CAS commit.
-      if(chunks.some(v=>!v.sourceFingerprint || v.sourceFingerprint !== chunks[0].sourceFingerprint))
-        return NextResponse.json({ok:false,error:"STAGED_FINGERPRINT_MISMATCH"},{status:409});
       await recordStagedBatch(archiveDb,publicationLease!,sourceId,chunks.map(v=>v.id),chunks[0].sourceFingerprint);
       return NextResponse.json({ok:true,staged:true,published:false,ids:multilingualVectors.map(v=>v.id)});
     } else {
