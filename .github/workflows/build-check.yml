@@ -88,6 +88,9 @@ jobs:
       - name: Test staged Vectorize visibility against D1 publication
         run: node --experimental-strip-types scripts/test-ingestion-publication-visibility.ts
 
+      - name: Verify exact retrieval honors published document generations
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-published-evidence-generation.ts
+
       - name: Test three-layer atomic RAW Evidence Map publication
         run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-full-publication.ts
 
