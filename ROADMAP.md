@@ -275,3 +275,12 @@ Every status report starts with **current milestone / last verified completed it
 - **Isolated database only:** `elevator-help-lease-test-01`. User recorded a Time Travel bookmark before inserting synthetic `restore-test-01` / `restore-probe` into `ingestion_worker_leases`.
 - D1 Console showed the synthetic row existed before restore. User restored the isolated database to the saved bookmark via Cloudflare Time Travel and subsequently executed `SELECT COUNT(*) AS remaining FROM ingestion_worker_leases WHERE job_key = 'restore-test-01';`, yielding **`remaining = 0`** (screenshot evidence). This verifies a real point-in-time restore for this test row, not merely that the restore UI is present.
 - **Scope limit:** No production database was restored. This does not establish full ingestion checkpoint consistency, Vectorize rollback, archive reconciliation, or production disaster recovery. Those remain release blockers along with stale-worker side-effect fencing and repeated concurrency/stress tests.
+
+
+## Security dependency invariant — 2026-10-23 (mandatory; never silently downgrade)
+
+- **Next.js minimum approved security baseline: 16.4.2**. This floor is an operational requirement, not an experiment; future dependency changes must preserve or upgrade it. Downgrade is prohibited absent an explicit documented security review and owner approval.
+- The repository must keep `package.json` and `package-lock.json` consistent. `scripts/guard-next-security-baseline.mjs` is the CI gate and must run before `npm ci` on main and every PR. Do not delete or bypass this check to fix a compatibility issue.
+- A QA-only temporary Next.js 16.3.8 install was used to diagnose an OpenNext integration bug on GitHub Actions; it **did not alter committed dependencies or Production**. It must not become the project's permanent solution.
+- Actual Cloudflare QA confirmed Next.js **16.4.2** works with **@opennextjs/cloudflare 1.20.12** (GitHub run https://github.com/elevatorhelp/elevator-help/actions/runs/39987350819). Preferred compatibility fix: upgrade OpenNext with reviewed manifest + lockfile change and repeat exact-head CI; **never downgrade Next.js** to resolve this.
+- Until upgraded dependencies are committed and tested, do not infer the temporary QA upgrade is a Production release. PR #61 remains Draft pending separate real Gemini ingestion gates.
