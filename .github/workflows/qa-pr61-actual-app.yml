@@ -68,7 +68,8 @@ jobs:
             sleep 2
           done
           if [ "$ready" != "1" ]; then
-            echo "::error::Actual OpenNext Worker not ready"
+            echo "::error::Actual OpenNext Worker not ready. Last HTTP status: $code"
+            grep -E 'ERROR|Error|error|ready|Listening|Remote|Failed|fetch|wrangler|Binding' /tmp/qa-app-worker.log | tail -35 | sed -E 's/[a-f0-9]{32,}/[REDACTED]/g' || true
             exit 1
           fi
           node scripts/qa-pr61-real-app-e2e.mjs
