@@ -20,6 +20,16 @@ const evidence=(id:string)=>({id,text:"EN 81-20 clause 5 QA",sourceFileId:"doc",
 await recordStagedBatch(db,a,"doc",["r1","r2"],"revision-one");
 await stageExactEvidence(db,a,evidence("e1"));
 assert.equal(await publishFullGeneration(db,a,"revision-one",["r1","r2"],["e1"],["m1"]),false,"map missing");
+for(const malformed of [[""],["   "],["x".repeat(513)],[null],[42],["m1",""]]){
+ await assert.rejects(
+   recordStagedMap(db,a,"doc",malformed as unknown as string[],"revision-one"),
+   /INVALID_STAGED_MAP/,"malformed map IDs must fail before D1 writes"
+ );
+}
+assert.equal(
+ sqlite.prepare("SELECT COUNT(*) AS n FROM ingestion_staged_map_receipts").get()?.n,
+ 0,"rejected map manifests must not leave partial staging rows"
+);
 await recordStagedMap(db,a,"doc",["m1"],"revision-one");
 assert.equal(await publishFullGeneration(db,a,"wrong",["r1","r2"],["e1"],["m1"]),false,"wrong fingerprint");
 assert.equal(await publishFullGeneration(db,a,"revision-one",["r1","wrong"],["e1"],["m1"]),false,"wrong raw manifest");
