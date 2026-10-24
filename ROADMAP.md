@@ -401,3 +401,11 @@ Every status report starts with **current milestone / last verified completed it
 - Retain authentic integration E2E as a distinct acceptance gate; do not repeat paid, real-document ingestion on every small commit. Run bounded real QA for release candidates or changes affecting ingestion, mapping, citation, recovery or compatibility.
 - Preserve historical run URLs and outcomes in the evidence ledger. Small fast tests run on every PR; slow/paid QA is isolated and manually dispatched or otherwise gated. No deletion/disablement of required protection until replacement is proven on exact SHA.
 - Deletions and suite consolidation are **planned, not yet executed**. QA supervisor validates test equivalence and no coverage regression.
+
+
+### PR #63 non-destructive integration checkpoint — 2026-10-24
+
+- Pushed independent branch `integration/pr61-reconciled-20261024` from clean PC worktree following a verified repository+working-files backup; opened **Draft [PR #63](https://github.com/elevatorhelp/elevator-help/pull/63)**, commit `a15bba58b93493e7210e1217a651f1d8f2a5a3a9`. Original #61 remains Draft/unaltered. Merge preserved PR61 content and main's main-push Vectorize QA provisioner; both original content conflicts resolved.
+- Validated local merge index and clean worktree. Installed exact lockfile dependencies with `npm.cmd ci --ignore-scripts` (no changes to PowerShell execution policy). **PASS** local `npm run test:incremental-ingestion` covering quota stops, queue fairness, checkpoints and fingerprint guards; **PASS** `npm run test:security` and `npm audit --omit=dev --audit-level=moderate` (zero production-dependency vulnerabilities). Full audit still reports 8 findings in dependency tree (2 moderate, 6 high), apparently OpenNext/AWS/minification transitive path; must review, no automated forced updates.
+- **Full exact-head Build Check** for PR63 triggered: https://github.com/elevatorhelp/elevator-help/actions/runs/40048779686 . At this entry it is **in progress**, not yet a PASS.
+- Remaining: independent full CI final head; actual multi-page interrupted real Drive QA and authenticated answer; dependency/security review, migration/rollback and bounded multi-worker stress, safe small PR decomposition. PR63 is an integration candidate, **not** a release authorization.
