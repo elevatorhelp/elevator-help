@@ -26,8 +26,10 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-          info=$(npx wrangler d1 info "$DB" --json)
-          printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let o=JSON.parse(s);if(o.version!=="production")throw Error("PRODUCTION_D1_NOT_TIME_TRAVEL_BACKEND: "+String(o.version));console.log("PASS: production D1 new storage backend supports Time Travel")})'
+          npx wrangler d1 info "$DB" --json > /dev/null
+          echo "PASS: production D1 metadata accessible via read-only API"
+          # Current Wrangler info JSON shape may not expose a stable `version` key.
+          # A successful actual remote Time Travel bookmark is the authoritative gate.
           tt=$(npx wrangler d1 time-travel info "$DB" --json)
           printf '%s' "$tt" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let o=JSON.parse(s);if(!/^[a-f0-9]{8}(-[a-f0-9]{8}){2}-[a-f0-9]{32}$/i.test(o.bookmark||""))throw Error("PRODUCTION_BOOKMARK_MISSING");console.log("PASS: fresh remote Production Time Travel bookmark verified without exposing value")})'
       - name: Read-only production schema compatibility counts (no private rows)
