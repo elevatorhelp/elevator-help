@@ -20,6 +20,16 @@ export type ArchiveEvidenceRow = {
 async function publishedExactEvidence(
   db:any,keys:string[],clauses:string[],legacy:ArchiveEvidenceRow[],cap:number
 ):Promise<ArchiveEvidenceRow[]> {
+  // A pre-staging production archive has no publication table: its verified
+  // legacy exact references must remain visible throughout gradual migration.
+  // Fail closed for unrelated SQL errors rather than hiding a schema defect.
+  try {
+    await db.prepare("SELECT 1 FROM ingestion_document_publications LIMIT 1").all();
+  } catch (error) {
+    if (/no such table:\\s*(?:main\\.)?ingestion_document_publications/i.test(String(error)))
+      return legacy.slice(0,cap);
+    throw error;
+  }
   const columns=keys.map(()=>"?").join(",");
   const clauseFilter=clauses.length?
     "AND EXISTS(SELECT 1 FROM json_each(e.clauses_json) c WHERE c.value IN ("+
