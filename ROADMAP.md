@@ -430,3 +430,10 @@ Every status report starts with **current milestone / last verified completed it
 - **Scheduler and tests:** adaptive controller module + its contract test, Build Check changes, 11 ingestion/generation/evidence regression scripts and D1 lease script. Compare invariant coverage before deduplicating. Old successful runs retained as immutable evidence.
 - **Docs/security:** ROADMAP and QA report, plus security baseline guard. First compare with security guard already present in main to prevent redundant copies.
 - **Safety note:** the new PC cleanup branch from latest main is separate; no destructive source edits or deletion performed. This inventory is complete at **file-group level**, but dependency-level isolation, multi-page runtime acceptance and dedicated smaller PR creation remain open. Following owner's priority, functional completion takes precedence over cosmetic split.
+
+### Controlled main reconciliation probe — 2026-10-24
+
+- A separate PC checkout at `C:\Users\Baharmand\elevator-help-PR61-CLEANUP-20261024` was branched as `cleanup/pr61-integration-probe` at the backed-up PR61 head `ad671530`, then `git merge --no-commit --no-ff main` was run against backed-up main `3a20daf8`.
+- **Result: exactly two merge conflicts reported**: add/add `.github/workflows/isolated-vectorize-test.yml` and content conflict `ROADMAP.md`. Git auto-merged `.github/workflows/build-check.yml` and other nonconflicting files. This is an integration *probe*, not proof of build, functional or security readiness.
+- No commit, push, force-push, deletion or production deployment was performed. The isolated probe worktree currently remains in unresolved merge state; do not run builds or push that state. A further remote file-diff inspection was blocked by a tool safety check; do not assume either conflict was resolved.
+- Next engineering step: reconcile both contents by preserving main security/runtime baseline and PR61 QA behavior, in a clean dedicated integration branch; verify the complete merged diff. Only then hand off exact-head CI and real multi-page Drive E2E to QA supervisor. Original Draft PR61 and all verified backups remain intact.
