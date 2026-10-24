@@ -43,6 +43,10 @@ if(STAGED_LEASE && (!TARGET_FILE_ID || STAGED_LEASE.jobKey !== TARGET_FILE_ID ||
   throw new Error("STAGING_REQUIRES_SINGLE_FILE_VALID_LEASE");
 // Opt-in single-document QA only. Do not use on production routes or normal schedules.
 const STAGED_AUTO_LEASE = process.env.STAGED_AUTO_LEASE === "true";
+// Fault injection is opt-in, QA-only, and requires the protected
+// single-document staged path. Never enable it on production ingestion.
+if(process.env.QA_INTERRUPT_AFTER_FIRST_RAW_BATCH==="true" && !STAGED_AUTO_LEASE)
+  throw new Error("QA_INTERRUPTION_REQUIRES_ISOLATED_STAGED_AUTO_LEASE");
 if (STAGED_AUTO_LEASE && (
   !TARGET_FILE_ID || STAGED_LEASE ||
   new URL(DOCUMENT_MAP_ENDPOINT).origin !== new URL(INGEST_ENDPOINT).origin ||
@@ -852,9 +856,28 @@ async function runIsolatedFullDocument(file,accessToken,ingestToken,state,scope)
  if(!evidenceIds.length)throw Error("STAGED_EMPTY_EXACT_EVIDENCE");
  const isText=file.mimeType==="text/plain"||
    TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
+ // QA generation changes on takeover. Never reuse chunks from an old
+ // generation: replay under the newly claimed lease is the safe default.
+ // Persist the accepted batch receipts BEFORE any injected interruption.
+ const qaFile=scope.files[file.id]||{};
+ const qaProgress={generation:activeStagedLease.generation,revision,
+  rawIds:[],nextRawChunk:0};
+ async function saveQaRawReceipt({ids,nextChunk}){
+  qaProgress.rawIds=ids;
+  qaProgress.nextRawChunk=nextChunk;
+  scope.files[file.id]={...qaFile,stagedQaProgress:{...qaProgress}};
+  state.scopes[DRIVE_FOLDER_ID]=scope;
+  await saveState(state);
+  if(process.env.QA_INTERRUPT_AFTER_FIRST_RAW_BATCH==="true" &&
+     nextChunk>=BATCH_SIZE){
+    throw Error("QA_INJECTED_INTERRUPTION_AFTER_DURABLE_RAW_RECEIPT");
+  }
+ }
  const raw=isText?
-   await processText(file,accessToken,ingestToken):
-   await processPdf(file,accessToken,ingestToken,{ingestRaw:true,ingestMap:false});
+   await processText(file,accessToken,ingestToken,{onRawProgress:saveQaRawReceipt}):
+   await processPdf(file,accessToken,ingestToken,{
+    ingestRaw:true,ingestMap:false,onRawProgress:saveQaRawReceipt
+   });
  if(!raw.rawComplete||!Array.isArray(raw.ids)||!raw.ids.length)
    throw Error("STAGED_RAW_INCOMPLETE_CHECKPOINT_REQUIRED");
  let mapIds=[];
@@ -889,7 +912,9 @@ async function runIsolatedFullDocument(file,accessToken,ingestToken,state,scope)
   await new Promise(resolve=>setTimeout(resolve,5000));
  }
  if(!published)throw Error("STAGED_PUBLICATION_READINESS_TIMEOUT");
- scope.files[file.id]={...(scope.files[file.id]||{}),name:file.name,
+ const {stagedQaProgress:completedQaProgress,...completedFile}=
+  scope.files[file.id]||{};
+ scope.files[file.id]={...completedFile,name:file.name,
   sourcePath:file.sourcePath,modifiedTime:file.modifiedTime||null,
   evidenceIds,ids:raw.ids,mapIds,evidenceFingerprint:revision,
   rawFingerprint:revision,mapFingerprint:revision,fingerprint:revision,
