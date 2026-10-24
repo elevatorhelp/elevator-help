@@ -401,3 +401,21 @@ Every status report starts with **current milestone / last verified completed it
 - Retain authentic integration E2E as a distinct acceptance gate; do not repeat paid, real-document ingestion on every small commit. Run bounded real QA for release candidates or changes affecting ingestion, mapping, citation, recovery or compatibility.
 - Preserve historical run URLs and outcomes in the evidence ledger. Small fast tests run on every PR; slow/paid QA is isolated and manually dispatched or otherwise gated. No deletion/disablement of required protection until replacement is proven on exact SHA.
 - Deletions and suite consolidation are **planned, not yet executed**. QA supervisor validates test equivalence and no coverage regression.
+
+
+## Unified ordered execution plan — 2026-10-24 (owner directive)
+
+**Do in this order; no shortcuts.** Protect healthy functionality; do not postpone delivery for aesthetic refactoring. Progress must be evidenced by actual code and QA results, not additional checklists.
+
+**0. Safety / verified starting point (DONE):** PC DESKTOP-MK9OUIS was online; non-destructive backup of nine local Git worktrees, including untracked working files, patches, status and per-repo bundles, at `C:\Users\Baharmand\elevator-backup-before-cleanup-20261024-025037`; all nine bundles verified using their source repos. A separate mirror of remote GitHub was also created, with `main` at `3a20daf8` and PR61 at `ad671530`. Separate cleanup clone at `C:\Users\Baharmand\elevator-help-PR61-CLEANUP-20261024` branched from current main. The older root PC worktree was 312 commits behind its local origin/main and dirty; leave it untouched. Never delete, reset, force-push, or overwrite the original PR61 history or local work. Refresh remote SHAs before edits.
+
+**1. Inventory and classify (IN PROGRESS):** inspect PR61's actual changed files AND each of its divergent commits, separating (A) product ingestion/lease/checkpoint/RAW+Evidence+Map publication, (B) existing production/security/main compatibility, (C) isolated QA harness/workflows, (D) regression tests, (E) documentation. Record dependencies, redundant tests, file ownership and exact SHAs. At last review PR61 was 142 commits ahead and 44 behind main (comparison counts change over time); visible diff includes 46 files. Do not confuse total branch history with independent work to preserve.
+
+**2. Finish actual Live Archive implementation (OPEN; higher priority than cleanup):** fix durable multi-batch ingest and resume semantics, stable lease generation/revision fencing, bounded Gemini and D1 writes, RAW+Evidence+Map all-or-nothing published visibility; operate one permitted real multi-page Drive PDF in *isolated QA* with interrupted restart and full page-cited answer. Do not promote offline regressions or old one-page pilot to complete acceptance. Engineering performs implementation and bug fixes; the QA supervisor evaluates tests.
+
+**3. Non-destructive split and functional cleanup (OPEN):** use the current-main-based isolated worktree to build small PRs by functional slice with documented file/dependency mapping. Extract recovery and checkpoint logic apart from unrelated planner/test harness changes; keep original PR61 Draft as reference until full equivalence is shown. Deduplicate outdated/overlapping tests and workflows only after coverage and CI hooks are verified; keep mandatory security, standards/citation and recovery regression guards. No rewriting working code merely for style.
+
+**4. Independent QA and secure merge gate (OPEN):** hand off exact branch/commit and test matrix to PR61 QA Supervisor; require actual real QA evidence, security reconciliation with latest main, final-head full Build Check, restore/rollback and concurrency/cost checks. No automatic merge, forced update, Production modification or release without gates and explicit approval.
+
+**Execution rules:** one writer for engineering; supervisor strictly read-only. Preserve old checks' evidence URLs; avoid introducing new paid services or production access. Track results, blockers, PR links and exact SHAs here. If cleanup threatens real delivery, complete the minimal Live Archive fix first.
+
