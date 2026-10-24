@@ -38,6 +38,13 @@ await assert.rejects(stageExactEvidence(db,a,{...evidence("e-bad"),sourceFileId:
 assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM ingestion_staged_evidence").get()?.n,
  0,"rejected evidence metadata must not leave partial staging rows");
 await stageExactEvidence(db,a,evidence("e1"));
+await assert.rejects(
+ publishFullGeneration(db,a,"revision-one",["r1","r2"],["e1"],[]),
+ /INVALID_FULL_PUBLICATION_MANIFEST/,
+ "complete RAW/Evidence/Map publication must reject an empty Map manifest"
+);
+assert.equal(sqlite.prepare("SELECT active_generation AS g FROM ingestion_document_publications").get()?.g,
+ 0,"invalid empty Map must not activate a generation");
 assert.equal(await publishFullGeneration(db,a,"revision-one",["r1","r2"],["e1"],["m1"]),false,"map missing");
 for(const malformed of [[""],["   "],["x".repeat(513)],[null],[42],["m1",""]]){
  await assert.rejects(
