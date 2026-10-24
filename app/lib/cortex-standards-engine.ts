@@ -181,12 +181,12 @@ async function searchEvidence(
     archiveDb,
   );
   const queries = buildQueries(question, route);
-  // Exact identifiers plus a clause form a deterministic archive address. The
-  // model never needs to know a file/folder address; the index resolves it. If
-  // that address produced evidence, avoid a noisy semantic search entirely.
-  const backends = exactEvidence.length
-    ? []
-    : await createQueryBackends(queries, ai, vectorize, multilingual);
+  // An exact standard identifier identifies the DOCUMENT, not necessarily
+  // the relevant topic or clause. A broad document-level match (e.g. EN 81-20)
+  // must not suppress semantic retrieval of the actual safety requirement.
+  // Continue the semantic search and let source-bound claim verification
+  // determine whether any candidate answers the user's question.
+  const backends = await createQueryBackends(queries, ai, vectorize, multilingual);
   const matches: any[] = [];
   const seen = new Set<string>();
 
