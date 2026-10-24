@@ -10,6 +10,7 @@ on:
     branches: [main, fix/pr63-actual-app-head-checkout-20261024]
     paths:
       - .github/workflows/qa-pr61-actual-app.yml
+      - wrangler.qa-app.json
 permissions:
   contents: read
 concurrency:
