@@ -12,6 +12,16 @@ assert.deepEqual(await filterPublishedMatches(db,unattributedLegacy),[],
  "Configured D1 must reject legacy vectors without sourceFileId: publication cannot be verified");
 assert.deepEqual(await filterPublishedMatches(null,unattributedLegacy),unattributedLegacy,
  "Deliberately unconfigured legacy-only deployments retain historical compatibility");
+const malformedStaged=[
+ {id:"g0:chunk",metadata:{sourceFileId:"doc"}},
+ {id:"g01:chunk",metadata:{sourceFileId:"doc"}},
+ {id:"g999999999999999999999999:chunk",metadata:{sourceFileId:"doc"}},
+ {id:"g1:",metadata:{sourceFileId:"doc"}},
+];
+assert.deepEqual(await filterPublishedMatches(null,malformedStaged),[],
+ "Invalid staged generation IDs must not masquerade as legacy in no-D1 mode");
+assert.deepEqual(await filterPublishedMatches(db,malformedStaged),[],
+ "Invalid staged generation IDs must not bypass D1 publication fencing");
 assert.deepEqual(await filterPublishedMatches({},matches),[],
  "Malformed configured D1 binding must not expose superseded legacy vectors");
 assert.deepEqual(await filterPublishedMatches({prepare:null},unattributedLegacy),[],
