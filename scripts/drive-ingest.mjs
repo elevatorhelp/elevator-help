@@ -370,6 +370,17 @@ function fingerprint(file) {
   return file.md5Checksum || `${file.modifiedTime || ""}:${file.size || ""}`;
 }
 
+function deletionReceiptIds(previous) {
+  return Array.from(new Set([
+    ...(Array.isArray(previous.ids) ? previous.ids : []),
+    ...(Array.isArray(previous.evidenceIds) ? previous.evidenceIds : []),
+    ...(Array.isArray(previous.partialEvidenceIds) ? previous.partialEvidenceIds : []),
+    ...(Array.isArray(previous.partialRawIds) ? previous.partialRawIds : []),
+    ...(Array.isArray(previous.mapIds) ? previous.mapIds : []),
+    ...(Array.isArray(previous.partialMapIds) ? previous.partialMapIds : []),
+  ]));
+}
+
 async function loadState() {
   return readIngestionState();
 }
@@ -1000,15 +1011,7 @@ async function main() {
         console.log(`Missing Drive file (ID redacted); awaiting a second complete scan before deletion`);
         continue;
       }
-      const oldIds = Array.from(
-        new Set([
-          ...(Array.isArray(old.ids) ? old.ids : []),
-          ...(Array.isArray(old.evidenceIds) ? old.evidenceIds : []),
-          ...(Array.isArray(old.partialRawIds) ? old.partialRawIds : []),
-          ...(Array.isArray(old.mapIds) ? old.mapIds : []),
-          ...(Array.isArray(old.partialMapIds) ? old.partialMapIds : []),
-        ])
-      );
+      const oldIds = deletionReceiptIds(old);
       if (oldIds.length) {
         console.log(`Removing ${oldIds.length} vectors for deleted Drive file (ID redacted)`);
         await deleteIds(oldIds, ingestToken);
@@ -1379,6 +1382,7 @@ export {
   DOCUMENT_MAP_VERSION,
   RAW_EMBEDDING_VERSION,
   fingerprint,
+  deletionReceiptIds,
   needsMapBackfill,
   needsEvidenceBackfill,
   needsRawBackfill,
