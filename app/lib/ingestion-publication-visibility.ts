@@ -15,7 +15,11 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
 ):Promise<T[]>{
  const visible:T[]=[];
  for(const match of matches){
-  const stage=parseStagedId(String(match.id||""));
+  const id=String(match.id||"");
+  const stage=parseStagedId(id);
+  // A malformed generation-qualified ID is not a legacy vector. In particular,
+  // g0, zero-padded or overflowing generations must never bypass publication.
+  if(!stage && /^g[0-9]+:/.test(id))continue;
   const documentId=match.metadata?.sourceFileId;
   if(!stage && strict)continue;
   // Only a deliberately absent D1 binding permits legacy-only retrieval.
