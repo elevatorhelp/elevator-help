@@ -1,0 +1,30 @@
+name: PR68 publication visibility safety
+on:
+  push:
+    branches: [fix/pr63-visibility-fail-closed-20261024]
+    paths:
+      - 'app/lib/ingestion-publication-visibility.ts'
+      - 'scripts/test-ingestion-publication-visibility.ts'
+      - '.github/workflows/pr68-visibility-safety.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pr68-publication-visibility
+  cancel-in-progress: false
+jobs:
+  visibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+      - name: Test publication generation visibility and malformed-ID rejection
+        run: node --experimental-strip-types scripts/test-ingestion-publication-visibility.ts
