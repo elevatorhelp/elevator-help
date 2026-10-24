@@ -1,0 +1,50 @@
+name: PR63 QA workflow safety lint
+on:
+  push:
+    branches:
+      - fix/pr63-actual-app-head-checkout-20261024
+  pull_request:
+    branches:
+      - integration/pr61-reconciled-20261024
+    paths:
+      - .github/workflows/qa-pr61-actual-app.yml
+      - .github/workflows/qa-pr63-workflow-safety.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  workflow-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Node 22 for SQLite schema contract
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Verify isolated D1 lease bootstrap contract
+        run: node --experimental-sqlite scripts/test-qa-pr61-bootstrap.mjs
+      - name: Verify actual-app test pins selected commit and isolated resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const wf=fs.readFileSync('.github/workflows/qa-pr61-actual-app.yml','utf8');
+          const config=JSON.parse(fs.readFileSync('wrangler.qa-app.json','utf8'));
+          const script=fs.readFileSync('scripts/qa-pr61-real-app-e2e.mjs','utf8');
+          assert.match(wf,/ref: \$\{\{ github\.sha \}\}/,'workflow must checkout dispatched commit');
+          assert.doesNotMatch(wf,/ref: b7b9fb3e662b08c9cffb54228318b6e667b83d51/);
+          assert.equal(config.name,'elevator-help-pr61-app-qa');
+          assert.equal(config.vars.INGESTION_COMPLETE_PUBLICATION,'false','RAW-only E2E must not inherit full-publication mode');
+          assert.equal(config.d1_databases[0].database_id,'02716877-15e3-4478-9e24-f1ba6e5dfb00');
+          assert.match(wf,/qa-pr61-ensure-lease-schema\.mjs/);
+          assert.deepEqual(config.d1_databases.map(x=>x.database_name),['elevator-help-lease-test-01']);
+          assert.ok(config.vectorize.every(x=>x.index_name==='elevator-help-staging-test'));
+          assert.match(script,/elevator-help-lease-test-01/);
+          assert.match(script,/elevator-help-staging-test/);
+          console.log('PASS: static checkout and QA binding safety; NO remote or paid API calls');
+          NODE
