@@ -24,7 +24,7 @@ async function publishedExactEvidence(
   // legacy exact references must remain visible throughout gradual migration.
   // Fail closed for unrelated SQL errors rather than hiding a schema defect.
   try {
-    await db.prepare("SELECT 1 FROM ingestion_document_publications LIMIT 1").all();
+    await db.prepare("SELECT 1 FROM ingestion_document_publications LIMIT 1").bind().all();
   } catch (error) {
     if (/no such table:\\s*(?:main\\.)?ingestion_document_publications/i.test(String(error)))
       return legacy.slice(0,cap);
