@@ -28,6 +28,8 @@ export type VerifiedStandardClaim = {
   text: string;
   evidenceId: string;
   evidenceQuote: string;
+  /** Page from the retrieved source metadata, never from model output. */
+  page: number | null;
 };
 
 function parseModelJson(text: string) {
@@ -296,14 +298,18 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
       text,
       evidenceId: selected.id,
       evidenceQuote: quote,
+      page: Number.isSafeInteger(selected.page) && selected.page > 0
+        ? selected.page
+        : null,
     });
   }
   return verified.slice(0, 8);
 }
 
 function formatAnswer(claims: VerifiedStandardClaim[], language?: string | null) {
+  const pageLabel = language === "de" ? "S." : language === "fa" ? "صفحه" : "p.";
   const details = claims
-    .map((claim) => `• ${claim.standard}, ${claim.clause} — ${claim.text}`)
+    .map((claim) => `• ${claim.standard}, ${claim.clause}${claim.page ? `, ${pageLabel} ${claim.page}` : ""} — ${claim.text}`)
     .join("\n");
   if (language === "de") return `Kurz gesagt:\n${claims[0].text}\n\nNormnachweis:\n${details}`;
   if (language === "fa") return `خلاصه:\n${claims[0].text}\n\nمدرک استاندارد:\n${details}`;
