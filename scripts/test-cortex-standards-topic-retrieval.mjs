@@ -20,6 +20,13 @@ const superseded={...focused,id:"g3:superseded-roof-guard",text:"EN 81-20 5.4.7:
 let publicationChecks=0;
 const sandbox={
  console,
+ // The isolated VM evaluates searchEvidence without its module imports.
+ // Stub only the publication dependency; dedicated publication tests exercise
+ // the real D1/generation visibility implementation.
+ filterPublishedMatches:async (_db,matches)=>{
+  publicationChecks++;
+  return matches.filter(match=>match.id!==superseded.id);
+ },
  extractStandardCodes:()=>["EN 81-20"],
  extractClauseNumbers:()=>[],
  standardReferenceIdentifiers:()=>[{key:"EN8120"}],
