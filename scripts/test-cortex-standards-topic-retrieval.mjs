@@ -16,6 +16,8 @@ const js=ts.transpileModule(extracted+"\nglobalThis.__searchEvidence=searchEvide
 let semanticCalls=0;
 const exact={id:"generic-intro",text:"EN 81-20 is an elevator standard.",score:2,standardCodes:["EN 81-20"],sourceName:"EN81-20",page:1};
 const focused={id:"roof-guard",text:"EN 81-20 5.4.7: balustrade on car roof, 0.70 m and 1.10 m.",score:0.9,standardCodes:["EN 81-20"],sourceName:"EN81-20",page:90};
+const superseded={...focused,id:"g3:superseded-roof-guard",text:"EN 81-20 5.4.7: superseded claim 0.25 m."};
+let publicationChecks=0;
 const sandbox={
  console,
  extractStandardCodes:()=>["EN 81-20"],
@@ -27,11 +29,13 @@ const sandbox={
  belongsToRequestedStandard:(x,w)=>x.standardCodes.includes(w[0]),
  buildQueries:q=>[q],
  createQueryBackends:async()=>{semanticCalls++;return [{
-  vector:[0.1],vectorize:{query:async()=>({matches:[focused]})}
+  vector:[0.1],vectorize:{query:async()=>({matches:[focused,superseded]})}
  }]},
 };
 vm.runInNewContext(js,sandbox,{timeout:1000});
 const result=await sandbox.__searchEvidence("DIN EN 81-20 Schutzgeländer Fahrkorbdach",{},null,null,null,{});
 assert.equal(semanticCalls,1,"generic exact identifier must not suppress semantic retrieval");
 assert.ok(result.evidence.some(x=>x.id==="roof-guard"),"topic-specific evidence was lost");
+assert.equal(publicationChecks,1,"standards semantic hits must pass through the publication gate");
+assert.ok(!result.evidence.some(x=>x.id==="g3:superseded-roof-guard"),"superseded Vectorize evidence entered verified standards context");
 console.log("PASS: broad exact standard hit retains topic-focused semantic evidence");
