@@ -11,7 +11,8 @@ assert.equal(pkg.scripts.build, 'next build --webpack');
 for (const hook of ['precf:build', 'postcf:build', 'prebuild', 'postbuild']) {
   assert.equal(pkg.scripts[hook], undefined, `Unexpected build lifecycle hook: ${hook}`);
 }
-assert.deepEqual(Object.keys(w.on), ['workflow_dispatch']);
+assert.deepEqual(Object.keys(w.on).sort(), ['push', 'workflow_dispatch']);
+assert.deepEqual(w.on.push.branches, ['qa/pr69-exact-head-ci-20261024']);
 assert.deepEqual(w.permissions, {contents: 'read'});
 assert.deepEqual(w.on.workflow_dispatch.inputs.approved_sha, {
   description: 'Full reviewed SHA; must equal dispatched ref HEAD', required: true, type: 'string'
@@ -25,11 +26,11 @@ assert.equal(j.environment, undefined);
 assert.equal(j.secrets, undefined);
 assert.equal(j['runs-on'], 'ubuntu-24.04');
 assert.equal(j['timeout-minutes'], 30);
-assert.equal(j.if, "github.event_name == 'workflow_dispatch'");
+assert.equal(j.if, "github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/qa/pr69-exact-head-ci-20261024')");
 const steps = j.steps;
 assert.match(steps[0].run, /\^\[0-9a-f\]\{40\}\$/);
 assert.ok(steps[0].run.includes('test "$APPROVED_SHA" = "$DISPATCH_SHA"'));
-assert.equal(steps[0].env.APPROVED_SHA, '${{ inputs.approved_sha }}');
+assert.equal(steps[0].env.APPROVED_SHA, "${{ github.event_name == 'push' && github.sha || inputs.approved_sha }}");
 assert.equal(steps[0].env.DISPATCH_SHA, '${{ github.sha }}');
 assert.equal(steps[1].with.ref, '${{ inputs.approved_sha }}');
 assert.equal(steps[1].with['persist-credentials'], false);
@@ -46,4 +47,4 @@ for(const command of ['npm ci --ignore-scripts --no-audit --no-fund',
 assert.doesNotMatch(source, /secrets\.|id-token|write-all|continue-on-error|gemini|environment:/i);
 assert.doesNotMatch(runs, /wrangler|deploy|curl|wget/i);
 assert.ok(steps.every(s=>!s['continue-on-error']));
-console.log('PASS: parsed YAML; manual-only, exact SHA, Node22 Ubuntu, pinned actions, no credentials, required gates');
+console.log('PASS: parsed YAML; isolated-branch push or manual dispatch, exact SHA, Node22 Ubuntu, pinned actions, no credentials, required gates');
