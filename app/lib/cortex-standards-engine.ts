@@ -185,7 +185,7 @@ async function searchEvidence(
   );
   const queries = buildQueries(question, route);
   // An exact standard identifier identifies the DOCUMENT, not necessarily
-  // the relevant topic or clause. A broad document-level match (e.g. EN 81-20)
+  // the relevant topic or clause. A broad document-level match
   // must not suppress semantic retrieval of the actual safety requirement.
   // Continue the semantic search and let source-bound claim verification
   // determine whether any candidate answers the user's question.

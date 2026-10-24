@@ -203,7 +203,10 @@ const exactArchive = await scenario({
 });
 assert.equal(exactArchive.result.sufficient, true);
 assert.deepEqual(exactArchive.result.checkedStandards, ["QRS SPEC 900-7"]);
-assert.equal(exactArchive.budget.used, 2);
+// Exact document hits still need semantic topic retrieval before verification.
+assert.ok(exactArchive.calls.some((url) => url.includes(":batchEmbedContents")));
+assert.equal(exactArchive.budget.used, 3);
+assert.equal(exactArchive.budget.remaining, 2);
 
 const iso = await scenario({
   question: "What does ISO 25745-2:2015 clause 7.1 say?",
