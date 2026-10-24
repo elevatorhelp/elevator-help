@@ -1,0 +1,40 @@
+name: PR61 production D1 recovery readiness (read-only)
+on:
+  workflow_dispatch:
+  push:
+    branches: [integration/pr61-reconciled-20261024]
+    paths:
+      - .github/workflows/qa-pr61-prod-recovery-readonly.yml
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DB: elevator-help-cortex
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - run: npm ci --ignore-scripts
+      - name: Verify production D1 supports Time Travel without mutating data
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx wrangler d1 info "$DB" --json > /dev/null
+          echo "PASS: production D1 metadata accessible via read-only API"
+          # Current Wrangler info JSON shape may not expose a stable `version` key.
+          # A successful actual remote Time Travel bookmark is the authoritative gate.
+          tt=$(npx wrangler d1 time-travel info "$DB" --json)
+          printf '%s' "$tt" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let o=JSON.parse(s);if(!/^[a-f0-9]{8}(-[a-f0-9]{8}){2}-[a-f0-9]{32}$/i.test(o.bookmark||""))throw Error("PRODUCTION_BOOKMARK_MISSING");console.log("PASS: fresh remote Production Time Travel bookmark verified without exposing value")})'
+      - name: Read-only production schema compatibility counts (no private rows)
+        run: |
+          set -euo pipefail
+          output=$(npx wrangler d1 execute "$DB" --remote --command "SELECT COUNT(*) AS total FROM archive_chunks" --json)
+          printf '%s' "$output" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let r=JSON.parse(s).flatMap(v=>v.results||[])[0];if(!r||!Number.isSafeInteger(r.total)||r.total<0)throw Error("PRODUCTION_D1_COUNT_UNAVAILABLE");console.log("PASS: production D1 read-only SELECT count available (count redacted)")})'
+          echo "Read-only inspection only. No Production backup restore, Vectorize mutation, deployment or merge was attempted."

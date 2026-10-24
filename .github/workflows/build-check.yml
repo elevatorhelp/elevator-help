@@ -39,8 +39,17 @@ jobs:
       - name: Test message editing
         run: npm run test:conversation-edit
 
+      - name: Rehearse offline staged publication snapshot and restore
+        run: node --experimental-sqlite scripts/test-ingestion-restore-roundtrip.mjs
+
+      - name: Guard isolated QA endpoint security boundary
+        run: node scripts/test-qa-ingestion-edge-guard.mjs
+
       - name: Test authenticated chat gate
         run: npm run test:request-auth
+
+      - name: Check signed-in customer citation QA harness syntax
+        run: node --check scripts/qa-authenticated-ask-citation.mjs
 
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
@@ -68,8 +77,41 @@ jobs:
           node --experimental-strip-types scripts/test-generic-clause-parser.ts
           node --experimental-strip-types scripts/test-clause-casing.ts
 
+      - name: Test standards topic retrieval despite broad exact hits
+        run: node scripts/test-cortex-standards-topic-retrieval.mjs
+
       - name: Test compact and legacy exact-evidence index
         run: node --experimental-sqlite --experimental-strip-types scripts/test-compact-evidence.mjs
+
+      - name: Test D1 lease SQL contract (offline SQLite)
+        run: node --experimental-sqlite --disable-warning=ExperimentalWarning --test scripts/test-d1-lease-sql.mjs
+
+      - name: Test adaptive ingestion planner (Issue #60)
+        run: node --test scripts/adaptive-ingestion-controller.test.mjs
+
+      - name: Test automatic D1 lease acquisition and renewal
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-lease-operations.ts
+
+      - name: Test lease ownership loss during in-flight ingestion
+        run: node --experimental-strip-types scripts/test-ingestion-lease-boundaries.ts
+
+      - name: Test crash-safe generation publication protocol
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-generation-publication.ts
+
+      - name: Test staged Vectorize visibility against D1 publication
+        run: node --experimental-strip-types scripts/test-ingestion-publication-visibility.ts
+
+      - name: Verify exact retrieval honors published document generations
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-published-evidence-generation.ts
+
+      - name: Test three-layer atomic RAW Evidence Map publication
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-full-publication.ts
+
+      - name: Test complete-document staged publication with crash recovery
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-complete-publication.ts
+
+      - name: Test multi-batch lease renewal and restart fencing
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-multibatch-recovery.ts
 
       - name: Build
         run: npm run build

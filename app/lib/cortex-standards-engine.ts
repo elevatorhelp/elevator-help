@@ -9,6 +9,7 @@ import {
   standardCodesMatch,
 } from "./standard-identifiers.ts";
 import { searchArchiveEvidenceIndex } from "./archive-evidence-index.ts";
+import { filterPublishedMatches } from "./ingestion-publication-visibility.ts";
 import { standardReferenceIdentifiers } from "./reference-identifiers.ts";
 
 type Evidence = {
@@ -27,6 +28,8 @@ export type VerifiedStandardClaim = {
   text: string;
   evidenceId: string;
   evidenceQuote: string;
+  /** Page from the retrieved source metadata, never from model output. */
+  page: number | null;
 };
 
 function parseModelJson(text: string) {
@@ -181,12 +184,12 @@ async function searchEvidence(
     archiveDb,
   );
   const queries = buildQueries(question, route);
-  // Exact identifiers plus a clause form a deterministic archive address. The
-  // model never needs to know a file/folder address; the index resolves it. If
-  // that address produced evidence, avoid a noisy semantic search entirely.
-  const backends = exactEvidence.length
-    ? []
-    : await createQueryBackends(queries, ai, vectorize, multilingual);
+  // An exact standard identifier identifies the DOCUMENT, not necessarily
+  // the relevant topic or clause. A broad document-level match (e.g. EN 81-20)
+  // must not suppress semantic retrieval of the actual safety requirement.
+  // Continue the semantic search and let source-bound claim verification
+  // determine whether any candidate answers the user's question.
+  const backends = await createQueryBackends(queries, ai, vectorize, multilingual);
   const matches: any[] = [];
   const seen = new Set<string>();
 
@@ -226,7 +229,11 @@ async function searchEvidence(
     }
   }
 
-  const evidence = [...exactEvidence, ...matches.map(evidenceFromMatch)]
+  // D1 publication is the authority: a semantic hit is not evidence until
+  // its document generation is currently published. In particular, rollback
+  // must not resurrect stale staged vectors in standards answers.
+  const publishedMatches = await filterPublishedMatches(archiveDb, matches);
+  const evidence = [...exactEvidence, ...publishedMatches.map(evidenceFromMatch)]
     .filter((item): item is Evidence => Boolean(item))
     .filter((item) => belongsToRequestedStandard(item, requested))
     .sort((a, b) => {
@@ -291,14 +298,19 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
       text,
       evidenceId: selected.id,
       evidenceQuote: quote,
+      page: typeof selected.page === "number" &&
+        Number.isSafeInteger(selected.page) && selected.page > 0
+        ? selected.page
+        : null,
     });
   }
   return verified.slice(0, 8);
 }
 
 function formatAnswer(claims: VerifiedStandardClaim[], language?: string | null) {
+  const pageLabel = language === "de" ? "S." : language === "fa" ? "صفحه" : "p.";
   const details = claims
-    .map((claim) => `• ${claim.standard}, ${claim.clause} — ${claim.text}`)
+    .map((claim) => `• ${claim.standard}, ${claim.clause}${claim.page ? `, ${pageLabel} ${claim.page}` : ""} — ${claim.text}`)
     .join("\n");
   if (language === "de") return `Kurz gesagt:\n${claims[0].text}\n\nNormnachweis:\n${details}`;
   if (language === "fa") return `خلاصه:\n${claims[0].text}\n\nمدرک استاندارد:\n${details}`;

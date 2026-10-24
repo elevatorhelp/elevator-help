@@ -1,0 +1,66 @@
+name: PR61 disposable D1 publication restore drill
+on:
+  workflow_dispatch:
+  push:
+    branches: [integration/pr61-reconciled-20261024]
+    paths:
+      - .github/workflows/qa-pr61-d1-restore.yml
+permissions:
+  contents: read
+concurrency:
+  group: qa-pr61-disposable-restore
+  cancel-in-progress: false
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      QA_DB: qa-pr61-restore-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - run: npm ci --ignore-scripts
+      - name: Bound QA usage, require capacity, and create unique disposable database
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          list=$(npx wrangler d1 list --json)
+          count=$(printf '%s' "$list" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s);if(!Array.isArray(a))process.exit(2);console.log(a.length)})')
+          if [ "$count" -ge 8 ]; then
+            echo "::error::Account already has $count databases; no disposable D1 created to avoid hitting Free tier quota"
+            exit 1
+          fi
+          npx wrangler d1 create "$QA_DB" --location weur
+          echo "QA_CREATED=true" >> "$GITHUB_ENV"
+      - name: Stage published three-layer fixture on disposable D1
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute "$QA_DB" --remote --file docs/ingestion-staged-publication-schema.sql --yes
+          npx wrangler d1 execute "$QA_DB" --remote --file docs/ingestion-full-publication-schema.sql --yes
+          npx wrangler d1 execute "$QA_DB" --remote --command "INSERT INTO ingestion_document_publications VALUES ('qa-document','qa-document',2,100); INSERT INTO ingestion_staged_receipts VALUES ('qa-document',2,'raw-2',100,'fp-a'); INSERT INTO ingestion_staged_evidence VALUES ('qa-document',2,'evidence-2','fp-a','An E16 QA test passage','qa.pdf','QA',3,0,'[{\"key\":\"E16\"}]','[\"5.2\"]',100); INSERT INTO ingestion_staged_map_receipts VALUES ('qa-document',2,'map-2','fp-a',100)" --yes
+          info=$(npx wrangler d1 time-travel info "$QA_DB" --json)
+          bookmark=$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);if(!/^[a-f0-9]{8}(-[a-f0-9]{8}){2}-[a-f0-9]{32}$/i.test(v.bookmark||""))process.exit(1);console.log(v.bookmark)})')
+          echo "QA_BOOKMARK=$bookmark" >> "$GITHUB_ENV"
+          echo "PASS: remote isolated three-layer publication checkpoint taken"
+      - name: Advance generation then perform actual Cloudflare Time Travel restore
+        run: |
+          set -euo pipefail
+          test -n "$QA_BOOKMARK"
+          npx wrangler d1 execute "$QA_DB" --remote --command "UPDATE ingestion_document_publications SET active_generation=3 WHERE document_id='qa-document'; INSERT INTO ingestion_staged_receipts VALUES ('qa-document',3,'raw-3',110,'fp-b'); INSERT INTO ingestion_staged_evidence VALUES ('qa-document',3,'evidence-3','fp-b','new source','qa.pdf','QA',4,0,'[]','[]',110); INSERT INTO ingestion_staged_map_receipts VALUES ('qa-document',3,'map-3','fp-b',110)" --yes
+          printf 'y\n' | npx wrangler d1 time-travel restore "$QA_DB" --bookmark "$QA_BOOKMARK"
+          verify=$(npx wrangler d1 execute "$QA_DB" --remote --command "SELECT active_generation AS generation,(SELECT count(*) FROM ingestion_staged_receipts) AS raw_count,(SELECT count(*) FROM ingestion_staged_evidence) AS evidence_count,(SELECT count(*) FROM ingestion_staged_map_receipts) AS map_count,(SELECT count(*) FROM ingestion_staged_receipts WHERE generation=3) AS superseded_count FROM ingestion_document_publications WHERE document_id='qa-document'" --json)
+          printf '%s' "$verify" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);const r=v.flatMap(x=>x.results||[])[0];if(!r||r.generation!==2||r.raw_count!==1||r.evidence_count!==1||r.map_count!==1||r.superseded_count!==0)throw Error("D1_RESTORE_MANIFEST_MISMATCH "+JSON.stringify(r)); console.log("PASS: REAL disposable Cloudflare Time Travel restored active generation and all RAW/Evidence/Map receipts")})'
+      - name: Delete ONLY database created by this exact run
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ "${QA_CREATED:-}" = "true" ]; then
+            case "$QA_DB" in qa-pr61-restore-${GITHUB_RUN_ID}) ;; *) echo "::error::Unsafe QA db name"; exit 1;; esac
+            npx wrangler d1 delete "$QA_DB" --skip-confirmation
+            echo "PASS: disposable QA database removed"
+          fi

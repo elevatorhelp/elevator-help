@@ -1,3 +1,7 @@
+import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
+import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
+import {stagedVectorId,recordStagedBatch,publishExactStagedManifest} from "../../lib/ingestion-generation-publication";
+import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -366,7 +370,14 @@ ${JSON.stringify(payload)}
 
 export async function POST(request: NextRequest) {
   try {
-    const expectedToken = process.env.INGESTION_TOKEN;
+    // Cloudflare runtime secrets are env bindings; process.env is not guaranteed
+    // to mirror them (notably under deployed OpenNext Workers).
+    const { env: runtimeEnv } = getCloudflareContext();
+    const runtimeValue = (name: string): string | undefined => {
+      const value = (runtimeEnv as any)?.[name];
+      return typeof value === "string" ? value : process.env[name];
+    };
+    const expectedToken = runtimeValue("INGESTION_TOKEN");
     const auth = request.headers.get("authorization") || "";
 
     if (!expectedToken || auth !== `Bearer ${expectedToken}`) {
@@ -374,11 +385,133 @@ export async function POST(request: NextRequest) {
     }
 
     const body: any = await request.json();
+    // Standalone document-scoped lease actions run BEFORE the normal lease preflight.
+    // They require the same private INGESTION_TOKEN; never enable public access.
+    if (body?.action === "lease_claim" || body?.action === "lease_renew") {
+      if (runtimeValue("INGESTION_STAGED_PUBLICATION") !== "true" ||
+          runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")
+        return NextResponse.json({ok:false,error:"STAGED_LEASE_DISABLED"},{status:409});
+      const db=(runtimeEnv as any).CORTEX_DB;
+      try {
+        const duration=leaseDuration(body?.durationMs);
+        if(body.action === "lease_claim") {
+          const lease=await claimIngestionLease(db,body?.documentId,body?.owner,duration);
+          if(lease){
+            await db.prepare("INSERT OR IGNORE INTO ingestion_document_publications "+
+              "(document_id,job_key,active_generation,updated_at_ms) VALUES(?,?,0,?)")
+              .bind(lease.jobKey,lease.jobKey,Date.now()).run();
+          }
+          return NextResponse.json({ok:Boolean(lease),lease},
+            {status:lease?200:409});
+        }
+        const lease=parseIngestionLease(body?.lease);
+        if(!lease)return NextResponse.json({ok:false,error:"INVALID_LEASE"},{status:400});
+        const renewed=await renewIngestionLease(db,lease,duration);
+        return NextResponse.json({ok:renewed,renewed},{status:renewed?200:409});
+      } catch {
+        return NextResponse.json({ok:false,error:"LEASE_ACTION_FAILED"},{status:409});
+      }
+    }
+
+    const guardWrite = async <T,>(operation: () => Promise<T>): Promise<T> => {
+      if (runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true") return operation();
+      const lease = parseIngestionLease(body?.lease);
+      if (!lease) throw new Error("INGESTION_LEASE_REQUIRED");
+      const { env: leaseEnv } = getCloudflareContext();
+      return guardedIngestionSideEffect((leaseEnv as any).CORTEX_DB, lease, operation);
+    };
+
+    // Opt-in preflight only. Not sufficient for safe parallel Vectorize writes:
+    // a lease may expire after validation, before an external side effect.
+    if (runtimeValue("INGESTION_LEASE_PREFLIGHT") === "true") {
+      const lease = parseIngestionLease(body?.lease);
+      if (!lease) return NextResponse.json({ ok: false, error: "INGESTION_LEASE_REQUIRED" }, { status: 409 });
+      const { env: leaseEnv } = getCloudflareContext();
+      try {
+        await assertActiveIngestionLease((leaseEnv as any).CORTEX_DB, lease);
+      } catch {
+        return NextResponse.json({ ok: false, error: "INGESTION_LEASE_INVALID" }, { status: 409 });
+      }
+    }
+
+    if (body?.action === "publish_full") {
+      if(runtimeValue("INGESTION_COMPLETE_PUBLICATION") !== "true" ||
+         runtimeValue("INGESTION_STAGED_PUBLICATION") !== "true" ||
+         runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")
+        return NextResponse.json({ok:false,error:"FULL_PUBLICATION_DISABLED"},{status:409});
+      const lease=parseIngestionLease(body?.lease);
+      const rawIds=body?.rawIds, evidenceIds=body?.evidenceIds, mapIds=body?.mapIds;
+      if(!lease||lease.jobKey!==body?.documentId||
+         !Array.isArray(rawIds)||!Array.isArray(evidenceIds)||!Array.isArray(mapIds)||
+         typeof body?.sourceFingerprint!=="string")
+        return NextResponse.json({ok:false,error:"INVALID_FULL_PUBLICATION_REQUEST"},{status:400});
+      try{
+        const {env: fullEnv}=getCloudflareContext();
+        const db=(fullEnv as any).CORTEX_DB;
+        await assertActiveIngestionLease(db,lease);
+        // Vectorize acknowledgement is not search readiness. Verify *every*
+        // staged RAW/MAP vector in both bindings before changing D1 visibility.
+        const ids=[...rawIds,...mapIds].map((id:string)=>stagedVectorId(id,lease.generation));
+        if(ids.length>100000||ids.some((id:string)=>id.length>512))
+          return NextResponse.json({ok:false,error:"FULL_MANIFEST_TOO_LARGE"},{status:400});
+        for(const index of [(fullEnv as any).VECTORIZE,(fullEnv as any).VECTORIZE_V2]){
+          if(!index?.getByIds)return NextResponse.json({ok:false,error:"VECTOR_READ_UNAVAILABLE"},{status:409});
+          for(let start=0;start<ids.length;start+=20){
+            const expected=ids.slice(start,start+20);
+            const found=await index.getByIds(expected);
+            const actual=new Set((Array.isArray(found)?found:[]).map((x:any)=>x.id));
+            if(expected.some((id:string)=>!actual.has(id)))
+              return NextResponse.json({ok:false,error:"STAGED_VECTOR_NOT_READY"},{status:409});
+          }
+        }
+        const published=await publishFullGeneration(db,lease,body.sourceFingerprint,
+          rawIds,evidenceIds,mapIds);
+        return NextResponse.json({ok:published,published},{status:published?200:409});
+      }catch{
+        return NextResponse.json({ok:false,error:"FULL_PUBLICATION_FAILED"},{status:409});
+      }
+    }
+    if (body?.action === "publish_staged") {
+      if (runtimeValue("INGESTION_COMPLETE_PUBLICATION") === "true")
+        return NextResponse.json({ok:false,error:"RAW_ONLY_PUBLICATION_DISABLED"},{status:409});
+      if (runtimeValue("INGESTION_STAGED_PUBLICATION") !== "true" ||
+          runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")
+        return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_DISABLED"},{status:409});
+      const lease = parseIngestionLease(body?.lease);
+      const documentId = body?.documentId;
+      const manifestIds = body?.manifestIds;
+      const sourceFingerprint = body?.sourceFingerprint;
+      if (!lease || typeof documentId !== "string" || lease.jobKey !== documentId ||
+          !Array.isArray(manifestIds) || typeof sourceFingerprint !== "string")
+        return NextResponse.json({ok:false,error:"INVALID_PUBLICATION_REQUEST"},{status:400});
+      const {env: publishEnv} = getCloudflareContext();
+      try {
+        const published = await publishExactStagedManifest(
+          (publishEnv as any).CORTEX_DB,lease,documentId,sourceFingerprint,manifestIds);
+        return NextResponse.json({ok:published,published},
+          {status:published?200:409});
+      } catch {
+        return NextResponse.json({ok:false,error:"PUBLICATION_FAILED"},{status:409});
+      }
+    }
     const action = body?.action || "upsert";
     const { env } = getCloudflareContext();
     const vectorize = (env as any).VECTORIZE;
     const vectorizeV2 = (env as any).VECTORIZE_V2;
     const archiveDb = (env as any).CORTEX_DB;
+
+    // The staged protocol currently covers RAW vectors only. Evidence rows use
+    // active unversioned D1 identifiers, while delete can remove live rows.
+    // Until evidence has generation-qualified storage and atomic publication,
+    // reject these actions before any D1/Vectorize side effects.
+    if (runtimeValue("INGESTION_STAGED_PUBLICATION") === "true" &&
+        (action === "delete" || (action === "index_evidence" &&
+          runtimeValue("INGESTION_COMPLETE_PUBLICATION") !== "true"))) {
+      return NextResponse.json(
+        { ok: false, error: "STAGED_EVIDENCE_PUBLICATION_NOT_IMPLEMENTED" },
+        { status: 409 },
+      );
+    }
 
     if (action === "status") {
       return NextResponse.json({
@@ -407,10 +540,10 @@ export async function POST(request: NextRequest) {
       }
 
       await Promise.all([
-        vectorize.deleteByIds(ids),
-        vectorizeV2.deleteByIds(ids),
+        guardWrite(() => vectorize.deleteByIds(ids)),
+        guardWrite(() => vectorizeV2.deleteByIds(ids)),
       ]);
-      await removeArchiveChunks(archiveDb, ids);
+      await guardWrite(() => removeArchiveChunks(archiveDb, ids));
       return NextResponse.json({ ok: true, deleted: ids.length });
     }
 
@@ -450,8 +583,33 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (action === "index_evidence" &&
+        runtimeValue("INGESTION_COMPLETE_PUBLICATION") === "true") {
+      const lease=parseIngestionLease(body?.lease);
+      if(!lease||chunks.some(chunk=>chunk.sourceFileId!==lease.jobKey))
+        return NextResponse.json({ok:false,error:"INVALID_STAGED_EVIDENCE_LEASE"},{status:409});
+      try{
+        for(const chunk of chunks){
+          const labels=[...chunk.sourcePath.split(/[\\/]/g),
+            chunk.fileName.replace(/\\.[^.]+$/,""),chunk.documentGroupHint];
+          const identifiers=extractReferenceIdentifiers(chunk.text,labels);
+          const clauses=extractClauseNumbers(chunk.text);
+          await stageExactEvidence(archiveDb,lease,{
+            id:chunk.id,text:chunk.text,sourceFileId:chunk.sourceFileId,
+            fileName:chunk.fileName,sourcePath:chunk.sourcePath,page:chunk.page,
+            chunkIndex:chunk.chunkIndex,sourceFingerprint:chunk.sourceFingerprint||"",
+            identifiersJson:JSON.stringify(identifiers),clausesJson:JSON.stringify(clauses)
+          });
+        }
+        return NextResponse.json({ok:true,staged:true,indexed:chunks.length,
+          archiveIndexVersion:ARCHIVE_INDEX_VERSION,ids:chunks.map(x=>x.id)});
+      }catch{
+        return NextResponse.json({ok:false,error:"STAGED_EVIDENCE_WRITE_FAILED"},{status:409});
+      }
+    }
+
     if (action === "index_evidence") {
-      await indexArchiveChunks(
+      await guardWrite(() => indexArchiveChunks(
         archiveDb,
         chunks,
         chunks.map((chunk) => ({
@@ -466,7 +624,7 @@ export async function POST(request: NextRequest) {
           documentGroup: chunk.documentGroupHint || null,
           retrievalContext: null,
         })),
-      );
+      ));
       return NextResponse.json({
         ok: true,
         indexed: chunks.length,
@@ -475,7 +633,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    // Validate staged revision before any paid embeddings or external Vectorize writes.
+    // Never persist a receipt for an inconsistent source revision.
+    if (runtimeValue("INGESTION_STAGED_PUBLICATION") === "true" &&
+        chunks.some((v) => !v.sourceFingerprint ||
+          v.sourceFingerprint !== chunks[0].sourceFingerprint)) {
+      return NextResponse.json({ok:false,error:"STAGED_FINGERPRINT_MISMATCH"},{status:409});
+    }
+
+    const apiKey = runtimeValue("GEMINI_API_KEY");
     const ai = (env as any).AI;
 
     if (!apiKey || !ai) {
@@ -537,22 +703,46 @@ export async function POST(request: NextRequest) {
       return { chunk, metadata, index };
     });
 
+    // Opt-in staged publication. Only one source document per request, and its
+    // lease key must equal the sourceFileId. Otherwise fail closed.
+    const staged = runtimeValue("INGESTION_STAGED_PUBLICATION") === "true";
+    const publicationLease = staged ? parseIngestionLease(body?.lease) : null;
+    const sourceId = chunks[0]?.sourceFileId;
+    if (staged && (!publicationLease || !archiveDb ||
+        chunks.some((chunk) => chunk.sourceFileId !== sourceId) ||
+        publicationLease.jobKey !== sourceId ||
+        runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")) {
+      return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_REQUIRES_DOCUMENT_LEASE"},{status:409});
+    }
     const legacyVectors = vectorRecords.map(({ chunk, metadata, index }) => ({
-      id: chunk.id,
+      id: staged ? stagedVectorId(chunk.id, publicationLease!.generation) : chunk.id,
       values: embeddings[index],
       metadata: { ...metadata, embeddingVersion: 2 },
     }));
     const multilingualVectors = vectorRecords.map(
       ({ chunk, metadata, index }) => ({
-        id: chunk.id,
+        id: staged ? stagedVectorId(chunk.id, publicationLease!.generation) : chunk.id,
         values: multilingualEmbeddings[index],
         metadata: { ...metadata, embeddingVersion: RAW_EMBEDDING_VERSION },
       }),
     );
 
-    await vectorize.upsert(legacyVectors);
-    await vectorizeV2.upsert(multilingualVectors);
-    await indexArchiveChunks(archiveDb, chunks, enriched);
+    await guardWrite(() => vectorize.upsert(legacyVectors));
+    await guardWrite(() => vectorizeV2.upsert(multilingualVectors));
+    if (staged) {
+      // Staging is intentionally NOT published per batch: a multi-batch file
+      // must be fully staged and validated before a single final CAS commit.
+      await recordStagedBatch(archiveDb,publicationLease!,sourceId,chunks.map(v=>v.id),chunks[0].sourceFingerprint);
+      return NextResponse.json({
+        ok:true,staged:true,published:false,
+        upserted:multilingualVectors.length,
+        rawEmbeddingVersion:RAW_EMBEDDING_VERSION,
+        archiveIndexVersion:ARCHIVE_INDEX_VERSION,
+        ids:multilingualVectors.map(v=>v.id)
+      });
+    } else {
+      await guardWrite(() => indexArchiveChunks(archiveDb, chunks, enriched));
+    }
 
     return NextResponse.json({
       ok: true,
