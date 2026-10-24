@@ -450,3 +450,11 @@ Every status report starts with **current milestone / last verified completed it
 **Closure standard:** Final completion message and corresponding ROADMAP entry must list delivered fixes, retained/removed tests and rationale, split PR links, exact-head GitHub Actions results, real multi-page Drive interrupted/resumed RAW+Evidence+Map acceptance, source-grounded customer answer evidence, security/migration/rollback status, and explicit remaining risks or gates. An untested code change or a single green offline unit test is not final completion.
 
 **Status of this policy:** Recorded now; this policy does NOT assert that the technical work or final QA has completed.
+
+### Execution blocker / security gate — 2026-10-24
+
+- Isolated PC worktree `cleanup/pr61-integration-probe`: merge conflicts with backed-up `main` resolved, local merge commit `a15bba5`, **not pushed**. Source PR61 stays Draft.
+- `npm.cmd ci --ignore-scripts` completed successfully in independent cleanup checkout (349 packages). Installer audit reported **8 vulnerabilities (2 moderate, 6 high)**; impact and transitive paths not yet evaluated. Do not blindly run `npm audit fix --force` or downgrade Next.js security floor.
+- Attempted post-install test execution via Desktop Commander was blocked by tool safety policy; no post-install test result may be claimed. The earlier 13/14 run was invalidated by missing `unpdf` before install. Check exact-head GitHub CI instead when accessible.
+- Latest PR61 head at report time `994775f241bcf241e2340e71f66ca18d1bd685fc` has **no exact-head passing Build Check evidence**; earlier successful recovery run 40046657411 belongs to older head `ad671530`. PR is still nonmergeable. No claim of final completion, QA release approval or production readiness is permitted.
+- Actual multi-page interrupted Drive→QA→published RAW/Evidence/Map→authenticated customer answer remains unverified, as does production rollback/restore. No deletion, push, merge or production deployment occurred in this run.
