@@ -8,8 +8,15 @@ export type StagedExactEvidence={
 export async function stageExactEvidence(
  db:any,lease:IngestionLease,chunk:StagedExactEvidence
 ):Promise<void>{
- if(lease.jobKey!==chunk.sourceFileId||!chunk.sourceFingerprint||!chunk.id)
+ if(lease.jobKey!==chunk.sourceFileId)
    throw Error("STAGED_EVIDENCE_IDENTITY_MISMATCH");
+ // Reject invalid citation anchors and immutable receipt identities before D1 writes.
+ if(typeof chunk.id!=="string"||!chunk.id.trim()||chunk.id.length>512||
+    typeof chunk.sourceFingerprint!=="string"||!chunk.sourceFingerprint.trim()||
+    chunk.sourceFingerprint.length>512||
+    !Number.isSafeInteger(chunk.page)||chunk.page<1||
+    !Number.isSafeInteger(chunk.chunkIndex)||chunk.chunkIndex<0)
+   throw Error("INVALID_STAGED_EVIDENCE_METADATA");
  await assertActiveIngestionLease(db,lease);
  const now=Date.now();
  // An immutable row can be inserted only while the caller holds the live lease.

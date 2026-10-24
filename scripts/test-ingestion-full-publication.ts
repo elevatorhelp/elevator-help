@@ -18,6 +18,25 @@ const db={prepare:(sql:string)=>({bind:(...args:unknown[])=>({
 const a={jobKey:"doc",owner:"worker-a",generation:1};
 const evidence=(id:string)=>({id,text:"EN 81-20 clause 5 QA",sourceFileId:"doc",fileName:"sample.pdf",sourcePath:"qa/sample.pdf",page:1,chunkIndex:0,sourceFingerprint:"revision-one",identifiersJson:'[{"key":"en8120","label":"EN 81-20"}]',clausesJson:'["5"]'});
 await recordStagedBatch(db,a,"doc",["r1","r2"],"revision-one");
+for(const malformed of [
+ {...evidence("e-bad"),id:" "},
+ {...evidence("e-bad"),id:"x".repeat(513)},
+ {...evidence("e-bad"),sourceFingerprint:" "},
+ {...evidence("e-bad"),sourceFingerprint:"x".repeat(513)},
+ {...evidence("e-bad"),page:0},
+ {...evidence("e-bad"),page:-1},
+ {...evidence("e-bad"),page:1.5},
+ {...evidence("e-bad"),chunkIndex:-1},
+ {...evidence("e-bad"),chunkIndex:Number.MAX_SAFE_INTEGER+1},
+ ]){
+ await assert.rejects(stageExactEvidence(db,a,malformed),
+   /INVALID_STAGED_EVIDENCE_METADATA/,
+   "invalid staged evidence metadata must fail before D1 writes");
+}
+await assert.rejects(stageExactEvidence(db,a,{...evidence("e-bad"),sourceFileId:"other"}),
+ /STAGED_EVIDENCE_IDENTITY_MISMATCH/);
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM ingestion_staged_evidence").get()?.n,
+ 0,"rejected evidence metadata must not leave partial staging rows");
 await stageExactEvidence(db,a,evidence("e1"));
 assert.equal(await publishFullGeneration(db,a,"revision-one",["r1","r2"],["e1"],["m1"]),false,"map missing");
 for(const malformed of [[""],["   "],["x".repeat(513)],[null],[42],["m1",""]]){
