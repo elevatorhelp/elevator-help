@@ -8,9 +8,9 @@ const db=new DatabaseSync(":memory:");
 db.exec(staged);
 db.exec(full);
 db.prepare("INSERT INTO ingestion_document_publications VALUES (?,?,?,?)").run("document-a","document-a",2,10);
-const row=["document-a",2,"chunk-a","fingerprint-a",100];
+const row=["document-a",2,"chunk-a",100,"fingerprint-a"];
 db.prepare("INSERT INTO ingestion_staged_receipts VALUES (?,?,?,?,?)").run(...row);
-db.prepare("INSERT INTO ingestion_staged_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?)").run(
+db.prepare("INSERT INTO ingestion_staged_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
  "document-a",2,"evidence-a","fingerprint-a","Genuine test evidence about E16","test.pdf","QA",3,0,
  '[{"key":"E16","label":"E16"}]','["5.2"]',100);
 db.prepare("INSERT INTO ingestion_staged_map_receipts VALUES (?,?,?,?,?)").run("document-a",2,"map-a","fingerprint-a",100);
