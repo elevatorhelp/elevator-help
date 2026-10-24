@@ -15,6 +15,17 @@ try {
     userId: null,
   });
 
+  delete process.env.AUTH_REQUIRED;
+  delete process.env.CLERK_SECRET_KEY;
+  const missingFlag=await authorizeChatRequest(request);
+  assert.equal(missingFlag.ok,false,"undefined auth flag must fail closed");
+  if(!missingFlag.ok)assert.equal(missingFlag.status,503);
+
+  process.env.AUTH_REQUIRED = "tru";
+  const mistypedFlag=await authorizeChatRequest(request);
+  assert.equal(mistypedFlag.ok,false,"mistyped auth flag must fail closed");
+  if(!mistypedFlag.ok)assert.equal(mistypedFlag.status,503);
+
   process.env.AUTH_REQUIRED = "true";
   delete process.env.CLERK_SECRET_KEY;
   const unavailable = await authorizeChatRequest(request);
