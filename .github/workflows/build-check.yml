@@ -39,6 +39,9 @@ jobs:
       - name: Test message editing
         run: npm run test:conversation-edit
 
+      - name: Guard isolated QA endpoint security boundary
+        run: node scripts/test-qa-ingestion-edge-guard.mjs
+
       - name: Test authenticated chat gate
         run: npm run test:request-auth
 
