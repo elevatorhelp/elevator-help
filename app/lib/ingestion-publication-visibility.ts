@@ -18,10 +18,12 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
   const stage=parseStagedId(String(match.id||""));
   const documentId=match.metadata?.sourceFileId;
   if(!stage && strict)continue;
-  // Preserve the pre-staging legacy-only route when no D1 backend was ever
-  // configured; a FAILED configured D1 query must still fail closed below.
-  if(!stage && (typeof documentId!=="string"||!documentId||!db?.prepare)){
-    if(!strict)visible.push(match);continue;
+  // Only a deliberately absent D1 binding permits legacy-only retrieval.
+  // An unusable configured binding or missing source identity cannot prove
+  // that a legacy vector was not superseded; fail closed in those cases.
+  if(!stage && !strict && db == null){
+    visible.push(match);
+    continue;
   }
   if(typeof documentId!=="string"||!documentId||!db?.prepare)continue;
   try{

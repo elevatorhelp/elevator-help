@@ -7,6 +7,16 @@ assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g1:ch
 generation=2;
 assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g2:chunk"]);
 assert.deepEqual((await filterPublishedMatches(null,matches)).map(x=>x.id),["legacy"],"pre-staging legacy-only retrieval remains compatible");
+const unattributedLegacy=[{id:"legacy-without-document",metadata:{}},{id:"legacy-without-metadata"}];
+assert.deepEqual(await filterPublishedMatches(db,unattributedLegacy),[],
+ "Configured D1 must reject legacy vectors without sourceFileId: publication cannot be verified");
+assert.deepEqual(await filterPublishedMatches(null,unattributedLegacy),unattributedLegacy,
+ "Deliberately unconfigured legacy-only deployments retain historical compatibility");
+assert.deepEqual(await filterPublishedMatches({},matches),[],
+ "Malformed configured D1 binding must not expose superseded legacy vectors");
+assert.deepEqual(await filterPublishedMatches({prepare:null},unattributedLegacy),[],
+ "Unusable configured D1 must reject unattributed legacy vectors");
+
 assert.deepEqual((await filterPublishedMatches(db,matches,true)).map(x=>x.id),["g2:chunk"]);
 const unavailable={prepare:()=>{throw Error("D1 network timeout");}};
 assert.deepEqual((await filterPublishedMatches(unavailable,matches)).map(x=>x.id),[],
