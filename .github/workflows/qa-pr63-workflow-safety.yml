@@ -8,6 +8,15 @@ on:
       - integration/pr61-reconciled-20261024
     paths:
       - .github/workflows/qa-pr61-actual-app.yml
+      - .github/workflows/qa-pr61-multipage.yml
+      - .github/workflows/qa-pr61-real-worker.yml
+      - .github/workflows/qa-pr61-cloudflare-secret.yml
+      - .github/workflows/qa-pr61-drive-readback.yml
+      - scripts/test-qa-multipage-workflow-safety.mjs
+      - scripts/qa-pr61-full-app-e2e.mjs
+      - wrangler.qa-app.json
+      - wrangler.qa-app-deployed.json
+      - wrangler.qa-staged.json
       - .github/workflows/qa-pr63-workflow-safety.yml
   workflow_dispatch:
 permissions:
@@ -26,6 +35,8 @@ jobs:
           node-version: "22"
       - name: Verify isolated D1 lease bootstrap contract
         run: node --experimental-sqlite scripts/test-qa-pr61-bootstrap.mjs
+      - name: Verify multipage paid opt-in and shared QA concurrency
+        run: node scripts/test-qa-multipage-workflow-safety.mjs
       - name: Verify actual-app test pins selected commit and isolated resources
         shell: bash
         run: |

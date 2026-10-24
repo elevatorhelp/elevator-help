@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: qa-pr61-actual-app
+  group: qa-pr61-cloudflare-gemini
   cancel-in-progress: false
 jobs:
   actual-app:

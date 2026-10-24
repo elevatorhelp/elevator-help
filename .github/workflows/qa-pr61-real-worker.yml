@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: qa-pr61-real-worker
+  group: qa-pr61-cloudflare-gemini
   cancel-in-progress: false
 jobs:
   isolated-e2e:

@@ -16,6 +16,16 @@ async function post(path,data){
  return {status:response.status,...json};
 }
 const ingest=(value)=>post("/api/drive-ingest-batch",value);
+// Reject unleased requests before any Gemini-backed ingestion or publication.
+if (process.env.QA_NEGATIVE_ONLY === "true") {
+ for (const action of ["status", "upsert", "publish_full"]) {
+  const rejected=await ingest({action,documentId:doc});
+  assert.equal(rejected.status,409,"unleased request must fail closed");
+  assert.equal(rejected.error,"INGESTION_LEASE_REQUIRED");
+ }
+ console.log("PASS: negative-only lease rejection; positive Gemini and Drive QA skipped");
+ process.exit(0);
+}
 const result=await ingest({action:"lease_claim",documentId:doc,owner,durationMs:180000});
 assert.equal(result.status,200,JSON.stringify(result));
 const lease=result.lease;
