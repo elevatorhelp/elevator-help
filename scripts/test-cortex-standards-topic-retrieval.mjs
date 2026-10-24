@@ -46,3 +46,29 @@ assert.ok(result.evidence.some(x=>x.id==="roof-guard"),"topic-specific evidence 
 assert.equal(publicationChecks,1,"standards semantic hits must pass through the publication gate");
 assert.ok(!result.evidence.some(x=>x.id==="g3:superseded-roof-guard"),"superseded Vectorize evidence entered verified standards context");
 console.log("PASS: broad exact standard hit retains topic-focused semantic evidence");
+
+// Citation page is bound to retrieved source metadata, not model-supplied text.
+// Exercise the real verifier/formatter in the same isolated VM harness.
+const citationStart=src.indexOf("function numberTokens(");
+const citationEnd=src.indexOf("\nfunction unverifiedMessage(",citationStart);
+assert.ok(citationStart>=0&&citationEnd>citationStart);
+const citationJs=ts.transpileModule(src.slice(citationStart,citationEnd)+
+ "\nglobalThis.__verifyClaims=verifyClaims;globalThis.__formatAnswer=formatAnswer;",{
+ compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}
+}).outputText;
+vm.runInNewContext(citationJs,{...sandbox,standardCodesMatch:(a,b)=>a===b},{timeout:1000});
+const source={...focused,page:91,sourceName:"PRIVATE_ARCHIVE_PATH_DO_NOT_PRINT"};
+const modelClaim={standard:"EN 81-20",clause:"5.4.7",
+ text:"Balustrade on car roof: 0.70 m.",evidenceIndex:1,
+ evidenceQuote:"EN 81-20 5.4.7: balustrade on car roof, 0.70 m and 1.10 m.",
+ page:999};
+const verified=sandbox.__verifyClaims({claims:[modelClaim]},[source],[]);
+assert.equal(verified.length,1);
+assert.equal(verified[0].page,91,"model must not choose the citation page");
+const german=sandbox.__formatAnswer(verified,"de");
+assert.ok(german.includes("EN 81-20, 5.4.7, S. 91"));
+assert.ok(!german.includes("999")&&!german.includes(source.sourceName));
+const noPage=sandbox.__verifyClaims({claims:[modelClaim]},[{...source,page:0}],[]);
+assert.equal(noPage[0].page,null,"page zero must not become a citation");
+assert.ok(!sandbox.__formatAnswer(noPage,"de").includes("S. 0"));
+console.log("PASS: source-bound standards page citation, no fabricated page or private source path");
