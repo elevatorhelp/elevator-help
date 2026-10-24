@@ -3,6 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       allow_paid_gemini:
+        description: 'Opt in to paid Gemini QA (default: negative-only)'
+        required: true
+        type: boolean
+        default: false
+    inputs:
+      allow_paid_gemini:
         description: "Explicitly permit one bounded real Gemini QA run (default: no)"
         type: boolean
         default: false
@@ -38,7 +44,7 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::CLOUDFLARE_API_TOKEN unavailable"; exit 1; }
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::CLOUDFLARE_ACCOUNT_ID unavailable"; exit 1; }
-          if [ -z "$GEMINI_API_KEY" ]; then echo "::warning::Gemini key missing: testing real API lease and publication rejection only"; fi
+          if [ "${{ inputs.allow_paid_gemini || false }}" = "true" ] && [ -z "$GEMINI_API_KEY" ]; then echo "::error::Paid QA opted in but Gemini key missing"; exit 1; fi
       - name: QA-only OpenNext compatibility upgrade
         run: |
           npm install --no-save --ignore-scripts @opennextjs/cloudflare@1.20.12
