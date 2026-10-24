@@ -21,7 +21,10 @@ export function stagedVectorId(id:string,generation:number):string {
  * Staged IDs are immutable; retries of the same batch are idempotent.
  */
 export async function recordStagedBatch(db:any,lease:IngestionLease,documentId:string,ids:string[],sourceFingerprint?:string):Promise<void>{
- if(!ids.length||ids.length>8||new Set(ids).size!==ids.length)throw Error("INVALID_STAGED_BATCH");
+ if(lease.jobKey!==documentId)throw Error("LEASE_DOCUMENT_MISMATCH");
+ if(!Array.isArray(ids)||ids.length<1||ids.length>8||
+    ids.some(id=>typeof id!=="string"||!id||id.length>512)||
+    new Set(ids).size!==ids.length)throw Error("INVALID_STAGED_BATCH");
  if(typeof sourceFingerprint!=="string"||!sourceFingerprint||sourceFingerprint.length>512)throw Error("INVALID_SOURCE_FINGERPRINT");
  await assertActiveIngestionLease(db,lease);
  for(const id of ids){
