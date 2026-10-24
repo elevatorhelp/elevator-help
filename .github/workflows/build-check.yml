@@ -48,6 +48,9 @@ jobs:
       - name: Test authenticated chat gate
         run: npm run test:request-auth
 
+      - name: Check signed-in customer citation QA harness syntax
+        run: node --check scripts/qa-authenticated-ask-citation.mjs
+
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
