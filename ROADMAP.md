@@ -391,3 +391,13 @@ Every status report starts with **current milestone / last verified completed it
 6. **Gates:** security-main reconciliation, migration/restore/rollback, bounded costs and concurrency, full exact-final-commit CI, independent QA approval; document each PR and run link. No auto-merge or Production release before all gates.
 
 **Acceptance criterion:** smaller reviewable PRs, no lost features, no new coupling or regressions, all required real-world E2E evidence; close or supersede original PR61 only with explicit documented feature parity and safe merge strategy.
+
+
+### Regression suite consolidation and removal policy — 2026-10-24
+
+- A historical PASS is **not** justification to delete a regression guard. Keep fast required CI coverage for security baseline, standards/citations, checkpoint/lease/fencing/crash consistency and production safety boundaries.
+- Inventory every test script and GitHub Actions workflow before changes, link each to a distinct invariant and its most recent actual evidence; flag duplicate, superseded, isolated-pilot-only, obsolete and unreferenced checks.
+- Consolidate redundant assertions into one maintained canonical suite and remove only provably covered or obsolete scripts/workflows after checking import references, CI matrix, deployment hooks, branch protections and historical troubleshooting needs.
+- Retain authentic integration E2E as a distinct acceptance gate; do not repeat paid, real-document ingestion on every small commit. Run bounded real QA for release candidates or changes affecting ingestion, mapping, citation, recovery or compatibility.
+- Preserve historical run URLs and outcomes in the evidence ledger. Small fast tests run on every PR; slow/paid QA is isolated and manually dispatched or otherwise gated. No deletion/disablement of required protection until replacement is proven on exact SHA.
+- Deletions and suite consolidation are **planned, not yet executed**. QA supervisor validates test equivalence and no coverage regression.
