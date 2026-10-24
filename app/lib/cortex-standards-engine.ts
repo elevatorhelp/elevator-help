@@ -9,6 +9,7 @@ import {
   standardCodesMatch,
 } from "./standard-identifiers.ts";
 import { searchArchiveEvidenceIndex } from "./archive-evidence-index.ts";
+import { filterPublishedMatches } from "./ingestion-publication-visibility.ts";
 import { standardReferenceIdentifiers } from "./reference-identifiers.ts";
 
 type Evidence = {
@@ -226,7 +227,11 @@ async function searchEvidence(
     }
   }
 
-  const evidence = [...exactEvidence, ...matches.map(evidenceFromMatch)]
+  // D1 publication is the authority: a semantic hit is not evidence until
+  // its document generation is currently published. In particular, rollback
+  // must not resurrect stale staged vectors in standards answers.
+  const publishedMatches = await filterPublishedMatches(archiveDb, matches);
+  const evidence = [...exactEvidence, ...publishedMatches.map(evidenceFromMatch)]
     .filter((item): item is Evidence => Boolean(item))
     .filter((item) => belongsToRequestedStandard(item, requested))
     .sort((a, b) => {
