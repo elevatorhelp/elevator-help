@@ -36,6 +36,9 @@ jobs:
           const wf=fs.readFileSync('.github/workflows/qa-pr61-actual-app.yml','utf8');
           const config=JSON.parse(fs.readFileSync('wrangler.qa-app.json','utf8'));
           const script=fs.readFileSync('scripts/qa-pr61-real-app-e2e.mjs','utf8');
+          assert.match(wf,/^  workflow_dispatch:/m,'remote QA requires explicit manual dispatch');
+          assert.doesNotMatch(wf,/^  push:/m,'remote QA must not auto-run on pushes');
+          assert.match(wf,/allow_paid_gemini:[\s\S]*?default: false/,'paid Gemini must default off');
           assert.match(wf,/ref: \$\{\{ github\.sha \}\}/,'workflow must checkout dispatched commit');
           assert.doesNotMatch(wf,/ref: b7b9fb3e662b08c9cffb54228318b6e667b83d51/);
           assert.equal(config.name,'elevator-help-pr61-app-qa');
