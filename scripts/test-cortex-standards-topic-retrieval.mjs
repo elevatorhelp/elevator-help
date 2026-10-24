@@ -71,6 +71,5 @@ const german=sandbox.__formatAnswer(verified,"de");
 assert.ok(german.includes("EN 81-20, 5.4.7, S. 91"));
 assert.ok(!german.includes("999")&&!german.includes(source.sourceName));
 const noPage=sandbox.__verifyClaims({claims:[modelClaim]},[{...source,page:0}],[]);
-assert.equal(noPage[0].page,null,"page zero must not become a citation");
-assert.ok(!sandbox.__formatAnswer(noPage,"de").includes("S. 0"));
+assert.equal(noPage.length,0,"missing usable source page must not become a verified claim");
 console.log("PASS: source-bound standards page citation, no fabricated page or private source path");

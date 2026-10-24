@@ -47,6 +47,8 @@ jobs:
 
       - name: Test authenticated chat gate
         run: npm run test:request-auth
+      - name: Offline Clerk authorization contract
+        run: node --experimental-strip-types scripts/test-request-auth-contract.mjs
 
       - name: Check signed-in customer citation QA harness syntax
         run: node --check scripts/qa-authenticated-ask-citation.mjs
@@ -77,6 +79,7 @@ jobs:
           node --experimental-strip-types scripts/test-generic-clause-parser.ts
           node --experimental-strip-types scripts/test-clause-casing.ts
           node --experimental-strip-types scripts/test-standards-clause-boundary.ts
+          node --experimental-strip-types scripts/test-standards-source-page.ts
 
       - name: Test standards topic retrieval despite broad exact hits
         run: node scripts/test-cortex-standards-topic-retrieval.mjs

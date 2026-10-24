@@ -63,6 +63,15 @@ function sourceIdentity(metadata: any, text: string) {
     .join(" ");
 }
 
+function sourcePage(value: unknown): number | null {
+  // Preserve numeric metadata, including legacy decimal strings, without
+  // coercing booleans/arrays into apparently valid source pages.
+  if (typeof value !== "number" &&
+      !(typeof value === "string" && /^\d+$/.test(value.trim()))) return null;
+  const page = Number(value);
+  return Number.isSafeInteger(page) && page > 0 ? page : null;
+}
+
 function evidenceFromMatch(match: any): Evidence | null {
   const metadata = match?.metadata || {};
   if (metadata?.contentType === "document-map") return null;
@@ -79,7 +88,7 @@ function evidenceFromMatch(match: any): Evidence | null {
     sourceName: [metadata?.fileName, metadata?.sourcePath]
       .filter(Boolean)
       .join(" "),
-    page: Number.isFinite(Number(metadata?.page)) ? Number(metadata.page) : null,
+    page: sourcePage(metadata?.page),
     sourceFingerprint:
       typeof metadata?.sourceFingerprint === "string"
         ? metadata.sourceFingerprint
@@ -107,7 +116,7 @@ function evidenceFromArchiveRow(row: any): Evidence | null {
     score: 2,
     standardCodes,
     sourceName,
-    page: Number.isFinite(Number(row?.page)) ? Number(row.page) : null,
+    page: sourcePage(row?.page),
     sourceFingerprint:
       typeof row?.source_fingerprint === "string"
         ? row.source_fingerprint
@@ -277,6 +286,10 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
         ? claim.evidenceQuote.replace(/\s+/g, " ").trim()
         : "";
     if (!selected || !standard || !clause || !text || quote.length < 12)
+      continue;
+    // A verified normative citation must have a usable source page.
+    // Model output must never fill missing or invalid source metadata.
+    if (selected.page === null || !Number.isSafeInteger(selected.page) || selected.page <= 0)
       continue;
     const source = selected.text.replace(/\s+/g, " ").trim();
     // A clause prefix is not evidence for that clause (e.g. 4.2 vs 4.20).
