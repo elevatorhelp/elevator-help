@@ -6,6 +6,9 @@ on:
       - feat/issue-60-adaptive-controller
     paths:
       - 'app/lib/ingestion-*.ts'
+      - 'app/api/drive-ingest-batch/route.ts'
+      - 'app/api/document-map-ingest/route.ts'
+      - 'scripts/drive-ingest.mjs'
       - 'scripts/test-ingestion-*.ts'
       - '.github/workflows/pr61-recovery-check.yml'
   workflow_dispatch:
