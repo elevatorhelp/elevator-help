@@ -19,4 +19,17 @@ assert.deepEqual((await filterPublishedMatches(oldSchema,matches)).map(x=>x.id),
  "Pre-staging schema compatibility may preserve legacy only");
 assert.deepEqual((await filterPublishedMatches(oldSchema,matches,true)).map(x=>x.id),[],
  "strict staged-only gate never admits legacy rows");
+// A Cloudflare D1 Time Travel rollback changes the active D1 generation,
+// not automatically the Vectorize records. Superseded staged vector matches
+// must become invisible immediately even if old/new vectors coexist.
+const rollbackVectors=[
+ {id:"legacy",metadata:{sourceFileId:"doc"}},
+ {id:"g2:older",metadata:{sourceFileId:"doc"}},
+ {id:"g3:newer",metadata:{sourceFileId:"doc"}},
+];
+generation=3;
+assert.deepEqual((await filterPublishedMatches(db,rollbackVectors)).map(x=>x.id),["g3:newer"]);
+generation=2;
+assert.deepEqual((await filterPublishedMatches(db,rollbackVectors)).map(x=>x.id),["g2:older"],
+ "Restored D1 generation must fence vectors from post-bookmark superseded generation");
 console.log("Staged Vectorize visibility respects published D1 generation and fails closed");
