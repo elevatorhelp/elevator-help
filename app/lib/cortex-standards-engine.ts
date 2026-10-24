@@ -185,7 +185,7 @@ async function searchEvidence(
   );
   const queries = buildQueries(question, route);
   // An exact standard identifier identifies the DOCUMENT, not necessarily
-  // the relevant topic or clause. A broad document-level match (e.g. EN 81-20)
+  // the relevant topic or clause. A broad document-level identifier match
   // must not suppress semantic retrieval of the actual safety requirement.
   // Continue the semantic search and let source-bound claim verification
   // determine whether any candidate answers the user's question.
@@ -279,7 +279,8 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
     if (!selected || !standard || !clause || !text || quote.length < 12)
       continue;
     const source = selected.text.replace(/\s+/g, " ").trim();
-    if (!source.includes(quote) || !source.includes(clause)) continue;
+    // A clause prefix is not evidence for that clause (e.g. 4.2 vs 4.20).
+    if (!source.includes(quote) || !extractClauseNumbers(source).includes(clause)) continue;
     if (
       !selected.standardCodes.some((found) =>
         standardCodesMatch(found, standard),

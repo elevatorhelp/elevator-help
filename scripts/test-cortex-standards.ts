@@ -203,7 +203,8 @@ const exactArchive = await scenario({
 });
 assert.equal(exactArchive.result.sufficient, true);
 assert.deepEqual(exactArchive.result.checkedStandards, ["QRS SPEC 900-7"]);
-assert.equal(exactArchive.budget.used, 2);
+// Exact document identity is not topical evidence: retain the semantic retrieval call.
+assert.equal(exactArchive.budget.used, 3);
 
 const iso = await scenario({
   question: "What does ISO 25745-2:2015 clause 7.1 say?",

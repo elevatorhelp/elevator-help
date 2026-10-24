@@ -76,6 +76,7 @@ jobs:
         run: |
           node --experimental-strip-types scripts/test-generic-clause-parser.ts
           node --experimental-strip-types scripts/test-clause-casing.ts
+          node --experimental-strip-types scripts/test-standards-clause-boundary.ts
 
       - name: Test standards topic retrieval despite broad exact hits
         run: node scripts/test-cortex-standards-topic-retrieval.mjs

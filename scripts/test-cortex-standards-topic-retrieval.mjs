@@ -28,7 +28,8 @@ const sandbox={
   return matches.filter(match=>match.id!==superseded.id);
  },
  extractStandardCodes:()=>["EN 81-20"],
- extractClauseNumbers:()=>[],
+ // The VM harness stubs parsing; preserve complete clause tokens for verifier QA.
+ extractClauseNumbers:(text)=>text.match(/\b\d+(?:\.\d+)+\b/g)||[],
  standardReferenceIdentifiers:()=>[{key:"EN8120"}],
  searchExactArchiveEvidence:async()=>[exact],
  evidenceFromArchiveRow:x=>x,
