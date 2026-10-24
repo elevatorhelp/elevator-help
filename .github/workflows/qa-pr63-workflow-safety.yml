@@ -1,5 +1,8 @@
 name: PR63 QA workflow safety lint
 on:
+  push:
+    branches:
+      - fix/pr63-actual-app-head-checkout-20261024
   pull_request:
     branches:
       - integration/pr61-reconciled-20261024
