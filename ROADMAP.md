@@ -332,3 +332,10 @@ Every status report starts with **current milestone / last verified completed it
 **Required next implementation, separate gated PR:** assess GitHub-native coding-agent options against existing repository permissions, secret isolation and budget; if supported, build one least-privilege, branch-only agent with bounded work/time/cost, auditable diff and logs, human-controlled merge, and fail-closed checks. Start with a disposable PR-only pilot; no production writes, arbitrary shell execution with privileged secrets, uncontrolled loops, automatic main merges, or new paid services without owner approval. If secure autonomous coding is unavailable, continue with interactive GitHub connector edits and CI and explicitly report the limitation.
 
 **Priority remains PR #61:** real multi-page multi-batch checkpoint/recovery E2E, safe main synchronization/security reconciliation, exact-final-head CI and QA evidence; keep PR Draft and Production unchanged pending release gates. Record outcome and URLs here, not only in chat.
+
+## PR #61 verified CI checkpoint — 2026-10-24
+
+- **PASS** on exact commit `8f82959f0e74523bd02e5ad073b7e36df8c8e0d3`: [PR61 Recovery Contract Gate run 40045215724](https://github.com/elevatorhelp/elevator-help/actions/runs/40045215724). All three offline Node/SQLite contract tests passed: multi-batch lease renewal/takeover, full three-layer immutable publication, and complete-document crash recovery.
+- **Scope caveat:** offline protocol verification, **not** a real multi-page Google Drive end-to-end pilot nor production recovery acceptance.
+- Latest comparison with `main`: diverged, ahead 133 / behind 44 as of review; PR mergeability `false`. Need controlled main reconciliation, conflict resolution and full exact-final-head CI. Do not force push or merge before security review.
+- PR #61 Draft; Production untouched. Autonomous code-repair worker not yet implemented; the new workflow runs fixed regression tests only.
