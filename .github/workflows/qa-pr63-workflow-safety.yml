@@ -1,0 +1,38 @@
+name: PR63 QA workflow safety lint
+on:
+  pull_request:
+    branches:
+      - integration/pr61-reconciled-20261024
+    paths:
+      - .github/workflows/qa-pr61-actual-app.yml
+      - .github/workflows/qa-pr63-workflow-safety.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  workflow-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Verify actual-app test pins selected commit and isolated resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const wf=fs.readFileSync('.github/workflows/qa-pr61-actual-app.yml','utf8');
+          const config=JSON.parse(fs.readFileSync('wrangler.qa-app.json','utf8'));
+          const script=fs.readFileSync('scripts/qa-pr61-real-app-e2e.mjs','utf8');
+          assert.match(wf,/ref: \$\{\{ github\.sha \}\}/,'workflow must checkout dispatched commit');
+          assert.doesNotMatch(wf,/ref: b7b9fb3e662b08c9cffb54228318b6e667b83d51/);
+          assert.equal(config.name,'elevator-help-pr61-app-qa');
+          assert.deepEqual(config.d1_databases.map(x=>x.database_name),['elevator-help-lease-test-01']);
+          assert.ok(config.vectorize.every(x=>x.index_name==='elevator-help-staging-test'));
+          assert.match(script,/elevator-help-lease-test-01/);
+          assert.match(script,/elevator-help-staging-test/);
+          console.log('PASS: static checkout and QA binding safety; NO remote or paid API calls');
+          NODE
