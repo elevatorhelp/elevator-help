@@ -39,6 +39,7 @@ jobs:
           assert.match(wf,/ref: \$\{\{ github\.sha \}\}/,'workflow must checkout dispatched commit');
           assert.doesNotMatch(wf,/ref: b7b9fb3e662b08c9cffb54228318b6e667b83d51/);
           assert.equal(config.name,'elevator-help-pr61-app-qa');
+          assert.equal(config.vars.INGESTION_COMPLETE_PUBLICATION,'false','RAW-only E2E must not inherit full-publication mode');
           assert.equal(config.d1_databases[0].database_id,'02716877-15e3-4478-9e24-f1ba6e5dfb00');
           assert.match(wf,/qa-pr61-ensure-lease-schema\.mjs/);
           assert.deepEqual(config.d1_databases.map(x=>x.database_name),['elevator-help-lease-test-01']);
