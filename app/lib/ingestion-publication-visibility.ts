@@ -15,7 +15,10 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
 ):Promise<T[]>{
  const visible:T[]=[];
  for(const match of matches){
-  const stage=parseStagedId(String(match.id||""));
+  const id=String(match.id||"");
+  const stage=parseStagedId(id);
+  // Reject malformed staged IDs before any legacy compatibility fallback.
+  if(!stage && /^g[0-9]+:/.test(id))continue;
   const documentId=match.metadata?.sourceFileId;
   if(!stage && strict)continue;
   // Only a deliberately absent D1 binding permits legacy-only retrieval.
