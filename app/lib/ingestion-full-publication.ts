@@ -82,7 +82,7 @@ export async function publishFullGeneration(
  const all=[rawIds,evidenceIds,mapIds];
  if(!sourceFingerprint||all.some(xs=>!Array.isArray(xs)||
     xs.length>100000||xs.some(x=>typeof x!=="string"||!x)||
-    new Set(xs).size!==xs.length)||rawIds.length===0||evidenceIds.length===0)
+    new Set(xs).size!==xs.length)||rawIds.length===0||evidenceIds.length===0||mapIds.length===0)
    throw Error("INVALID_FULL_PUBLICATION_MANIFEST");
  const now=Date.now();
  const tables=["ingestion_staged_receipts","ingestion_staged_evidence",
