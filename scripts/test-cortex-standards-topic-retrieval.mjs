@@ -56,7 +56,8 @@ const citationJs=ts.transpileModule(src.slice(citationStart,citationEnd)+
  "\nglobalThis.__verifyClaims=verifyClaims;globalThis.__formatAnswer=formatAnswer;",{
  compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}
 }).outputText;
-vm.runInNewContext(citationJs,{...sandbox,standardCodesMatch:(a,b)=>a===b},{timeout:1000});
+sandbox.standardCodesMatch=(a,b)=>a===b;
+vm.runInNewContext(citationJs,sandbox,{timeout:1000});
 const source={...focused,page:91,sourceName:"PRIVATE_ARCHIVE_PATH_DO_NOT_PRINT"};
 const modelClaim={standard:"EN 81-20",clause:"5.4.7",
  text:"Balustrade on car roof: 0.70 m.",evidenceIndex:1,
