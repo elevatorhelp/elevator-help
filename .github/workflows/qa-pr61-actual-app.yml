@@ -6,10 +6,6 @@ on:
         description: "Explicitly permit one bounded real Gemini QA run (default: no)"
         type: boolean
         default: false
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/qa-pr61-actual-app.yml
 permissions:
   contents: read
 concurrency:
