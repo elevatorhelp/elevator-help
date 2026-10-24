@@ -846,37 +846,74 @@ async function processText(
  */
 async function runIsolatedFullDocument(file,accessToken,ingestToken,state,scope){
  const revision=fingerprint(file);
- const claim=await callJsonEndpoint(INGEST_ENDPOINT,{
-  action:"lease_claim",documentId:file.id,
-  owner:"qa-"+process.pid+"-"+Date.now().toString(36),durationMs:180000
- },ingestToken,"QA lease acquisition");
- if(!claim?.lease)throw Error("STAGED_LEASE_CLAIM_FAILED");
- activeStagedLease=claim.lease;
- const evidenceIds=await processEvidenceIndex(file,accessToken,ingestToken);
- if(!evidenceIds.length)throw Error("STAGED_EMPTY_EXACT_EVIDENCE");
- const isText=file.mimeType==="text/plain"||
-   TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
- // QA generation changes on takeover. Never reuse chunks from an old
- // generation: replay under the newly claimed lease is the safe default.
- // Persist the accepted batch receipts BEFORE any injected interruption.
  const qaFile=scope.files[file.id]||{};
- const qaProgress={generation:activeStagedLease.generation,revision,
-  rawIds:[],nextRawChunk:0};
- async function saveQaRawReceipt({ids,nextChunk}){
-  qaProgress.rawIds=ids;
-  qaProgress.nextRawChunk=nextChunk;
+ const checkpoint=qaFile.stagedQaProgress;
+ // A continuation is valid ONLY while the server confirms the same lease
+ // owner and generation. Expired/taken-over leases cannot reuse staged IDs.
+ const checkpointValid=checkpoint?.revision===revision &&
+   checkpoint.lease?.jobKey===file.id &&
+   checkpoint.generation===checkpoint.lease.generation &&
+   Number.isInteger(checkpoint.nextRawChunk) &&
+   checkpoint.nextRawChunk>=0 &&
+   Array.isArray(checkpoint.rawIds) &&
+   checkpoint.rawIds.length===checkpoint.nextRawChunk &&
+   Array.isArray(checkpoint.evidenceIds);
+ let resumed=false;
+ if(checkpointValid){
+  try{
+   const renewed=await callJsonEndpoint(INGEST_ENDPOINT,{
+    action:"lease_renew",lease:checkpoint.lease,durationMs:180000
+   },ingestToken,"QA checkpoint lease renewal");
+   if(renewed?.renewed){
+    activeStagedLease=checkpoint.lease;
+    resumed=true;
+    console.log("QA resumed verified same-generation durable checkpoint");
+   }
+  }catch(error){
+   console.log("QA saved lease unavailable; replay requires fresh generation");
+  }
+ }
+ if(!resumed){
+  const claim=await callJsonEndpoint(INGEST_ENDPOINT,{
+   action:"lease_claim",documentId:file.id,
+   owner:"qa-"+process.pid+"-"+Date.now().toString(36),durationMs:180000
+  },ingestToken,"QA lease acquisition");
+  if(!claim?.lease)throw Error("STAGED_LEASE_CLAIM_FAILED");
+  activeStagedLease=claim.lease;
+ }
+ const qaProgress=resumed?{...checkpoint,rawIds:[...checkpoint.rawIds],
+   evidenceIds:[...checkpoint.evidenceIds]}:
+  {generation:activeStagedLease.generation,revision,lease:activeStagedLease,
+   evidenceIds:[],rawIds:[],nextRawChunk:0};
+ async function saveQaCheckpoint(){
   scope.files[file.id]={...qaFile,stagedQaProgress:{...qaProgress}};
   state.scopes[DRIVE_FOLDER_ID]=scope;
   await saveState(state);
+ }
+ let evidenceIds=qaProgress.evidenceIds;
+ if(!evidenceIds.length){
+  evidenceIds=await processEvidenceIndex(file,accessToken,ingestToken);
+  if(!evidenceIds.length)throw Error("STAGED_EMPTY_EXACT_EVIDENCE");
+  qaProgress.evidenceIds=[...evidenceIds];
+  await saveQaCheckpoint();
+ }
+ const isText=file.mimeType==="text/plain"||
+   TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
+ async function saveQaRawReceipt({ids,nextChunk}){
+  qaProgress.rawIds=ids;
+  qaProgress.nextRawChunk=nextChunk;
+  await saveQaCheckpoint();
   if(process.env.QA_INTERRUPT_AFTER_FIRST_RAW_BATCH==="true" &&
      nextChunk>=BATCH_SIZE){
     throw Error("QA_INJECTED_INTERRUPTION_AFTER_DURABLE_RAW_RECEIPT");
   }
  }
+ const rawOptions={rawStartChunk:qaProgress.nextRawChunk,
+  initialRawIds:qaProgress.rawIds,onRawProgress:saveQaRawReceipt};
  const raw=isText?
-   await processText(file,accessToken,ingestToken,{onRawProgress:saveQaRawReceipt}):
+   await processText(file,accessToken,ingestToken,rawOptions):
    await processPdf(file,accessToken,ingestToken,{
-    ingestRaw:true,ingestMap:false,onRawProgress:saveQaRawReceipt
+    ingestRaw:true,ingestMap:false,...rawOptions
    });
  if(!raw.rawComplete||!Array.isArray(raw.ids)||!raw.ids.length)
    throw Error("STAGED_RAW_INCOMPLETE_CHECKPOINT_REQUIRED");
