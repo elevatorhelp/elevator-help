@@ -12,6 +12,19 @@ const db={prepare:(sql:string)=>({bind:(...args:unknown[])=>({
  run:async()=>({meta:{changes:sqlite.prepare(sql).run(...(args as [])).changes}})
 })})};
 const a={jobKey:"doc-1",owner:"A",generation:1};
+// A valid lease for one document must not write receipts under another document.
+await assert.rejects(
+  recordStagedBatch(db,a,"other-doc",["foreign-chunk"],"version-1"),
+  /LEASE_DOCUMENT_MISMATCH/,
+);
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM ingestion_staged_receipts").get()?.n,0);
+for(const badId of ["", "x".repeat(513)]){
+  await assert.rejects(
+    recordStagedBatch(db,a,"doc-1",[badId],"version-1"),
+    /INVALID_STAGED_BATCH/,
+  );
+}
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM ingestion_staged_receipts").get()?.n,0);
 assert.equal(stagedVectorId("chunk",1),"g1:chunk");
 await recordStagedBatch(db,a,"doc-1",["chunk"],"version-1");
 assert.equal(await publishExactStagedManifest(db,a,"doc-1","version-1",["chunk"]),true);
