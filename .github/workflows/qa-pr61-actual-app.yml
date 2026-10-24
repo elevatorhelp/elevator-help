@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
-      - name: Checkout pinned PR61 application
+      - name: Checkout exact dispatched branch commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: b7b9fb3e662b08c9cffb54228318b6e667b83d51
+          ref: ${{ github.sha }}
       - name: Node 22
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
