@@ -1,8 +1,13 @@
 name: PR61 actual application isolated E2E
 on:
   workflow_dispatch:
+    inputs:
+      allow_paid_gemini:
+        description: "Explicitly permit one bounded real Gemini QA run (default: no)"
+        type: boolean
+        default: false
   push:
-    branches: [main]
+    branches: [main, fix/pr63-actual-app-head-checkout-20261024]
     paths:
       - .github/workflows/qa-pr61-actual-app.yml
 permissions:
@@ -56,12 +61,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ALLOW_PAID_GEMINI: ${{ inputs.allow_paid_gemini }}
         run: |
           set -euo pipefail
           QA_INGESTION_TOKEN=$(openssl rand -hex 24)
           export QA_INGESTION_TOKEN
           VARS=(--var "INGESTION_TOKEN:$QA_INGESTION_TOKEN")
-          if [ -n "$GEMINI_API_KEY" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "${ALLOW_PAID_GEMINI:-false}" = "true" ] && [ -n "$GEMINI_API_KEY" ]; then
             export QA_NEGATIVE_ONLY=false
             VARS+=(--var "GEMINI_API_KEY:$GEMINI_API_KEY")
           else
