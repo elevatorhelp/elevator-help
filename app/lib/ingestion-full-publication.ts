@@ -41,8 +41,10 @@ export async function stageExactEvidence(
 export async function recordStagedMap(
  db:any,lease:IngestionLease,documentId:string,ids:string[],sourceFingerprint:string
 ):Promise<void>{
- if(lease.jobKey!==documentId||!sourceFingerprint||ids.length<1||
-   ids.length>100||new Set(ids).size!==ids.length)
+ if(lease.jobKey!==documentId||!sourceFingerprint||!Array.isArray(ids)||
+   ids.length<1||ids.length>100||
+   ids.some(id=>typeof id!=="string"||!id.trim()||id.length>512)||
+   new Set(ids).size!==ids.length)
    throw Error("INVALID_STAGED_MAP");
  await assertActiveIngestionLease(db,lease);
  for(const id of ids){
