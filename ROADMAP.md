@@ -419,3 +419,14 @@ Every status report starts with **current milestone / last verified completed it
 
 **Execution rules:** one writer for engineering; supervisor strictly read-only. Preserve old checks' evidence URLs; avoid introducing new paid services or production access. Track results, blockers, PR links and exact SHAs here. If cleanup threatens real delivery, complete the minimal Live Archive fix first.
 
+
+
+### PR61 inventory evidence — 2026-10-24
+
+- Snapshot SHA before plan update: `ad671530e276ca5c218181849d3f7865782d87bc`; GitHub comparison at snapshot: **142 ahead / 44 behind** main (includes repeated documentation/QA commits, not 142 separate features). Latest main captured in PC mirror: `3a20daf8fdac841161fd38c2ca5ef26a1e9b7e2f`. Git diff: **46 files, 2,271 additions / 28 deletions**. Actual full log inspected with `git log main..origin/feat/issue-60-adaptive-controller`; archive mirror preserves its history.
+- **Product data plane:** `scripts/drive-ingest.mjs`, both ingest API routes, `app/lib/archive-evidence-index.ts`, `app/lib/internal-retrieval.ts` (5 paths). These are coupled and should not be blindly cherry-picked apart.
+- **Lease/revision/publication primitives:** five `app/lib/ingestion-*.ts` modules and three `docs/ingestion-*.sql` schemas (8 paths), plus `workers/qa-staged-publication.ts` as QA-only adapter.
+- **QA fixtures and infrastructure:** `app/api/qa-evidence-lookup/route.ts`, three `wrangler.qa-*.json`, three standalone QA-oriented workflows, QA worker entry point, QA bootstrap, QA scripts and supporting regressions. These must remain isolated from production and be split from the actual customer runtime only after call sites/bindings are checked.
+- **Scheduler and tests:** adaptive controller module + its contract test, Build Check changes, 11 ingestion/generation/evidence regression scripts and D1 lease script. Compare invariant coverage before deduplicating. Old successful runs retained as immutable evidence.
+- **Docs/security:** ROADMAP and QA report, plus security baseline guard. First compare with security guard already present in main to prevent redundant copies.
+- **Safety note:** the new PC cleanup branch from latest main is separate; no destructive source edits or deletion performed. This inventory is complete at **file-group level**, but dependency-level isolation, multi-page runtime acceptance and dedicated smaller PR creation remain open. Following owner's priority, functional completion takes precedence over cosmetic split.
