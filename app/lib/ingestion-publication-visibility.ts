@@ -18,8 +18,11 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
   const stage=parseStagedId(String(match.id||""));
   const documentId=match.metadata?.sourceFileId;
   if(!stage && strict)continue;
-  // Without a trustworthy document identity and accessible publication DB,
-  // neither staged nor legacy vectors may claim to be current evidence.
+  // Preserve the pre-staging legacy-only route when no D1 backend was ever
+  // configured; a FAILED configured D1 query must still fail closed below.
+  if(!stage && (typeof documentId!=="string"||!documentId||!db?.prepare)){
+    if(!strict)visible.push(match);continue;
+  }
   if(typeof documentId!=="string"||!documentId||!db?.prepare)continue;
   try{
    const publication=await db.prepare("SELECT active_generation FROM ingestion_document_publications WHERE document_id=?").bind(documentId).first() as Publication|null;
