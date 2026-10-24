@@ -7,7 +7,8 @@ type ChatAuthorization =
 export async function authorizeChatRequest(
   request: Request,
 ): Promise<ChatAuthorization> {
-  if (process.env.AUTH_REQUIRED !== "true") {
+  // Only an explicit opt-out is allowed; a missing or misspelled flag fails closed.
+  if (process.env.AUTH_REQUIRED === "false") {
     return { ok: true, userId: null };
   }
 
