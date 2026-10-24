@@ -77,6 +77,9 @@ jobs:
           node --experimental-strip-types scripts/test-generic-clause-parser.ts
           node --experimental-strip-types scripts/test-clause-casing.ts
 
+      - name: Test standards topic retrieval despite broad exact hits
+        run: node scripts/test-cortex-standards-topic-retrieval.mjs
+
       - name: Test compact and legacy exact-evidence index
         run: node --experimental-sqlite --experimental-strip-types scripts/test-compact-evidence.mjs
 
