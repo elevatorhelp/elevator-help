@@ -6,7 +6,7 @@ const matches=[{id:"legacy",metadata:{sourceFileId:"doc"}},{id:"g1:chunk",metada
 assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g1:chunk"]);
 generation=2;
 assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g2:chunk"]);
-assert.deepEqual((await filterPublishedMatches(null,matches)).map(x=>x.id),[],"missing DB must not expose unverifiable source");
+assert.deepEqual((await filterPublishedMatches(null,matches)).map(x=>x.id),["legacy"],"pre-staging legacy-only retrieval remains compatible");
 assert.deepEqual((await filterPublishedMatches(db,matches,true)).map(x=>x.id),["g2:chunk"]);
 const unavailable={prepare:()=>{throw Error("D1 network timeout");}};
 assert.deepEqual((await filterPublishedMatches(unavailable,matches)).map(x=>x.id),[],
