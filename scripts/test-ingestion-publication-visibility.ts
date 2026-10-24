@@ -6,6 +6,17 @@ const matches=[{id:"legacy",metadata:{sourceFileId:"doc"}},{id:"g1:chunk",metada
 assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g1:chunk"]);
 generation=2;
 assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g2:chunk"]);
-assert.deepEqual((await filterPublishedMatches(null,matches)).map(x=>x.id),["legacy"]);
+assert.deepEqual((await filterPublishedMatches(null,matches)).map(x=>x.id),[],"missing DB must not expose unverifiable source");
 assert.deepEqual((await filterPublishedMatches(db,matches,true)).map(x=>x.id),["g2:chunk"]);
+const unavailable={prepare:()=>{throw Error("D1 network timeout");}};
+assert.deepEqual((await filterPublishedMatches(unavailable,matches)).map(x=>x.id),[],
+ "D1 outage must never resurrect superseded legacy vectors");
+const failedQuery={prepare:()=>({bind:()=>({first:async()=>{throw Error("D1 network timeout")}})})};
+assert.deepEqual((await filterPublishedMatches(failedQuery,matches)).map(x=>x.id),[],
+ "D1 fetch outage must fail closed for all generations");
+const oldSchema={prepare:()=>({bind:()=>({first:async()=>{throw Error("no such table: ingestion_document_publications")}})})};
+assert.deepEqual((await filterPublishedMatches(oldSchema,matches)).map(x=>x.id),["legacy"],
+ "Pre-staging schema compatibility may preserve legacy only");
+assert.deepEqual((await filterPublishedMatches(oldSchema,matches,true)).map(x=>x.id),[],
+ "strict staged-only gate never admits legacy rows");
 console.log("Staged Vectorize visibility respects published D1 generation and fails closed");
