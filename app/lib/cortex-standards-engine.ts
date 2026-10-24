@@ -298,7 +298,8 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
       text,
       evidenceId: selected.id,
       evidenceQuote: quote,
-      page: Number.isSafeInteger(selected.page) && selected.page > 0
+      page: typeof selected.page === "number" &&
+        Number.isSafeInteger(selected.page) && selected.page > 0
         ? selected.page
         : null,
     });
