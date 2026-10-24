@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 import {extractReferenceIdentifiers} from "../app/lib/reference-identifiers.ts";
-const fileId="1VRn4-2Pm_Pl_W5gU0OYmRl_Oh2xljMYf";
+const fileId=process.env.TARGET_FILE_ID || "1VRn4-2Pm_Pl_W5gU0OYmRl_Oh2xljMYf";
+if(!/^[A-Za-z0-9_-]{10,128}$/.test(fileId))throw Error("QA_INVALID_TARGET_FILE_ID");
 const sql="SELECT e.document_id,e.generation,e.chunk_id,e.identifiers_json,e.page "+
  "FROM ingestion_staged_evidence e JOIN ingestion_document_publications p "+
  "ON p.document_id=e.document_id AND p.active_generation=e.generation "+
