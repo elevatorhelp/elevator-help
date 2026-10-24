@@ -355,3 +355,12 @@ Every status report starts with **current milestone / last verified completed it
 5. Then reconcile PR61 with latest main, preserving security floor, and execute full exact-final-head CI. Independently verify migration/restore, rollback and bounded multiworker behavior before Production release.
 
 **State:** NOT YET RUN for this enhanced real multi-page interruption pilot; offline Recovery Contract Gate PASS https://github.com/elevatorhelp/elevator-help/actions/runs/40045215724 is supporting evidence only. Keep PR #61 Draft; do not merge/deploy Production or broaden archive access without authorization.
+
+
+## Monitoring/worker ownership checkpoint — 2026-10-24
+
+- **Current watchers (read-only):** PR61 Final Gate Watch hourly (real multi-page QA and exact-head CI only); Live Archive Backfill Watch every six hours (existing production serial ingestion health only). Their prompts were refreshed to prevent duplicate/stale reports. Neither can write code or trigger Actions.
+- **Old coding and QA tasks:** old Development Worker and obsolete #53/#54 QA Supervisor remain disabled. No conflicting autonomous code-writer has been enabled. A GitHub Actions Recovery Contract Gate exists and passed [run 40045215724](https://github.com/elevatorhelp/elevator-help/actions/runs/40045215724), but it runs regression code, not an AI coding agent.
+- **Live PR #61 check:** head `b110082b8416497c5923f19fafaaa27551835590`, Draft, mergeable=false; diverged from main (ahead 135, behind 44). These counts are historical comparison markers, not a count of merge conflicts.
+- **Only open near-term acceptance:** bounded multi-page Drive single-document source (at least two observed extraction/staging batches), forced interruption and durable restart, complete RAW/Evidence/Map publication, real response with page citation; then main reconciliation and exact-final-head CI.
+- Do not claim this gate finished based on another single-page workflow or offline test. No unattended code agent is currently provisioned; automated monitoring is not autonomous implementation. Production stays untouched.
