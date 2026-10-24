@@ -39,6 +39,9 @@ jobs:
       - name: Test message editing
         run: npm run test:conversation-edit
 
+      - name: Rehearse offline staged publication snapshot and restore
+        run: node --experimental-sqlite scripts/test-ingestion-restore-roundtrip.mjs
+
       - name: Guard isolated QA endpoint security boundary
         run: node scripts/test-qa-ingestion-edge-guard.mjs
 
