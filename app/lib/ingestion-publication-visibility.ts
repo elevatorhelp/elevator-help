@@ -31,7 +31,7 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
    // Transient D1 errors must NOT resurrect legacy IDs superseded by an
    // active generation: fail closed unless the publication table is absent.
    if(!stage&&!strict &&
-      /no such table:\\s*(?:main\\.)?ingestion_document_publications\\b/i.test(String(error)))
+      /no such table:\s*(?:main\.)?ingestion_document_publications\b/i.test(String(error)))
      visible.push(match);
   }
  }
