@@ -364,3 +364,9 @@ Every status report starts with **current milestone / last verified completed it
 - **Live PR #61 check:** head `b110082b8416497c5923f19fafaaa27551835590`, Draft, mergeable=false; diverged from main (ahead 135, behind 44). These counts are historical comparison markers, not a count of merge conflicts.
 - **Only open near-term acceptance:** bounded multi-page Drive single-document source (at least two observed extraction/staging batches), forced interruption and durable restart, complete RAW/Evidence/Map publication, real response with page citation; then main reconciliation and exact-final-head CI.
 - Do not claim this gate finished based on another single-page workflow or offline test. No unattended code agent is currently provisioned; automated monitoring is not autonomous implementation. Production stays untouched.
+
+## Engineering / QA responsibility split — 2026-10-24
+
+- **Engineering owner (interactive ChatGPT + authorized GitHub connector):** inspect code, implement corrections and commit to Draft PR #61 only, reconcile with main carefully. No claim of unattended coding after chat ends.
+- **QA supervisor (hourly read-only automation):** evaluate genuine CI and isolated real Drive multi-page/batch recovery E2E, exact SHA, security and evidence; report only failures needing attention or verified closure. GitHub Actions runs tests; supervisor does not push fixes or invoke paid workloads.
+- **Release gate:** authentic multi-batch resume/readback, merge current main security changes, exact-final-head CI, bounded migration/rollback and review before any Production enablement or merge. PR #61 stays Draft. Do not mistake successful offline contract tests for production readiness.
