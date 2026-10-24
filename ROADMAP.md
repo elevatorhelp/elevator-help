@@ -339,3 +339,19 @@ Every status report starts with **current milestone / last verified completed it
 - **Scope caveat:** offline protocol verification, **not** a real multi-page Google Drive end-to-end pilot nor production recovery acceptance.
 - Latest comparison with `main`: diverged, ahead 133 / behind 44 as of review; PR mergeability `false`. Need controlled main reconciliation, conflict resolution and full exact-final-head CI. Do not force push or merge before security review.
 - PR #61 Draft; Production untouched. Autonomous code-repair worker not yet implemented; the new workflow runs fixed regression tests only.
+
+
+## Acceptance pivot: real system operation over repeated offline testing — 2026-10-24
+
+**Owner decision:** stop expanding synthetic/offline QA unless a real defect justifies a focused regression. The next blocking acceptance is one bounded, real, multi-page Google Drive -> scheduled-script-style Worker ingest -> immutable RAW/Evidence/Map -> published-generation readback -> customer-facing question/answer with authentic page citation, including interruption/resume between multiple persisted batches.
+
+**Existing viable harness:** `.github/workflows/qa-pr61-cloudflare-secret.yml` on `main` already deploys the real isolated OpenNext Worker, uses actual Gemini secret held in Cloudflare, drives `scripts/drive-ingest.mjs` for a single Drive document, verifies persisted three-layer checkpoint and exact lookup, and invokes crash/lease fencing. The existing target is one page; repeating that run does NOT close the multi-page gap. Its checkout is pinned to an older PR61 source SHA, so never present it as final-head validation.
+
+**Next real-operation gate:**
+1. Choose a permitted, non-confidential real **multi-page** Drive PDF with enough extracted content to force at least two 8-chunk RAW batches (or an equivalently demonstrable multi-batch staged phase); record its page count and extraction output. No assumptions based solely on pages.
+2. Run a single controlled QA pilot pinned to the actual PR61 SHA, isolated QA D1/Vectorize/Worker and Cloudflare Gemini secret. Require isolated ingest + map endpoints, bounded Gemini requests/cost and verified no production bindings.
+3. Capture persisted per-batch receipts/checkpoint; interrupt after first committed batch; restart with the same file revision and new valid lease; verify no duplicate active generation or partially visible evidence. Require full final RAW+Evidence+Map atomic publication and delayed Vectorize readiness probe.
+4. Ask an actual content question through an authenticated customer-facing answer route and verify grounded answer + correct source and page; QA-only exact lookup is necessary but not sufficient for this acceptance.
+5. Then reconcile PR61 with latest main, preserving security floor, and execute full exact-final-head CI. Independently verify migration/restore, rollback and bounded multiworker behavior before Production release.
+
+**State:** NOT YET RUN for this enhanced real multi-page interruption pilot; offline Recovery Contract Gate PASS https://github.com/elevatorhelp/elevator-help/actions/runs/40045215724 is supporting evidence only. Keep PR #61 Draft; do not merge/deploy Production or broaden archive access without authorization.
