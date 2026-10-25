@@ -1,0 +1,54 @@
+name: Beta B01 Manager Gate (no auto-approval)
+
+on:
+  workflow_run:
+    workflows: ["Beta B01 Independent QA"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: beta-b01-manager-gate
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    if: ${{ github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify QA run and hold for GPT review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          QA_RUN_ID: ${{ github.event.workflow_run.id }}
+          QA_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          QA_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          repo = os.environ["GH_REPOSITORY"]
+          run_id = os.environ["QA_RUN_ID"]
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
+              headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                       "Accept": "application/vnd.github+json"})
+          with urllib.request.urlopen(req, timeout=20) as response:
+              run = json.load(response)
+          assert str(run["id"]) == run_id
+          assert run["name"] == "Beta B01 Independent QA"
+          assert run["head_sha"] == os.environ["QA_HEAD_SHA"]
+          assert run["head_branch"] == "main"
+          assert run["conclusion"] == os.environ["QA_CONCLUSION"]
+          state = "WAITING_GPT_REVIEW" if run["conclusion"] == "success" else "BLOCKED_QA"
+          print(f"B01 manager gate: {state}; QA run {run_id}; SHA {run['head_sha']}")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as f:
+                  f.write(f"## B01 manager gate: {state}\n\n")
+                  f.write(f"QA run: {run_id}; head: {run['head_sha']}\n\n")
+                  f.write("A successful structural QA run is NOT B01 PASS. ")
+                  f.write("No task advancement, AI execution, secrets, merge, deployment or production writes.\n")
+          PY
