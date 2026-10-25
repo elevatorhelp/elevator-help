@@ -27,3 +27,12 @@ for (const name of remoteSteps.slice(4)) {
   assert.match(byName.get(name), /steps\.secret-check\.outputs\.positive == 'true'/, `missing positive-test secret gate: ${name}`);
 }
 console.log('PASS: manual-only, explicit opt-in, all remote QA steps fail closed by default');
+
+
+const restoreWorkflow = readFileSync(new URL('../.github/workflows/qa-pr61-d1-restore.yml', import.meta.url), 'utf8');
+const restoreTrigger = restoreWorkflow.split(/^permissions:/m)[0];
+assert.match(restoreTrigger, /^on:\s*\r?\n  workflow_dispatch:/m, 'remote D1 restore must be manual');
+assert.doesNotMatch(restoreTrigger, /^  (?:push|pull_request|schedule|workflow_run):/m, 'remote D1 restore must never auto-run');
+assert.match(restoreTrigger, /allow_remote_d1_qa:[\s\S]*?type: boolean[\s\S]*?required: true[\s\S]*?default: false/, 'D1 restore must require explicit false-by-default opt-in');
+assert.match(restoreWorkflow, /^  restore:\r?\n    if: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.allow_remote_d1_qa == true \}\}/m, 'entire D1 restore job must fail closed');
+console.log('PASS: disposable remote D1 restore is manual-only and gated');
