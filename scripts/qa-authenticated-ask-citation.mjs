@@ -11,6 +11,9 @@ assert.ok(hasEn8120ReleaseCitationContract(expected),'Expected citation must inc
 const origin=new URL(base);
 assert.equal(origin.protocol,'https:');
 assert.ok(!origin.username&&!origin.password&&!origin.search&&!origin.hash);
+// A real Clerk bearer must never be forwarded to an arbitrary URL from QA env.
+// This production release gate is intentionally pinned to the owner's origin.
+assert.equal(origin.origin,'https://elevator.help','Signed Clerk release QA must target the approved production origin');
 const endpoint=new URL('/api/ask',origin);
 const headers={'content-type':'application/json'};
 async function ask(authorization){
