@@ -270,6 +270,42 @@ function numberTokens(value: string) {
   );
 }
 
+
+// Fail closed on cross-clause attribution inside a multi-clause source chunk.
+// A copied quote must occur after the claimed clause marker, and before the
+// next different clause marker. This is deliberately conservative: references
+// resembling clause headings can reduce verification, never grant authority.
+function quoteInClaimedClause(source: string, original: string, clause: string, quote: string) {
+  // Prefer explicit PDF line-start clause headings, including different roots.
+  // Normalize whitespace per section so the model's copied quote can match.
+  const headings = [...original.matchAll(/(?:^|\r?\n)[ \t]*(?:§[ \t]*)?(\d+(?:\.\d+){1,6})(?=[ \t]|[):]|$)/g)];
+  if (headings.length) {
+    return headings.some((heading, index) =>
+      heading[1] === clause &&
+      original.slice(heading.index ?? 0, headings[index + 1]?.index ?? original.length)
+        .replace(/\s+/g, " ").trim().includes(quote));
+  }
+  const root = clause.split(".")[0];
+  const markers = [...source.matchAll(/(?:^|\s)(\d+(?:\.\d+){1,6})(?=\s|[):]|$)/g)]
+    .map((match) => ({
+      clause: match[1],
+      index: (match.index ?? 0) + match[0].length - match[1].length,
+    }))
+    // Do not mistake 0.70 m or 1.10 m measurements for clause headings.
+    .filter((marker) => marker.clause.split(".")[0] === root);
+  if (!markers.length) return false;
+  for (let index = source.indexOf(quote); index >= 0; index = source.indexOf(quote, index + 1)) {
+    // A quote may include its own clause heading (e.g. "5.4.7: ...").
+    const preceding = markers.filter((marker) => marker.index <= index).at(-1);
+    const governing = preceding ?? markers.find((marker) =>
+      marker.index > index && marker.index < index + quote.length);
+    const next = governing && markers.find((marker) => marker.index > governing.index);
+    if (governing?.clause === clause && (!next || next.index >= index + quote.length))
+      return true;
+  }
+  return false;
+}
+
 function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
   if (!Array.isArray(parsed?.claims)) return [] as VerifiedStandardClaim[];
   const verified: VerifiedStandardClaim[] = [];
@@ -293,7 +329,8 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
       continue;
     const source = selected.text.replace(/\s+/g, " ").trim();
     // A clause prefix is not evidence for that clause (e.g. 4.2 vs 4.20).
-    if (!source.includes(quote) || !extractClauseNumbers(source).includes(clause)) continue;
+    if (!source.includes(quote) || !extractClauseNumbers(source).includes(clause) ||
+        !quoteInClaimedClause(source, selected.text, clause, quote)) continue;
     if (
       !selected.standardCodes.some((found) =>
         standardCodesMatch(found, standard),

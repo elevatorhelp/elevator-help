@@ -47,5 +47,41 @@ for (const standard of ["ZX 410-22", "UV 123-9"]) {
   }
 }
 }
+
+
+// A multi-clause PDF chunk must not attribute another clause's quote to 7.1.
+for (const path of ["semantic", "exact"]) {
+  for (const wrongClause of [false, true]) {
+  for (const secondClause of ["7.2", "8.1"]) {
+    const standard = "ZX 410-22";
+    const quoteOne = "First clause synthetic technical requirement.";
+    const quoteTwo = "Second clause synthetic technical requirement.";
+    const excerpt = `7.1 ${quoteOne}\n${secondClause} ${quoteTwo}`;
+    const quote = wrongClause ? quoteTwo : quoteOne;
+    const result = await answerStandardsQuestion(
+      `What does ${standard} clause 7.1 say?`, { questionLanguage: "en" },
+      "unused-test-key",
+      { run: async (_model: string, input: { text: string[] }) => ({ data: input.text.map(() => [1, 0]) }) },
+      { query: async () => ({ matches: path === "exact" ? [] : [{ id: "multi-clause", score: 1, metadata: { text: excerpt, standardCode: standard, page: 17 } }] }) },
+      undefined,
+      async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ claims: [{
+        standard, clause: "7.1", text: quote, evidenceIndex: 1, evidenceQuote: quote,
+      }] }) }] } }] })),
+      undefined,
+      path === "exact" ? { prepare: (sql: string) => ({ bind: (..._args: unknown[]) => ({
+        all: async () => ({ results: sql.includes("WITH matched AS") ? [{
+          id: "multi-clause-exact", text: excerpt, source_file_id: "synthetic-doc",
+          file_name: standard, page: 17, identifier_labels: standard,
+        }] : [] }),
+      }) }) } : undefined,
+    );
+    try {
+      assert.equal(result.sufficient, !wrongClause, `multi-clause ${path}, wrongClause=${wrongClause}`);
+      assert.equal(result.verifiedClaims.length, wrongClause ? 0 : 1);
+    } catch (error) { failures++; console.error((error as Error).message); }
+  }
+  }
+}
+
 assert.equal(failures, 0, "source page regressions");
-console.log("PASS: 340 synthetic multilingual exact/semantic source-page cases; absent/invalid pages fail closed, valid source pages preserved, model page ignored");
+console.log("PASS: 340 multilingual exact/semantic source-page cases plus 8 cross-clause attribution cases (348 total); absent/invalid pages fail closed, valid source pages preserved, model page ignored");
