@@ -5,6 +5,8 @@ const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.me
 const runner=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
 assert.match(workflow,/^  workflow_dispatch:/m,'actual-app cloud QA must be manually dispatched');
 assert.doesNotMatch(workflow,/^  (push|pull_request|schedule|workflow_run):/m,'no automatic cloud QA triggers');
+assert.match(workflow,/allow_isolated_d1_mutation:[\s\S]*?required: true[\s\S]*?default: false/,'existing isolated D1 mutation must require explicit opt-in');
+assert.ok(workflow.includes("    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true }}"),'actual-app entire job must be gated before D1 bootstrap');
 assert.match(workflow,/allow_paid_gemini:[\s\S]*?default: false/,'Gemini spending must be explicitly opted into');
 assert.match(workflow,/ref: \$\{\{ github\.sha \}\}/,'must check out the dispatched exact SHA');
 assert.match(workflow,/\$GITHUB_EVENT_NAME.*workflow_dispatch/,'paid path must require manual event');
@@ -18,4 +20,4 @@ assert.ok(Array.isArray(config.vectorize)&&config.vectorize.length>0);
 assert.ok(config.vectorize.every(x=>x.index_name==='elevator-help-staging-test'));
 assert.match(runner,/elevator-help-lease-test-01/);
 assert.match(runner,/elevator-help-staging-test/);
-console.log('PASS: exact-head manual-only isolated actual-app QA and Gemini opt-in; no cloud requests');
+console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');
