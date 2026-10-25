@@ -48,6 +48,11 @@ jobs:
       - name: Guard manual-only paid QA dispatch
         run: node scripts/test-qa-pr61-multipage-dispatch-guard.mjs
 
+      - name: Guard isolated actual-app QA checkout, billing opt-in and D1 bindings
+        run: |
+          node --experimental-sqlite scripts/test-qa-pr61-bootstrap.mjs
+          node scripts/test-qa-pr61-actual-app-safety.mjs
+
       - name: Test multilingual physical PDF page labels and source-bound clause verification
         run: node --experimental-strip-types scripts/test-standards-source-page.ts
 
