@@ -5,7 +5,9 @@ const finite = (n) => typeof n === "number" && Number.isFinite(n);
 const nonnegative = (n) => finite(n) && n >= 0;
 const count = (n) => nonnegative(n) ? Math.floor(n) : 0;
 export function planIngestion({queues = {}, cursor = 0, telemetry = null, policy = {}, now = Date.now()} = {}) {
-  const baseline = Math.max(1, count(policy.baselineFiles ?? 2));
+  // A configured baseline is not quota evidence. Only fresh telemetry may
+  // authorize adaptive capacity above the established two-file fallback.
+  const baseline = Math.min(2, Math.max(1, count(policy.baselineFiles ?? 2)));
   const hardMax = Math.min(20, count(policy.maxFiles ?? baseline));
   const normalizedCursor = count(cursor) % PHASES.length;
   const ordered = PHASES.map((_, i) => PHASES[(normalizedCursor + i) % PHASES.length]);

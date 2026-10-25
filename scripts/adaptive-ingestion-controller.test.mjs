@@ -17,6 +17,31 @@ test("explicit cap below baseline is respected",()=>assert.equal(planIngestion({
 test("cursor wraps around",()=>assert.equal(planIngestion({queues,cursor:4}).phase,"raw"));
 test("missing telemetry respects explicit cap",()=>assert.equal(planIngestion({queues,policy:{adaptiveEnabled:true,maxFiles:1}}).maxFiles,1));
 
+test("untrusted baseline cannot raise the two-file fallback",()=>{
+ for (const cursor of [0,1,2,4]) {
+  for (const baselineFiles of [3,20,1000]) {
+   for (const options of [
+    {policy:{adaptiveEnabled:false}},
+    {telemetry:null,policy:{adaptiveEnabled:true}},
+    {telemetry:{...metrics,observedAt:0},now:1000000,policy:{adaptiveEnabled:true}},
+    {telemetry:{...metrics,d1Remaining:NaN},now:1000,policy:{adaptiveEnabled:true}},
+   ]) {
+    const input={queues:{evidence:100,raw:100,map:100},cursor,...options,
+     policy:{...options.policy,baselineFiles,maxFiles:20}};
+    const first=planIngestion(input);
+    assert.equal(first.maxFiles,2,`${first.reason}: baseline=${baselineFiles}, cursor=${cursor}`);
+    // Replayed planning after interruption must preserve the same bound and decision.
+    assert.deepEqual(planIngestion(JSON.parse(JSON.stringify(input))),first);
+   }
+  }
+ }
+});
+
+test("fresh telemetry still permits explicitly bounded adaptive capacity",()=>{
+ assert.equal(planIngestion({queues:{map:100},telemetry:metrics,now:1000,
+  policy:{baselineFiles:20,maxFiles:10,adaptiveEnabled:true}}).maxFiles,10);
+});
+
 test("real ingester integration remains opt-in and bounded",async()=>{
  const source=await readFile(new URL("./drive-ingest.mjs",import.meta.url),"utf8");
  assert.match(source,/INGESTION_CONTROLLER_ENABLED === "true"/);
