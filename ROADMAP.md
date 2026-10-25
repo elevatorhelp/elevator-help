@@ -258,3 +258,54 @@ Every status report starts with **current milestone / last verified completed it
 - A QA-only temporary Next.js 16.3.8 install was used to diagnose an OpenNext integration bug on GitHub Actions; it **did not alter committed dependencies or Production**. It must not become the project's permanent solution.
 - Actual Cloudflare QA confirmed Next.js **16.4.2** works with **@opennextjs/cloudflare 1.20.12** (GitHub run https://github.com/elevatorhelp/elevator-help/actions/runs/39987350819). Preferred compatibility fix: upgrade OpenNext with reviewed manifest + lockfile change and repeat exact-head CI; **never downgrade Next.js** to resolve this.
 - Until upgraded dependencies are committed and tested, do not infer the temporary QA upgrade is a Production release. PR #61 remains Draft pending separate real Gemini ingestion gates.
+
+
+## Beta master execution checklist — proposed 2026-10-25 (review before activation)
+
+**Status:** planning-only, not release authorization. This section supersedes stale task-status summaries *for planning* but does not erase historical evidence. Confirm actual current status against live D1/Drive/Vectorize, exact PR head and production before marking PASS. Beta dates remain conditional.
+
+**Universal-engine invariant:** ONE codebase, ONE generalized ingestion/retrieval/evidence/authorization pipeline, independent of elevator industry, standards series, manufacturer, folder or error code. Each deployment varies only approved source collections, indexes, configuration and permissions. No elevator-specific code paths, EN81 shortcuts, folder-specific fixes or hard-coded test-answer rules. Elevator documents are the first real validation corpus, not a second software architecture. Preserve approved Architecture C.
+
+**Commercial/product constraints:** current GitHub/Cloudflare usage is on free plans per owner; user-facing elevator.help is free for now. API usage and free-tier limits must be measured, not presumed free. No new recurring charges or paid scaling without owner consent. **Like on answers is mandatory for Beta**, with authorization, anti-abuse, privacy and persistence tests. No payments or subscription work in Beta. Jobbörse/vendor marketplace excluded.
+
+**Execution protocol:** GPT authors detailed task/acceptance criteria; manager only dispatches/tracks; Worker implements and self-repairs within approved bounds; independent QA validates; GPT signs off. No automated PASS based solely on green CI. Each task must have exact evidence, owner, status, dependency, test, rollback and blocked reason. Record concise PASS after verified completion. Deferred nonblocking discoveries go to separate TODO; material changes require owner discussion.
+
+### Phase A — reconcile and protect existing work
+
+- [ ] **B01 [P0] Inventory canonical state:** enumerate main SHA, PR #61/#63–70 and other open PRs, issues, local worktrees and uncommitted changes; map overlap, stacked dependencies, obsolete drafts. **PASS:** dated table of heads, conflicts, ownership and merge order, no destructive edits.
+- [ ] **B02 [P0] Reconcile security baseline:** preserve Next.js >=16.4.2, lockfile guard, Cloudflare/OpenNext compatibility, fail-closed auth and tenant filters. **PASS:** exact-head CI and security review on intended integration SHA.
+- [ ] **B03 [P0] Source/evidence correctness:** versioned document identity, source fingerprint, language, exact clause, physical PDF page, publication visibility, D1/Vectorize identity and stale-generation rejection. **PASS:** independent negative and positive regression suite with primary-source checks, no hard-coded EN81 behavior.
+- [ ] **B04 [P0] Merge/release sequence:** resolve PR #61/#63–70 stacks, duplicate implementations and Issue #60 dependencies without bypassing gates. **PASS:** reviewed merge plan, exact-head CI, controlled merge and deployment evidence; close superseded drafts only after verified replacement.
+
+### Phase B — reliable Live Archive and safe parallel indexing
+
+- [ ] **B05 [P0] Live inventory:** compare Drive file IDs/versions and permissions with D1 manifest, Evidence, RAW, Map and both Vectorize indexes; reconcile historical 240 vs 241 discrepancy. **PASS:** fresh timestamped per-phase counts and exception ledger.
+- [ ] **B06 [P0] Root-cause RAW partial failure:** diagnose 216-page/328-chunk interrupted example and other transport failures without exposing source secrets. **PASS:** reproducible failure classification and generic regression test.
+- [ ] **B07 [P0] Resumable checkpointing:** durable per-document/per-phase cursor, fingerprints, partial vector IDs, idempotent upsert, retries, superseded-revision cleanup. **PASS:** crash/restart mid-document resumes without lost or duplicate publication.
+- [ ] **B08 [P0] Durable lease and fencing:** atomic D1 claim, TTL, renewal, owner epoch, stale-worker write rejection and bounded reclaims. **PASS:** two independent workers compete, one loses lease and cannot publish; restart test in isolated environment.
+- [ ] **B09 [P0] Atomic publication:** Evidence/RAW/Map stage and commit with immutable generation/CAS, published visibility and no mixed versions. **PASS:** injected failure at every boundary never exposes orphaned or unpublished chunks.
+- [ ] **B10 [P0] Backup and recovery:** consistent D1 backup, disposable full-state restore, Vectorize manifest comparison/rebuild/replay, source permission preservation. **PASS:** documented cross-system recovery test, not D1 Time Travel alone.
+- [ ] **B11 [P0] Parallel scheduler design:** disjoint document claims (not hard-coded folder rules), phase fairness, backpressure, lease-aware concurrency and retry queues. **PASS:** contention/fairness tests, no duplicate writes or starvation.
+- [ ] **B12 [P0] Safe parallel pilot:** run bounded isolated pilot with real ingestion and independent cost/concurrency telemetry; explicitly approve production ramp. **PASS:** measured throughput, quality, failure/retry rates, budgets, rollback and operator stop switch.
+- [ ] **B13 [P1] Extraction robustness:** PDFs (long/scanned/tables), Word and multilingual documents, exact page anchors; benchmark MarkItDown/Docling where justified. **PASS:** representative corpus matrix of quality, runtime, privacy and cost; no one-folder-only proof.
+- [ ] **B14 [P1] Incremental live sync:** new/changed/deleted/renamed/moved files, same-language variants, duplicate content, revision invalidation and permission changes. **PASS:** repeatable tests over multiple unrelated collections and restart points.
+- [ ] **B15 [P1] Archive completion forecast:** daily phase throughput, backlog, API calls, CI/free-tier consumption, cost ceiling and forecast; update Nov 6/13 feasibility. **PASS:** actual metrics and owner-approved revised dates if targets fail; no invented completion percentage.
+- [ ] **B16 [P1] Whole-archive coverage:** Evidence, RAW and Map convergence for all supported/authorized files, explicit exceptions and no silent skips. **PASS:** reconciliation report with every excluded/failed item accounted for.
+- [ ] **B17 [P1] Retrieval architecture benchmark:** 12 representative public/synthetic cases compare Architecture C to optional Gemini File Search, including citations, edition, multilingual, latency, privacy and cost. **PASS:** documented measured decision; no architecture swap by assumption.
+
+### Phase C — end-to-end Beta product and QA
+
+- [ ] **B18 [P0] Authenticated production answer:** valid signed-in Clerk request to /api/ask, actual approved source edition/page/clause, correct 401 on invalid tokens, no cross-user leakage. **PASS:** redacted live request/response plus independent source verification.
+- [ ] **B19 [P0] Generalized technical answer quality:** standards, manufacturer/model-specific faults, catalogs, multi-document synthesis, ambiguity, follow-up and safe troubleshooting. **PASS:** independent golden set across different source types and unrelated identifier patterns, with failure cases recorded.
+- [ ] **B20 [P0] Multilingual and fallback:** DE/EN/FA query, same-language source preference when available, language continuity, no fabricated citation, explicitly labeled public-web/general answer. **PASS:** reproducible multilingual end-to-end QA.
+- [ ] **B21 [P0] Confidentiality and safety:** approved/customer-visible retrieval only, tenant boundaries before search, secrets and proprietary know-how withheld, safe safety-critical uncertainty. **PASS:** adversarial access and citation tests.
+- [ ] **B22 [P1] User experience:** real Clerk signup/login, mobile send/scroll stability, edit/resend, basic accessibility, daily free-user limit policy and informative errors. **PASS:** real mobile/desktop human checklist.
+- [ ] **B23 [P1] Mandatory answer Like:** persistent authenticated Like on answer, correct ownership and privacy, duplicate-click/idempotency, abuse protection and deletion handling; no payment dependency. **PASS:** UI + API + storage integration tests and human acceptance.
+- [ ] **B24 [P0] Final Beta gate:** exact-head Linux/Node22 CI, independent QA, production smoke, security/cost review, rollback readiness and human owner sign-off; zero critical citation/privacy/data-loss defects. **PASS:** linked PR/SHA/runs and owner acceptance, not merely local synthetic green.
+
+### Deferred TODO — not Beta release dependencies unless owner approves
+- Private photo/PDF/Office upload and intent clarification; sandboxed Excel calculations; My Elevator planning; versioned FAQ/learning; SEO; exportable local index for future licensed reuse; broader feedback analytics; autonomous manager/orchestrator implementation; future monetization (only after owner decision). Jobbörse and supplier marketplace belong to separate future product.
+- Keep these ideas visible without silently expanding Beta. Any requirement already approved for Gamma remains on the original Gamma roadmap.
+
+### Immediate dispatch order (after owner review)
+B01–B04 establish safe integration; B05–B10 establish recovery and evidence correctness; B11–B12 enable parallelism; B13–B17 prove full-archive quality/throughput; B18–B23 prove the actual customer product; B24 closes Beta. Independent read-only inventory, benchmarks and UX tests may overlap only without shared-write conflicts. **No production parallel activation, paid indexing, merge or release is authorized by this checklist alone.**
