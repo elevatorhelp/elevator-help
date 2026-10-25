@@ -1,0 +1,42 @@
+name: Beta B01 Independent QA
+
+on:
+  workflow_run:
+    workflows: ["Beta B01 Inventory Worker"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Fetch evidence from completed worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request,zipfile,io
+          repo=os.environ['GH_REPOSITORY']; run=os.environ['RUN_ID']
+          def fetch(url):
+              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              return urllib.request.urlopen(req,timeout=25)
+          obj=json.load(fetch(f'https://api.github.com/repos/{repo}/actions/runs/{run}/artifacts'))
+          matches=[a for a in obj['artifacts'] if a['name']=='beta-b01-evidence' and not a['expired']]
+          if len(matches)!=1: raise SystemExit('Missing or ambiguous worker artifact')
+          with fetch(matches[0]['archive_download_url']) as response:
+              data=response.read()
+          with zipfile.ZipFile(io.BytesIO(data)) as z:
+              record=json.loads(z.read('beta-b01-evidence.json'))
+          assert record['task']=='B01'
+          assert record['status']=='EVIDENCE_ONLY_NOT_PASS'
+          assert all(record['checks'].values())
+          assert len(record['main_sha'])==40
+          print('Independent QA: artifact structure verified. B01 is NOT PASS.')
+          PY
