@@ -275,24 +275,23 @@ function numberTokens(value: string) {
 // A copied quote must occur after the claimed clause marker, and before the
 // next different clause marker. This is deliberately conservative: references
 // resembling clause headings can reduce verification, never grant authority.
-function quoteInClaimedClause(source: string, original: string, clause: string, quote: string) {
-  // Prefer explicit PDF line-start clause headings, including different roots.
-  // Normalize whitespace per section so the model's copied quote can match.
-  const headings = [...original.matchAll(/(?:^|\r?\n)[ \t]*(?:§[ \t]*)?(\d+(?:\.\d+){1,6})(?=[ \t]|[):]|$)/g)];
-  if (headings.length) {
-    return headings.some((heading, index) =>
-      heading[1] === clause &&
-      original.slice(heading.index ?? 0, headings[index + 1]?.index ?? original.length)
-        .replace(/\s+/g, " ").trim().includes(quote));
-  }
-  const root = clause.split(".")[0];
-  const markers = [...source.matchAll(/(?:^|\s)(\d+(?:\.\d+){1,6})(?=\s|[):]|$)/g)]
-    .map((match) => ({
-      clause: match[1],
-      index: (match.index ?? 0) + match[0].length - match[1].length,
-    }))
-    // Do not mistake 0.70 m or 1.10 m measurements for clause headings.
-    .filter((marker) => marker.clause.split(".")[0] === root);
+function quoteInClaimedClause(source: string, clause: string, quote: string) {
+  // Use one boundary scan for both line-start and inline OCR headings.
+  // A partial line-start scan could incorrectly absorb a later inline heading.
+  // Flattened OCR often loses line breaks. Bound a quote by the next clause
+  // marker regardless of its root: a 6.x heading must terminate a 5.x claim.
+  const markers = [...source.matchAll(/(?:^|\s)(?:§\s*)?(\d+(?:\.\d+){1,6})(?=\s|[):]|$)/g)]
+    .map((match) => {
+      const after = source.slice((match.index ?? 0) + match[0].length);
+      return {
+        clause: match[1],
+        index: (match.index ?? 0) + match[0].length - match[1].length,
+        // Common decimal measurements (e.g. 0.70 m) are not headings.
+        measurement: /^\d+\.\d+$/.test(match[1]) &&
+          /^\s*(?:mm|cm|m|kg|kN|N|V|Hz|s)(?=\s|[;,.]|$)/i.test(after),
+      };
+    })
+    .filter((marker) => !marker.measurement);
   if (!markers.length) return false;
   for (let index = source.indexOf(quote); index >= 0; index = source.indexOf(quote, index + 1)) {
     // A quote may include its own clause heading (e.g. "5.4.7: ...").
@@ -330,7 +329,7 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
     const source = selected.text.replace(/\s+/g, " ").trim();
     // A clause prefix is not evidence for that clause (e.g. 4.2 vs 4.20).
     if (!source.includes(quote) || !extractClauseNumbers(source).includes(clause) ||
-        !quoteInClaimedClause(source, selected.text, clause, quote)) continue;
+        !quoteInClaimedClause(source, clause, quote)) continue;
     if (
       !selected.standardCodes.some((found) =>
         standardCodesMatch(found, standard),
