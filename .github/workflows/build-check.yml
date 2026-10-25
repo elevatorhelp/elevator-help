@@ -45,6 +45,9 @@ jobs:
       - name: Guard isolated QA endpoint security boundary
         run: node scripts/test-qa-ingestion-edge-guard.mjs
 
+      - name: Guard manual-only paid QA dispatch
+        run: node scripts/test-qa-pr61-multipage-dispatch-guard.mjs
+
       - name: Test authenticated chat gate
         run: npm run test:request-auth
 

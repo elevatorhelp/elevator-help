@@ -1,10 +1,12 @@
 name: PR63 isolated multipage Drive interruption recovery
 on:
   workflow_dispatch:
-  push:
-    branches: [integration/pr61-reconciled-20261024]
-    paths:
-      - .github/workflows/qa-pr61-multipage.yml
+    inputs:
+      allow_paid_qa:
+        description: Explicitly authorize isolated Cloudflare writes and bounded Gemini QA calls
+        type: boolean
+        required: true
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -41,6 +43,7 @@ jobs:
       - name: Build actual app
         run: npm run cf:build
       - name: Create QA-only D1 tables
+        if: ${{ inputs.allow_paid_qa == true }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -48,6 +51,7 @@ jobs:
           npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app-deployed.json --file scripts/qa-pr61-bootstrap.sql
           npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app-deployed.json --file docs/ingestion-full-publication-schema.sql
       - name: Deploy protected QA Worker and inject disposable auth token only
+        if: ${{ inputs.allow_paid_qa == true }}
         id: deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -69,6 +73,7 @@ jobs:
           fi
           echo "QA_APP_BASE_URL=$QA_APP_BASE_URL" >> "$GITHUB_ENV"
       - name: Verify Cloudflare secret presence without reading values
+        if: ${{ inputs.allow_paid_qa == true }}
         id: secret-check
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -83,13 +88,14 @@ jobs:
             echo "::notice::GEMINI_API_KEY absent from isolated Cloudflare QA Worker. Run negative safety tests only."
           fi
       - name: Test real deployed application
+        if: ${{ inputs.allow_paid_qa == true }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           QA_NEGATIVE_ONLY: ${{ steps.secret-check.outputs.positive == 'true' && 'false' || 'true' }}
         run: node scripts/qa-pr61-full-app-e2e.mjs
       - name: Real multi-page Drive interruption and same-generation checkpoint resume (isolated only)
-        if: steps.secret-check.outputs.positive == 'true'
+        if: ${{ inputs.allow_paid_qa == true && steps.secret-check.outputs.positive == 'true' }}
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           TARGET_FILE_ID: 1OlUlR0NQNhOwHtUb-MHq0DPbGtzwhPZJ
@@ -140,7 +146,7 @@ jobs:
           '
 
       - name: Verify real Drive document exact retrieval and citation
-        if: steps.secret-check.outputs.positive == 'true'
+        if: ${{ inputs.allow_paid_qa == true && steps.secret-check.outputs.positive == 'true' }}
         env:
           TARGET_FILE_ID: 1OlUlR0NQNhOwHtUb-MHq0DPbGtzwhPZJ
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -148,7 +154,7 @@ jobs:
         run: node --experimental-strip-types scripts/qa-drive-evidence-readback.mjs
 
       - name: Verify interrupted publication and stale owner recovery
-        if: steps.secret-check.outputs.positive == 'true'
+        if: ${{ inputs.allow_paid_qa == true && steps.secret-check.outputs.positive == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
