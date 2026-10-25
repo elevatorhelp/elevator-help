@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {hasPhysicalPdfPageCitation} from './qa-physical-pdf-page.mjs';
+import {hasPhysicalPdfPageCitation,hasEn8120ReleaseCitationContract} from './qa-physical-pdf-page.mjs';
 
 // Run only with a legitimate owner-authorized Clerk session; never print tokens or answer bodies.
 const base=process.env.QA_ASK_BASE_URL;
@@ -7,6 +7,7 @@ const token=process.env.QA_CLERK_SESSION_JWT;
 const question=process.env.QA_ASK_QUESTION;
 const expected=process.env.QA_EXPECTED_CITATION;
 if(!base||!token||!question||!expected)throw Error('SIGNED_IN_ASK_QA_CONFIG_REQUIRED');
+assert.ok(hasEn8120ReleaseCitationContract(expected),'Expected citation must include EN 81-20 edition, clause and physical PDF page in one literal snippet');
 const origin=new URL(base);
 assert.equal(origin.protocol,'https:');
 assert.ok(!origin.username&&!origin.password&&!origin.search&&!origin.hash);
@@ -30,6 +31,5 @@ assert.equal(typeof accepted.body?.answer,'string');
 assert.ok(accepted.body.answer.trim().length>30);
 assert.equal(accepted.body.mode,'standards_verified','Only verified standards evidence can satisfy this EN 81-20 citation release gate');
 assert.ok(hasPhysicalPdfPageCitation(accepted.body.answer),'Verified answer must label a positive physical PDF page, not a printed standard page');
-const cited=JSON.stringify({answer:accepted.body.answer,sources:accepted.body.sources||[],standardsChecked:accepted.body.standardsChecked||[]});
-assert.ok(cited.toLowerCase().includes(expected.toLowerCase()),'Required actual source/page citation not present');
+assert.ok(accepted.body.answer.toLowerCase().includes(expected.toLowerCase()),'Required edition/clause/physical-page citation must occur together in the customer answer, not only in metadata');
 console.log('PASS: Clerk-signed /api/ask answer includes expected physical PDF citation, missing and invalid sessions denied');
