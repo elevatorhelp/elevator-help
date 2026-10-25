@@ -17,4 +17,10 @@ for(const text of [
   'DIN EN 81-50:2014-11 §5.4.7.4, PDF-Seite 79', // wrong standard
   'DIN EN 81-20:2014-11 5.4.7.4 notPDF page 79', 'PDF page 79', '', null,
 ]) assert.equal(releaseCitation(text),false,'incomplete release citation must fail closed');
-console.log('PASS: 4 physical-page labels, 11 negative labels, 3 complete release citations, 9 incomplete release citations');
+for(const text of [
+  'DIN EN 81-20:2014-11 says unrelated words. Clause 5.4.7.4 elsewhere. PDF-Seite 79',
+  'PDF-Seite 79, DIN EN 81-20:2014-11 section 5.4.7.4',
+  'DIN EN 81-20:2014-11 5.4.7.4 unrelated paragraph PDF-Seite 79',
+  'DIN EN 81-20:2014-11\n5.4.7.4, PDF-Seite 79',
+]) assert.equal(releaseCitation(text),false,'scattered or reordered citation must fail closed: '+text);
+console.log('PASS: 4 physical-page labels, 11 negative labels, 3 complete release citations, 13 invalid/scattered release citations');

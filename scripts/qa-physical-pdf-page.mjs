@@ -8,8 +8,17 @@ export function hasPhysicalPdfPageCitation(answer){
 // A release expectation must identify an edition, a clause and the physical page
 // together. Otherwise a generic page mention can make unrelated evidence pass QA.
 export function hasEn8120ReleaseCitationContract(citation){
-  return typeof citation==='string'
-    && /\b(?:DIN\s+)?EN\s*81[\s-]*20\s*[:\-]\s*(?:19|20)\d{2}(?:-\d{2})?\b/iu.test(citation)
-    && /\b\d+(?:\.\d+){2,}\b/u.test(citation)
-    && hasPhysicalPdfPageCitation(citation);
+  if(typeof citation!=='string' || /[\r\n]/u.test(citation)) return false;
+  const edition=/\b(?:DIN\s+)?EN\s*81[\s-]*20\s*[:\-]\s*(?:19|20)\d{2}(?:-\d{2})?\b/iu.exec(citation);
+  const clause=/\b\d+(?:\.\d+){2,}\b/u.exec(citation);
+  const page=physicalPage.exec(citation);
+  if(!edition || !clause || !page || edition.index!==citation.search(/\S/u)
+      || edition.index+edition[0].length>=clause.index
+      || clause.index+clause[0].length>=page.index) return false;
+  // Keep the expected release citation as one contiguous source/edition/clause/PDF-page label.
+  // Scattered metadata and unrelated sentences must never satisfy the signed-in QA gate.
+  const separator=/^[\s,;:(){}\[\]\u00a7\u060c\u2013\u2014-]*$/u;
+  return separator.test(citation.slice(edition.index+edition[0].length,clause.index))
+    && separator.test(citation.slice(clause.index+clause[0].length,page.index))
+    && separator.test(citation.slice(page.index+page[0].length));
 }

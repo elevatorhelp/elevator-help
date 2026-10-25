@@ -29,4 +29,6 @@ const metadata=run('metadata-only');
 assert.notEqual(metadata.status,0,'metadata-only citation must not pass');
 const weak=run('valid','PDF-Seite 79');
 assert.notEqual(weak.status,0,'source/edition/clause-free expectation must not pass');
+const scattered=run('valid','DIN EN 81-20:2014-11 says unrelated words. Clause 5.4.7.4 elsewhere. PDF-Seite 79');
+assert.notEqual(scattered.status,0,'scattered expectation must not authorize a signed-in release pass');
 console.log('PASS: customer-answer citation required; metadata-only and weak expectations rejected (mocked fetch, no network)');
