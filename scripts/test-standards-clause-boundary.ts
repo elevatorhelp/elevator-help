@@ -54,4 +54,23 @@ for (const [source, quote, expected] of [
   );
   assert.equal(result.sufficient, expected, `cross-root flattened PDF: ${source}`);
 }
-console.log("PASS: exact clause boundaries and flattened cross-root source attribution");
+// Numeric requirements must be sourced from the claimed clause, not a neighbor.
+for (const [source, expected] of [
+  ["5.4.7 Synthetic requirement applies to this component. 6.1.1 Different requirement specifies 1100 mm.", false],
+  ["5.4.7 Synthetic requirement applies to this component. The limit is 1100 mm. 6.1.1 Different requirement.", true],
+] as const) {
+  const standard = "UV 123-9:2026", clause = "5.4.7";
+  const quote = "Synthetic requirement applies to this component.";
+  const text = "Synthetic requirement applies to this component at 1100 mm.";
+  const result = await answerStandardsQuestion(
+    `What does ${standard} clause ${clause} say?`, { questionLanguage: "en" },
+    "unused-test-key", { run: async (_model: string, input: { text: string[] }) => ({ data: input.text.map(() => [1, 0]) }) },
+    { query: async () => ({ matches: [{ id: "cross-clause-number", score: 1,
+      metadata: { text: source, standardCode: standard, page: 23 } }] }) }, undefined,
+    async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{
+      text: JSON.stringify({ claims: [{ standard, clause, text, evidenceIndex: 1, evidenceQuote: quote }] }),
+    }] } }] })),
+  );
+  assert.equal(result.sufficient, expected, "numeric evidence must be confined to the claimed clause");
+}
+console.log("PASS: exact clause boundaries, cross-root attribution and clause-local numeric evidence");

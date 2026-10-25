@@ -275,7 +275,7 @@ function numberTokens(value: string) {
 // A copied quote must occur after the claimed clause marker, and before the
 // next different clause marker. This is deliberately conservative: references
 // resembling clause headings can reduce verification, never grant authority.
-function quoteInClaimedClause(source: string, clause: string, quote: string) {
+function quotedClauseSource(source: string, clause: string, quote: string): string | null {
   // Use one boundary scan for both line-start and inline OCR headings.
   // A partial line-start scan could incorrectly absorb a later inline heading.
   // Flattened OCR often loses line breaks. Bound a quote by the next clause
@@ -292,7 +292,7 @@ function quoteInClaimedClause(source: string, clause: string, quote: string) {
       };
     })
     .filter((marker) => !marker.measurement);
-  if (!markers.length) return false;
+  if (!markers.length) return null;
   for (let index = source.indexOf(quote); index >= 0; index = source.indexOf(quote, index + 1)) {
     // A quote may include its own clause heading (e.g. "5.4.7: ...").
     const preceding = markers.filter((marker) => marker.index <= index).at(-1);
@@ -300,9 +300,9 @@ function quoteInClaimedClause(source: string, clause: string, quote: string) {
       marker.index > index && marker.index < index + quote.length);
     const next = governing && markers.find((marker) => marker.index > governing.index);
     if (governing?.clause === clause && (!next || next.index >= index + quote.length))
-      return true;
+      return source.slice(governing.index, next?.index ?? source.length);
   }
-  return false;
+  return null;
 }
 
 function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
@@ -328,8 +328,9 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
       continue;
     const source = selected.text.replace(/\s+/g, " ").trim();
     // A clause prefix is not evidence for that clause (e.g. 4.2 vs 4.20).
-    if (!source.includes(quote) || !extractClauseNumbers(source).includes(clause) ||
-        !quoteInClaimedClause(source, clause, quote)) continue;
+    if (!source.includes(quote) || !extractClauseNumbers(source).includes(clause)) continue;
+    const clauseSource = quotedClauseSource(source, clause, quote);
+    if (!clauseSource) continue;
     if (
       !selected.standardCodes.some((found) =>
         standardCodesMatch(found, standard),
@@ -337,7 +338,8 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
     )
       continue;
     if (clauses.length && !clauses.includes(clause)) continue;
-    if (numberTokens(text).some((token) => !numberTokens(source).includes(token)))
+    // A value occurring only in a neighboring clause cannot support this claim.
+    if (numberTokens(text).some((token) => !numberTokens(clauseSource).includes(token)))
       continue;
     const key = `${standard}:${clause}:${text.toLowerCase()}`;
     if (seen.has(key)) continue;
