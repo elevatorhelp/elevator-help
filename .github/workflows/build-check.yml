@@ -46,7 +46,9 @@ jobs:
         run: node scripts/test-qa-ingestion-edge-guard.mjs
 
       - name: Guard manual-only paid QA dispatch
-        run: node scripts/test-qa-pr61-multipage-dispatch-guard.mjs
+        run: |
+          node scripts/test-qa-pr61-multipage-dispatch-guard.mjs
+          node scripts/test-qa-cloudflare-dispatch-guard.mjs
 
       - name: Guard isolated actual-app QA checkout, billing opt-in and D1 bindings
         run: |

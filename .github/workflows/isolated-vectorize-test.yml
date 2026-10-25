@@ -1,15 +1,22 @@
 name: Isolated Vectorize test index
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/isolated-vectorize-test.yml
+    inputs:
+      allow_isolated_vectorize_provision:
+        description: Explicitly authorize isolated Vectorize index creation and quota usage
+        type: boolean
+        required: true
+        default: false
 permissions:
   contents: read
+concurrency:
+  group: qa-pr61-vectorize-provision
+  cancel-in-progress: false
 jobs:
   provision:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_vectorize_provision == true }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Create isolated test index
         env:

@@ -1,18 +1,24 @@
 name: Isolated Cloudflare D1 Vectorize smoke test
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/isolated-cloudflare-e2e.yml
-      - scripts/qa-isolated-cloudflare-e2e.mjs
+    inputs:
+      allow_isolated_cloudflare_qa:
+        description: Explicitly authorize writes and quota usage in isolated Cloudflare QA resources
+        type: boolean
+        required: true
+        default: false
 permissions:
   contents: read
+concurrency:
+  group: qa-pr61-cloudflare-smoke
+  cancel-in-progress: false
 jobs:
   test:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_cloudflare_qa == true }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout exact main commit
+      - name: Checkout exact commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
