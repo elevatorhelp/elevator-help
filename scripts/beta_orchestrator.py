@@ -83,8 +83,13 @@ def main():
         "no self-approval or auto-merge.\n"
     )
     if tracker:
-        api(f"/repos/{REPO}/issues/{tracker['number']}", "PATCH", {"body": body})
+        # Never overwrite a human-maintained checklist or previously linked QA evidence.
+        # The issue is created once; later heartbeats are appended as comments.
         number = tracker["number"]
+        api(f"/repos/{REPO}/issues/{number}/comments", "POST", {
+            "body": f"Supervisor heartbeat: {now}. Open PRs: {len(prs)}. "
+                    "No automatic PASS or release; see Actions for evidence."
+        })
     else:
         created = api(f"/repos/{REPO}/issues", "POST", {"title": TITLE, "body": body})
         number = created["number"]
