@@ -5,6 +5,7 @@ for (const [file,job,input] of [
   ['isolated-cloudflare-e2e.yml','test','allow_isolated_cloudflare_qa'],
   ['isolated-vectorize-test.yml','provision','allow_isolated_vectorize_provision'],
   ['qa-pr61-d1-restore.yml','restore','allow_remote_d1_qa'],
+  ['qa-pr61-actual-app.yml','actual-app','allow_isolated_d1_mutation'],
 ]) {
   const yaml=readFileSync(new URL('../.github/workflows/'+file,import.meta.url),'utf8');
   const header=yaml.split(/^permissions:/m)[0];
@@ -32,4 +33,4 @@ assert.match(d1,/qa-pr61-restore-\$\{GITHUB_RUN_ID\}/,
   'D1 cleanup must constrain deletion to the current run-specific name');
 assert.match(d1,/list=\$\(npx wrangler d1 list --json\)/,
   'D1 cleanup must check resource existence before deletion');
-console.log('PASS: isolated Cloudflare, D1 and Vectorize writes require opt-in; D1 failed-create cleanup is guarded');
+console.log('PASS: isolated Cloudflare, actual-app D1, restore D1 and Vectorize writes require opt-in; D1 failed-create cleanup is guarded');
