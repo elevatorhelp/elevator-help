@@ -1,10 +1,12 @@
 name: PR61 disposable D1 publication restore drill
 on:
   workflow_dispatch:
-  push:
-    branches: [integration/pr61-reconciled-20261024]
-    paths:
-      - .github/workflows/qa-pr61-d1-restore.yml
+    inputs:
+      allow_remote_d1_qa:
+        description: 'Explicitly authorize isolated D1 create/write/restore/delete and quota usage'
+        type: boolean
+        required: true
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -12,6 +14,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   restore:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_remote_d1_qa == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 16
     env:
