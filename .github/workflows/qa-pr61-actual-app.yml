@@ -2,6 +2,11 @@ name: PR61 actual application isolated E2E
 on:
   workflow_dispatch:
     inputs:
+      allow_isolated_d1_mutation:
+        description: "Explicitly authorize writes to the existing isolated QA D1 and Cloudflare quota usage"
+        type: boolean
+        required: true
+        default: false
       allow_paid_gemini:
         description: "Explicitly permit one bounded real Gemini QA run (default: no)"
         type: boolean
@@ -13,6 +18,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   actual-app:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
