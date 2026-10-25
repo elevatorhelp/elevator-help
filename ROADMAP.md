@@ -688,3 +688,11 @@ Direct read of the owner's Google Drive PDF titled `DIN EN 81-20, 11-2014-DE.pdf
 
 - Base b37e49748e712919b5285d5c9c473ff75c5e8089; only a8aee3cd5fd148a84c23f535443651d6ebada73e selected. Both working-file conflicts resolved preserving base history and host CF PASS, unchanged verifier guard, multilingual exact/semantic assertions and new attribution regressions. **348/348 cases PASS; 20/20 checks PASS; Next build exit 0.** Existing node_modules; no npm ci.
 - Sandbox CF exit 1: esbuild parent access denied/config resolution failure; historical host PASS is not an integrated sandbox PASS. git add blocked by external linked-worktree index.lock permission; files resolved but index remains unmerged, host must stage only four intended files and continue original cherry-pick. No cache staged, push, merge or deploy. Release NO-GO; security/auth assertions retained, real provider cost/latency unmeasured, live/source/cache/rollback/CI gates remain. Exact commands and limitations: [PR61-CROSS-CLAUSE-2026-10-25.md](./PR61-CROSS-CLAUSE-2026-10-25.md).
+
+
+### 2026-10-25 independent Windows host integration confirmation
+
+- PR70 cross-clause safety fix was selectively cherry-picked (not a branch merge) onto the isolated PR63 candidate with conflicts resolved preserving the new physical PDF-page labels and both test suites. Cherry-pick commit `2586b6f9b37ce856b21966882ef4012b9173b38e`.
+- Codex local verification: **348/348** synthetic exact/semantic, multilingual and cross-clause cases PASS; **20/20** neighboring checks PASS; Next build PASS. Sandbox OpenNext build failed on parent-directory access denial.
+- Independently on the authorized Windows host, `npm.cmd run cf:build` **PASS**, exit 0, after cherry-pick: Next 16.4.2 + OpenNext 1.20.12, `.open-next/worker.js` generated. This is packaging evidence, not deployed runtime acceptance.
+- No paid calls, production mutation, merge, deployment or release approval. Exact final GitHub CI and legitimate Clerk-signed cited answer, edition/fingerprint, D1+dual Vectorize rollback, independent QA remain release blockers.

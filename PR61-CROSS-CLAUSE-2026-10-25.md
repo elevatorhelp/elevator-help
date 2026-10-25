@@ -53,3 +53,11 @@ CF failure: esbuild cannot read parent directory '..' (Access is denied), then c
 Git completion BLOCKED: explicit git add of only ROADMAP.md, scripts/test-standards-source-page.ts, app/lib/cortex-standards-engine.ts and this report failed creating linked-worktree index.lock (Permission denied outside workspace). Thus working files are resolved but index still has unmerged entries; staging and cherry-pick --continue require host. Continue not attempted with unmerged index. No abort/reset/force or metadata workaround. Host: stage exactly those four files, then git cherry-pick --continue (preserves original -x operation). No .qa-npm-cache staged.
 
 Security/auth/private-path/page/publication/paid-QA assertions pass; no network audit performed. Legacy fallback characterization retains known irrelevant-nonempty-hit relevance gap. Synthetic checks do not prove semantic entailment, edition/fingerprint applicability, live Clerk customer citation, archive deduplication/update/cache invalidation or remote D1+dual Vectorize restore. These and exact-final-head Node22 CI, supported-host CF rebuild, independent QA and release approval remain gates. No paid calls, cloud access, push, merge or deploy; real provider cost/latency unmeasured. Release/Issue60 NO-GO.
+
+
+### 2026-10-25 independent Windows host integration confirmation
+
+- PR70 cross-clause safety fix was selectively cherry-picked (not a branch merge) onto the isolated PR63 candidate with conflicts resolved preserving the new physical PDF-page labels and both test suites. Cherry-pick commit `2586b6f9b37ce856b21966882ef4012b9173b38e`.
+- Codex local verification: **348/348** synthetic exact/semantic, multilingual and cross-clause cases PASS; **20/20** neighboring checks PASS; Next build PASS. Sandbox OpenNext build failed on parent-directory access denial.
+- Independently on the authorized Windows host, `npm.cmd run cf:build` **PASS**, exit 0, after cherry-pick: Next 16.4.2 + OpenNext 1.20.12, `.open-next/worker.js` generated. This is packaging evidence, not deployed runtime acceptance.
+- No paid calls, production mutation, merge, deployment or release approval. Exact final GitHub CI and legitimate Clerk-signed cited answer, edition/fingerprint, D1+dual Vectorize rollback, independent QA remain release blockers.
