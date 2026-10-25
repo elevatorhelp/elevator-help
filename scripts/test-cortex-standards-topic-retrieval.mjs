@@ -68,7 +68,7 @@ const verified=sandbox.__verifyClaims({claims:[modelClaim]},[source],[]);
 assert.equal(verified.length,1);
 assert.equal(verified[0].page,91,"model must not choose the citation page");
 const german=sandbox.__formatAnswer(verified,"de");
-assert.ok(german.includes("EN 81-20, 5.4.7, S. 91"));
+assert.ok(german.includes("EN 81-20, 5.4.7, PDF-Seite 91"));
 assert.ok(!german.includes("999")&&!german.includes(source.sourceName));
 const noPage=sandbox.__verifyClaims({claims:[modelClaim]},[{...source,page:0}],[]);
 assert.equal(noPage.length,0,"missing usable source page must not become a verified claim");

@@ -23,6 +23,6 @@ for (const [standard, clause, sourceClause, expected] of [
   assert.equal(result.sufficient, expected,
     `${standard}: source ${sourceClause}, claimed ${clause}`);
   assert.equal(result.verifiedClaims.length, expected ? 1 : 0);
-  if (expected) assert.match(result.answer, /p\. 17/);
+  if (expected) assert.match(result.answer, /PDF page 17/);
 }
 console.log("PASS: production verifier rejects distinct numeric/nested/annex clauses and retains exact unseen-source citation");

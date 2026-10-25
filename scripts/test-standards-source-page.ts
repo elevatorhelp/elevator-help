@@ -5,12 +5,13 @@ import { answerStandardsQuestion } from "../app/lib/cortex-standards-engine.ts";
 let failures = 0;
 for (const standard of ["ZX 410-22", "UV 123-9"]) {
   for (const path of ["semantic", "exact"]) {
+  for (const [language, label] of [["en", "PDF page"], ["de", "PDF-Seite"], ["fa", "صفحهٔ PDF"], ["es", "página PDF"], ["xx", "PDF page"]]) {
   for (const page of [undefined, null, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1,
-    true, false, [], [17], {}, "", " ", "not-a-page", 17, "17"]) {
-    const expected = page === 17 || page === "17";
+    true, false, [], [17], {}, "", " ", "not-a-page", 17, "17", 79]) {
+    const expected = page === 17 || page === "17" || page === 79;
     const quote = "Synthetic requirement for test purposes only.";
     const result = await answerStandardsQuestion(
-      `What does ${standard} clause 7.1 say?`, { questionLanguage: "en" },
+      `What does ${standard} clause 7.1 say?`, { questionLanguage: language },
       "unused-test-key",
       { run: async (_model: string, input: { text: string[] }) => ({ data: input.text.map(() => [1, 0]) }) },
       { query: async () => ({ matches: path === "exact" ? [] : [{ id: "synthetic-page", score: 1, metadata: {
@@ -36,13 +37,15 @@ for (const standard of ["ZX 410-22", "UV 123-9"]) {
       assert.equal(result.sufficient, expected, `${path} ${standard}: source page ${JSON.stringify(page)}`);
       assert.equal(result.verifiedClaims.length, expected ? 1 : 0);
       if (expected) {
-        assert.equal(result.verifiedClaims[0].page, 17);
-        assert.match(result.answer, /p\. 17/);
+        assert.equal(result.verifiedClaims[0].page, Number(page));
+        assert.ok(result.answer.includes(`${label} ${page}`), `${path} ${language}: missing explicit PDF label`);
+        assert.doesNotMatch(result.answer, /(?:p\.|S\.) (?:17|79)|73/);
         assert.doesNotMatch(result.answer, /999/);
       }
     } catch (error) { failures++; console.error((error as Error).message); }
   }
   }
 }
+}
 assert.equal(failures, 0, "source page regressions");
-console.log("PASS: 64 synthetic exact/semantic source-page cases; absent/invalid pages fail closed, valid source pages preserved, model page ignored");
+console.log("PASS: 340 synthetic multilingual exact/semantic source-page cases; absent/invalid pages fail closed, valid source pages preserved, model page ignored");

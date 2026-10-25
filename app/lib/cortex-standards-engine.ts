@@ -322,7 +322,10 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
 }
 
 function formatAnswer(claims: VerifiedStandardClaim[], language?: string | null) {
-  const pageLabel = language === "de" ? "S." : language === "fa" ? "صفحه" : "p.";
+  // Source metadata identifies physical PDF pages, never printed standard pages.
+  const pageLabel = language === "de" ? "PDF-Seite"
+    : language === "fa" ? "صفحهٔ PDF"
+    : language === "es" ? "página PDF" : "PDF page";
   const details = claims
     .map((claim) => `• ${claim.standard}, ${claim.clause}${claim.page ? `, ${pageLabel} ${claim.page}` : ""} — ${claim.text}`)
     .join("\n");

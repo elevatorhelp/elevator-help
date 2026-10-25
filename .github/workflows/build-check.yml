@@ -48,7 +48,7 @@ jobs:
       - name: Guard manual-only paid QA dispatch
         run: node scripts/test-qa-pr61-multipage-dispatch-guard.mjs
 
-      - name: Test source-bound standards pages and clause verification
+      - name: Test multilingual physical PDF page labels and source-bound clause verification
         run: node --experimental-strip-types scripts/test-standards-source-page.ts
 
       - name: Test Clerk verifier contract without live credentials
