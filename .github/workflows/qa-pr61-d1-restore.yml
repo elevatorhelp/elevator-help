@@ -38,8 +38,12 @@ jobs:
             echo "::error::Account already has $count databases; no disposable D1 created to avoid hitting Free tier quota"
             exit 1
           fi
-          npx wrangler d1 create "$QA_DB" --location weur
+          # Refuse to take ownership of any pre-existing database, even if its name matches.
+          printf '%s' "$list" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s);if(a.some(db=>db.name===process.env.QA_DB))throw Error("QA_DATABASE_NAME_ALREADY_EXISTS")})'
+          # Persist cleanup intent BEFORE provisioning: a create that succeeds but exits
+          # non-zero must still be cleaned up by the always() step.
           echo "QA_CREATED=true" >> "$GITHUB_ENV"
+          npx wrangler d1 create "$QA_DB" --location weur
       - name: Stage published three-layer fixture on disposable D1
         run: |
           set -euo pipefail
@@ -64,6 +68,13 @@ jobs:
           set -euo pipefail
           if [ "${QA_CREATED:-}" = "true" ]; then
             case "$QA_DB" in qa-pr61-restore-${GITHUB_RUN_ID}) ;; *) echo "::error::Unsafe QA db name"; exit 1;; esac
-            npx wrangler d1 delete "$QA_DB" --skip-confirmation
-            echo "PASS: disposable QA database removed"
+            # A failed create may leave no resource. Only delete this run's exact
+            # name if it is present; never touch another D1 database.
+            list=$(npx wrangler d1 list --json)
+            if printf '%s' "$list" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s);process.exit(a.some(db=>db.name===process.env.QA_DB)?0:1)})'; then
+              npx wrangler d1 delete "$QA_DB" --skip-confirmation
+              echo "PASS: disposable QA database removed"
+            else
+              echo "PASS: no disposable QA database remains after failed provisioning"
+            fi
           fi
