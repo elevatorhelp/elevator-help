@@ -21,7 +21,7 @@ assert.equal(locked.devDependencies['@opennextjs/cloudflare'],'1.20.12');
 assert.equal(packageJson.dependencies.next,'16.4.2');
 assert.equal(locked.dependencies.next,'16.4.2');
 assert.match(workflow,/run: npm ci/,'QA must install exactly from the lockfile');
-assert.doesNotMatch(workflow,/npm install\\b|npm update\\b/,'no mutable dependency resolution after npm ci');
+assert.doesNotMatch(workflow,/npm install\b|npm update\b/,'no mutable dependency resolution after npm ci');
 assert.match(workflow,/Verify exact lockfile-pinned OpenNext and Next versions/);
 assert.equal(config.name,'elevator-help-pr61-app-qa');
 assert.equal(config.vars.INGESTION_COMPLETE_PUBLICATION,'false','RAW-only QA must not inherit complete publication');
