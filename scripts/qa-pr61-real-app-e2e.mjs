@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {hasExactQaVectorReadback} from "./qa-pr61-vector-readback.mjs";
 import {execFileSync} from "node:child_process";
 import {PR61_LOOPBACK_QA_ORIGIN,requirePr61LoopbackQaOrigin} from "./qa-pr61-isolated-origin.mjs";
 const base=new URL("/api/drive-ingest-batch",requirePr61LoopbackQaOrigin(process.env.QA_APP_BASE_URL||PR61_LOOPBACK_QA_ORIGIN));
@@ -82,15 +83,8 @@ for(let attempt=0;attempt<24&&pending.size;attempt++){
    Array.isArray(payload.result?.vectors)?payload.result.vectors:[];
   if(attempt===0||attempt===5||attempt===15||attempt===23)
    console.log("QA isolated Vectorize read",JSON.stringify({index,attempt,found:records.length,expected:expectedIds.length}));
-  // ID-only readback can pass with stale or wrong-revision vectors after a restore.
-  // Require the complete, unique staged generation and its source identity in BOTH indices.
-  const exact=records.length===expectedIds.length &&
-   new Set(records.map(v=>v?.id)).size===expectedIds.length &&
-   expectedIds.every(id=>records.some(v=>v?.id===id &&
-     v.metadata?.sourceFileId===doc &&
-     v.metadata?.sourceFingerprint===fp &&
-     Number(v.metadata?.page)===1));
-  if(exact)pending.delete(index);
+  // Both physical indices must carry the exact staged source revision.
+  if(hasExactQaVectorReadback(records,expectedIds,doc,fp))pending.delete(index);
  }
  if(pending.size)await new Promise(resolve=>setTimeout(resolve,5000));
 }
