@@ -4,6 +4,24 @@ import {readFileSync} from 'node:fs';
 const workflow=readFileSync(new URL('../.github/workflows/qa-pr61-actual-app.yml',import.meta.url),'utf8');
 const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.meta.url),'utf8'));
 const runner=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
+
+const multipageWorkflow=readFileSync(new URL('../.github/workflows/qa-pr61-multipage.yml',import.meta.url),'utf8');
+// Both manual QA workflows mutate the SAME isolated D1 database and Vectorize
+// indices. Separate concurrency groups allow overlapping publication/reset
+// operations and make readback evidence nondeterministic.
+const qaGroup=(text)=>text.match(/^  group: ([a-z0-9-]+)$/m)?.[1] ?? null;
+assert.equal(qaGroup(workflow),'qa-pr61-isolated-d1-mutating',
+  'actual-app must use the shared isolated QA mutation lock');
+assert.equal(qaGroup(multipageWorkflow),qaGroup(workflow),
+  'multipage Drive and actual-app QA must not mutate shared D1/Vectorize concurrently');
+for(const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  assert.match(qa,/^  workflow_dispatch:/m,name+' must require manual dispatch');
+  assert.doesNotMatch(qa,/^  (?:push|pull_request|schedule|workflow_run):/m,
+    name+' must not automatically mutate QA resources');
+  assert.match(qa,/^  cancel-in-progress: false$/m,
+    name+' must queue rather than cancel an in-flight QA run');
+}
+
 assert.match(workflow,/^  workflow_dispatch:/m,'actual-app cloud QA must be manually dispatched');
 assert.doesNotMatch(workflow,/^  (push|pull_request|schedule|workflow_run):/m,'no automatic cloud QA triggers');
 assert.match(workflow,/allow_isolated_d1_mutation:[\s\S]*?required: true[\s\S]*?default: false/,'existing isolated D1 mutation must require explicit opt-in');
