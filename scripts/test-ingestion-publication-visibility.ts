@@ -53,4 +53,29 @@ assert.deepEqual((await filterPublishedMatches(db,rollbackVectors)).map(x=>x.id)
 generation=2;
 assert.deepEqual((await filterPublishedMatches(db,rollbackVectors)).map(x=>x.id),["g2:older"],
  "Restored D1 generation must fence vectors from post-bookmark superseded generation");
+// Many chunks of one document must not cause one D1 query per chunk.
+// The cache is per call, not global: a later rollback must be observed.
+let lookupCount=0;
+const countingDb={prepare:()=>({bind:(documentId:string)=>({first:async()=>{
+ lookupCount++;
+ return {active_generation:documentId==="doc" ? 2 : 4};
+}})})};
+const repeated=[
+ ...Array.from({length:40},(_,i)=>({id:"g2:chunk-"+i,metadata:{sourceFileId:"doc"}})),
+ ...Array.from({length:12},(_,i)=>({id:"g4:other-"+i,metadata:{sourceFileId:"other"}})),
+ {id:"g3:stale",metadata:{sourceFileId:"doc"}},
+ {id:"legacy",metadata:{sourceFileId:"doc"}},
+];
+assert.equal((await filterPublishedMatches(countingDb,repeated)).length,52);
+assert.equal(lookupCount,2,"D1 reads must be bounded by unique sourceFileId, not Vectorize match count");
+await filterPublishedMatches(countingDb,repeated);
+assert.equal(lookupCount,4,"Cache must not outlive one request or mask later D1 generation changes");
+let outageReads=0;
+const sharedOutage={prepare:()=>({bind:()=>({first:async()=>{
+ outageReads++;
+ throw Error("D1 timeout");
+}})})};
+assert.deepEqual(await filterPublishedMatches(sharedOutage,repeated),[],
+ "Shared D1 lookup failure must fail closed for staged and legacy matches");
+assert.equal(outageReads,2,"A D1 outage must not be retried once per vector chunk");
 console.log("Staged Vectorize visibility respects published D1 generation and fails closed");
