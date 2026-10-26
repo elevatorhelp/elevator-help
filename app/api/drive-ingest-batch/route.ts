@@ -1,4 +1,5 @@
 import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
+import {hasExactStagedVectorReadback} from "../../lib/ingestion-vector-readback";
 import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
 import {stagedVectorId,recordStagedBatch,publishExactStagedManifest} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
@@ -452,15 +453,14 @@ export async function POST(request: NextRequest) {
         // Vectorize acknowledgement is not search readiness. Verify *every*
         // staged RAW/MAP vector in both bindings before changing D1 visibility.
         const ids=[...rawIds,...mapIds].map((id:string)=>stagedVectorId(id,lease.generation));
-        if(ids.length>100000||ids.some((id:string)=>id.length>512))
+        if(ids.length>100000||new Set(ids).size!==ids.length||ids.some((id:string)=>id.length>512))
           return NextResponse.json({ok:false,error:"FULL_MANIFEST_TOO_LARGE"},{status:400});
         for(const index of [(fullEnv as any).VECTORIZE,(fullEnv as any).VECTORIZE_V2]){
           if(!index?.getByIds)return NextResponse.json({ok:false,error:"VECTOR_READ_UNAVAILABLE"},{status:409});
           for(let start=0;start<ids.length;start+=20){
             const expected=ids.slice(start,start+20);
             const found=await index.getByIds(expected);
-            const actual=new Set((Array.isArray(found)?found:[]).map((x:any)=>x.id));
-            if(expected.some((id:string)=>!actual.has(id)))
+            if(!hasExactStagedVectorReadback(found,expected,body.documentId,body.sourceFingerprint))
               return NextResponse.json({ok:false,error:"STAGED_VECTOR_NOT_READY"},{status:409});
           }
         }
