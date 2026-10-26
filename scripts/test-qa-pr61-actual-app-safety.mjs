@@ -12,6 +12,17 @@ assert.match(workflow,/ref: \$\{\{ github\.sha \}\}/,'must check out the dispatc
 assert.match(workflow,/\$GITHUB_EVENT_NAME.*workflow_dispatch/,'paid path must require manual event');
 assert.match(workflow,/ALLOW_PAID_GEMINI:-false/,'paid path must fail closed');
 assert.match(workflow,/qa-pr61-ensure-lease-schema\.mjs/,'isolated D1 lease schema reconciliation required');
+// Lockfile fidelity: no second mutable npm resolution after npm ci.
+const packageJson=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8'));
+const packageLock=JSON.parse(readFileSync(new URL('../package-lock.json',import.meta.url),'utf8'));
+const locked=packageLock.packages[''];
+assert.equal(packageJson.devDependencies['@opennextjs/cloudflare'],'1.20.12');
+assert.equal(locked.devDependencies['@opennextjs/cloudflare'],'1.20.12');
+assert.equal(packageJson.dependencies.next,'16.4.2');
+assert.equal(locked.dependencies.next,'16.4.2');
+assert.match(workflow,/run: npm ci/,'QA must install exactly from the lockfile');
+assert.doesNotMatch(workflow,/npm install\\b|npm update\\b/,'no mutable dependency resolution after npm ci');
+assert.match(workflow,/Verify exact lockfile-pinned OpenNext and Next versions/);
 assert.equal(config.name,'elevator-help-pr61-app-qa');
 assert.equal(config.vars.INGESTION_COMPLETE_PUBLICATION,'false','RAW-only QA must not inherit complete publication');
 assert.deepEqual(config.d1_databases.map(x=>x.database_name),['elevator-help-lease-test-01']);
