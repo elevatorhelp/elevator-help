@@ -73,6 +73,9 @@ jobs:
       - name: Regress numeric run ID validation for isolated Drive restart QA
         run: node --experimental-strip-types scripts/test-qa-drive-recovery-run-id.mjs
 
+      - name: Reject unsafe QA Drive evidence bearer destinations and redirects
+        run: node scripts/test-qa-drive-evidence-origin.mjs
+
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
