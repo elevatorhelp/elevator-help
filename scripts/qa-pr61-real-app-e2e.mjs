@@ -74,7 +74,7 @@ for(let attempt=0;attempt<24&&pending.size;attempt++){
   const response=await fetch(vectorUrl,{method:"POST",headers:{
    Authorization:"Bearer "+process.env.CLOUDFLARE_API_TOKEN,
    "Content-Type":"application/json"
-  },body:JSON.stringify({ids:expectedIds})});
+  },body:JSON.stringify({ids:expectedIds}),redirect:"manual",signal:AbortSignal.timeout(30000)});
   const payload=await response.json();
   if(!response.ok||payload.success===false)
    throw Error("QA_VECTORIZE_READ_FAILED_HTTP_"+response.status+"_"+index);
@@ -82,7 +82,15 @@ for(let attempt=0;attempt<24&&pending.size;attempt++){
    Array.isArray(payload.result?.vectors)?payload.result.vectors:[];
   if(attempt===0||attempt===5||attempt===15||attempt===23)
    console.log("QA isolated Vectorize read",JSON.stringify({index,attempt,found:records.length,expected:expectedIds.length}));
-  if(expectedIds.every(id=>records.some(v=>v.id===id)))pending.delete(index);
+  // ID-only readback can pass with stale or wrong-revision vectors after a restore.
+  // Require the complete, unique staged generation and its source identity in BOTH indices.
+  const exact=records.length===expectedIds.length &&
+   new Set(records.map(v=>v?.id)).size===expectedIds.length &&
+   expectedIds.every(id=>records.some(v=>v?.id===id &&
+     v.metadata?.sourceFileId===doc &&
+     v.metadata?.sourceFingerprint===fp &&
+     Number(v.metadata?.page)===1));
+  if(exact)pending.delete(index);
  }
  if(pending.size)await new Promise(resolve=>setTimeout(resolve,5000));
 }
