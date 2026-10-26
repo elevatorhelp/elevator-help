@@ -70,6 +70,9 @@ jobs:
           node scripts/test-qa-physical-pdf-page.mjs
           node scripts/test-qa-authenticated-citation-contract.mjs
 
+      - name: Regress numeric run ID validation for isolated Drive restart QA
+        run: node scripts/test-qa-drive-recovery-run-id.mjs
+
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
