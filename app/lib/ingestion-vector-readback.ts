@@ -29,3 +29,23 @@ export function hasExactStagedVectorReadback(
   }
   return seen.size === expected.size;
 }
+
+/** Bound remote Vectorize getByIds calls before any external read or D1 CAS.
+ * Each RAW/MAP ID is read from two physical indices in 20-ID batches.
+ * Larger documents require a separately reviewed paginated verification flow.
+ */
+export const MAX_FULL_PUBLICATION_VECTOR_READBACK_IDS = 4096;
+export function hasBoundedFullPublicationManifest(
+  rawIds: unknown, evidenceIds: unknown, mapIds: unknown, fingerprint: unknown,
+): boolean {
+  const groups = [rawIds, evidenceIds, mapIds];
+  if (typeof fingerprint !== "string" || !fingerprint.trim() ||
+      fingerprint.length > 512 ||
+      groups.some(xs => !Array.isArray(xs) || xs.length < 1 ||
+        xs.length > MAX_FULL_PUBLICATION_VECTOR_READBACK_IDS ||
+        xs.some(id => typeof id !== "string" || !id.trim() || id.length > 512) ||
+        new Set(xs).size !== xs.length)) return false;
+  const vectors = [...(rawIds as string[]), ...(mapIds as string[])];
+  return vectors.length <= MAX_FULL_PUBLICATION_VECTOR_READBACK_IDS &&
+    new Set(vectors).size === vectors.length;
+}
