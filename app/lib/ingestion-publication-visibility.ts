@@ -14,6 +14,9 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
  db:any,matches:T[],strict=false,
 ):Promise<T[]>{
  const visible:T[]=[];
+ // A Vectorize response may contain many chunks from one document. Resolve
+ // its D1 publication once per invocation; reuse failures too (fail closed).
+ const publications=new Map<string,Promise<Publication|null>>();
  for(const match of matches){
   const id=String(match.id||"");
   const stage=parseStagedId(id);
@@ -30,7 +33,12 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
   }
   if(typeof documentId!=="string"||!documentId||!db?.prepare)continue;
   try{
-   const publication=await db.prepare("SELECT active_generation FROM ingestion_document_publications WHERE document_id=?").bind(documentId).first() as Publication|null;
+   let pending=publications.get(documentId);
+   if(!pending){
+    pending=Promise.resolve().then(()=>db.prepare("SELECT active_generation FROM ingestion_document_publications WHERE document_id=?").bind(documentId).first() as Promise<Publication|null>);
+    publications.set(documentId,pending);
+   }
+   const publication=await pending;
    if(stage){
      if(publication?.active_generation===stage.generation)visible.push(match);
    } else if(!publication || !publication.active_generation)visible.push(match);
