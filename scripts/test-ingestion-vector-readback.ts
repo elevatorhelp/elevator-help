@@ -37,6 +37,6 @@ for(const args of [
   [Array.from({length:MAX_IDS},(_,i)=>"raw-"+i),["evidence"],["map"],"revision-new"],
   [Array.from({length:MAX_IDS+1},(_,i)=>"raw-"+i),["evidence"],["map"],"revision-new"],
   [["raw"],Array.from({length:MAX_IDS+1},(_,i)=>"e-"+i),["map"],"revision-new"],
-]) assert.equal(bounded(...args),false,"unsafe publication manifest must fail before Vectorize reads");
+]) { const [raw,evidence,map,fp]=args; assert.equal(bounded(raw,evidence,map,fp),false,"unsafe publication manifest must fail before Vectorize reads"); }
 assert.equal(bounded(Array.from({length:MAX_IDS-1},(_,i)=>"r-"+i),["e"],["m"],"fp"),true);
 console.log("PASS: dual staged Vectorize readbacks require exact document/revision metadata");
