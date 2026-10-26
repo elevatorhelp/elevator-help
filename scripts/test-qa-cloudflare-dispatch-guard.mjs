@@ -33,4 +33,26 @@ assert.match(d1,/qa-pr61-restore-\$\{GITHUB_RUN_ID\}/,
   'D1 cleanup must constrain deletion to the current run-specific name');
 assert.match(d1,/list=\$\(npx wrangler d1 list --json\)/,
   'D1 cleanup must check resource existence before deletion');
+// Two separate physical QA indices are required to validate the production
+// legacy/multilingual recovery contract. A single shared test index can mask
+// partial publication or recovery failure in the second index.
+const qaIndices=['elevator-help-staging-test','elevator-help-staging-test-v2'];
+for(const file of ['wrangler.qa-app.json','wrangler.qa-staged.json','wrangler.qa-app-deployed.json']){
+  const config=JSON.parse(readFileSync(new URL('../'+file,import.meta.url),'utf8'));
+  assert.deepEqual(Object.fromEntries(config.vectorize.map(x=>[x.binding,x.index_name])),{
+    VECTORIZE:qaIndices[0],VECTORIZE_V2:qaIndices[1],
+  },file+' must not alias the legacy and multilingual QA bindings');
+}
+const vectorProvision=readFileSync(new URL('../.github/workflows/isolated-vectorize-test.yml',import.meta.url),'utf8');
+assert.match(vectorProvision,/for index in elevator-help-staging-test elevator-help-staging-test-v2;/,
+  'manual QA provisioning must cover both physical indices');
+assert.match(vectorProvision,/count.*-ge 8/,'isolated Vectorize provisioning must have a quota preflight');
+assert.doesNotMatch(vectorProvision,/elevator-help-index|elevator-help-multilingual-v2/,
+  'isolated provisioning must never address production index names');
+const readback=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
+assert.match(readback,/const qaIndexes=\["elevator-help-staging-test","elevator-help-staging-test-v2"\]/,
+  'actual-app QA must read both physical indices');
+assert.match(readback,/assert\.equal\(pending\.size,0/,
+  'actual-app QA must fail if either physical index lacks vectors');
+
 console.log('PASS: isolated Cloudflare, actual-app D1, restore D1 and Vectorize writes require opt-in; D1 failed-create cleanup is guarded');
