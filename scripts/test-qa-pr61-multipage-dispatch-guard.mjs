@@ -7,6 +7,9 @@ assert.match(trigger, /^on:\s*\r?\n  workflow_dispatch:/m, 'workflow must be man
 assert.doesNotMatch(trigger, /^  (?:push|pull_request|schedule|workflow_run):/m, 'no automatic cloud/paid QA trigger');
 assert.match(trigger, /allow_paid_qa:[\s\S]*?type: boolean[\s\S]*?required: true[\s\S]*?default: false/, 'paid QA must require an explicit false-by-default boolean');
 
+assert.match(workflow, /^  isolated-app:\r?\n    if: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.allow_paid_qa == true \}\}/m,
+  'entire multipage QA job must fail closed without explicit owner authorization');
+
 const blocks = workflow.split(/^      - name: /m).slice(1);
 const byName = new Map(blocks.map((block) => [block.split(/\r?\n/, 1)[0].trim(), block]));
 const remoteSteps = [
