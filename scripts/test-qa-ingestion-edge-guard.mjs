@@ -17,4 +17,15 @@ assert.deepEqual(endpoints,[
  "/api/qa-evidence-lookup",
 ]);
 assert.ok(!endpoints.includes("/api/ask"),"Do not expose paid/customer chat through ingestion-only QA");
-console.log("PASS: isolated ingestion QA edge denies /api/ask and only allows token-protected POST ingestion/readback routes");
+
+// The real Drive-restart drill mutates isolated D1. Its bearer must never be
+// forwarded to production, a lookalike origin or an HTTP redirect.
+const recovery=readFileSync(new URL("./qa-drive-recovery-live.mjs",import.meta.url),"utf8");
+assert.match(recovery,/QA_ISOLATED_ORIGIN_REQUIRED/);
+assert.match(recovery,/QA_UNIQUE_RUN_ID_REQUIRED/);
+assert.match(recovery,/target\.origin!==approvedOrigin/);
+assert.match(recovery,/target\.href!==approvedOrigin\+"\/"/);
+assert.match(recovery,/redirect:"manual"/);
+assert.match(recovery,/AbortSignal\.timeout\(30000\)/);
+
+console.log("PASS: isolated ingestion QA edge denies /api/ask and only allows token-protected POST ingestion/readback routes; live Drive restart is pinned to isolated origin, rejects redirects and requires unique run ID");
