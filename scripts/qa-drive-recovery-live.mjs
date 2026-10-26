@@ -29,7 +29,7 @@ fileName:"qa-restart.txt",sourcePath:"qa/recovery",page:1,chunkIndex:0,sourceFin
 r=await post({action:"index_evidence",lease:staleLease,chunks:[chunk]});
 assert.equal(r.status,200,"stage partial evidence");
 r=await post({action:"publish_full",lease:staleLease,documentId:id,sourceFingerprint:fingerprint,
-rawIds:[chunk.id],evidenceIds:[chunk.id],mapIds:[]});
+rawIds:[chunk.id],evidenceIds:[chunk.id],mapIds:[id+":map1"]});
 assert.equal(r.status,409,"partial document cannot publish");
 const q=(str)=>"'"+str.replaceAll("'","''")+"'";
 const sql="UPDATE ingestion_worker_leases SET lease_until_ms=0 WHERE job_key="+q(id);
@@ -43,7 +43,7 @@ const newLease=r.lease;
 r=await post({action:"lease_renew",lease:staleLease,durationMs:180000});
 assert.equal(r.status,409,"stale worker cannot renew");
 r=await post({action:"publish_full",lease:staleLease,documentId:id,
-sourceFingerprint:fingerprint,rawIds:[chunk.id],evidenceIds:[chunk.id],mapIds:[]});
+sourceFingerprint:fingerprint,rawIds:[chunk.id],evidenceIds:[chunk.id],mapIds:[id+":map1"]});
 assert.equal(r.status,409,"stale worker cannot publish");
 r=await post({action:"index_evidence",lease:newLease,chunks:[chunk]});
 assert.equal(r.status,200,"new worker can replay immutable evidence in fresh generation");
