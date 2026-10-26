@@ -17,7 +17,11 @@ assert.equal(config.vars.INGESTION_COMPLETE_PUBLICATION,'false','RAW-only QA mus
 assert.deepEqual(config.d1_databases.map(x=>x.database_name),['elevator-help-lease-test-01']);
 assert.equal(config.d1_databases[0].database_id,'02716877-15e3-4478-9e24-f1ba6e5dfb00');
 assert.ok(Array.isArray(config.vectorize)&&config.vectorize.length>0);
-assert.ok(config.vectorize.every(x=>x.index_name==='elevator-help-staging-test'));
+assert.deepEqual(Object.fromEntries(config.vectorize.map(x=>[x.binding,x.index_name])),{
+  VECTORIZE:'elevator-help-staging-test',
+  VECTORIZE_V2:'elevator-help-staging-test-v2',
+},'QA must use independent legacy and multilingual Vectorize indices');
+assert.equal(new Set(config.vectorize.map(x=>x.index_name)).size,2,'two bindings must not alias one index');
 assert.match(runner,/elevator-help-lease-test-01/);
 assert.match(runner,/elevator-help-staging-test/);
 console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');
