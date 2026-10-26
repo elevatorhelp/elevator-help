@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {hasExactStagedVectorReadback as ready} from "../app/lib/ingestion-vector-readback.ts";
+import {hasExactStagedVectorReadback as ready,hasBoundedFullPublicationManifest as bounded,MAX_FULL_PUBLICATION_VECTOR_READBACK_IDS as MAX_IDS} from "../app/lib/ingestion-vector-readback.ts";
 const ids=["g2:raw-1","g2:map-1"];
 const current=ids.map(id=>({id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new"}}));
 const old=ids.map(id=>({id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-old"}}));
@@ -20,4 +20,23 @@ assert.equal(ready([...current,{id:"g2:unexpected",metadata:current[0].metadata}
 assert.equal(ready(current,[ids[0],ids[0]],"doc-1","revision-new"),false);
 assert.equal(ready(current,ids,"doc-1",""),false);
 assert.equal(ready(null,ids,"doc-1","revision-new"),false);
+// Cost and safety: malformed/oversized manifests must be rejected before remote
+// dual-index getByIds, not only after reads at the D1 CAS boundary.
+assert.equal(bounded(["raw"],["evidence"],["map"],"revision-new"),true);
+for(const args of [
+  [[],["evidence"],["map"],"revision-new"],
+  [["raw"],[],["map"],"revision-new"],
+  [["raw"],["evidence"],[],"revision-new"],
+  [["raw","raw"],["evidence"],["map"],"revision-new"],
+  [["raw"],["evidence"],["raw"],"revision-new"],
+  [["raw"],["evidence"],["map"]," "],
+  [["raw"],["evidence"],["map"],"x".repeat(513)],
+  [[null],["evidence"],["map"],"revision-new"],
+  [[" "],["evidence"],["map"],"revision-new"],
+  [["x".repeat(513)],["evidence"],["map"],"revision-new"],
+  [Array.from({length:MAX_IDS},(_,i)=>"raw-"+i),["evidence"],["map"],"revision-new"],
+  [Array.from({length:MAX_IDS+1},(_,i)=>"raw-"+i),["evidence"],["map"],"revision-new"],
+  [["raw"],Array.from({length:MAX_IDS+1},(_,i)=>"e-"+i),["map"],"revision-new"],
+]) assert.equal(bounded(...args),false,"unsafe publication manifest must fail before Vectorize reads");
+assert.equal(bounded(Array.from({length:MAX_IDS-1},(_,i)=>"r-"+i),["e"],["m"],"fp"),true);
 console.log("PASS: dual staged Vectorize readbacks require exact document/revision metadata");
