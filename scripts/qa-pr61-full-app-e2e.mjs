@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-const base=process.env.QA_APP_BASE_URL;
+import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
 const token=process.env.QA_INGESTION_TOKEN;
-if(!base||!token)throw Error("QA_APP_CONFIGURATION_MISSING");
+if(!token)throw Error("QA_APP_CONFIGURATION_MISSING");
 const run=(String(process.env.GITHUB_RUN_ID||Date.now())+"-"+String(process.env.GITHUB_RUN_ATTEMPT||"1")).replace(/[^0-9-]/g,"");
 const doc="qa61-complete-"+run;
 const revision="revision-"+doc;
@@ -9,7 +10,7 @@ const owner="qa-full-"+run;
 const headers={"content-type":"application/json",Authorization:"Bearer "+token};
 const rawIds=[doc+":r1",doc+":r2"], evidenceIds=[doc+":e1",doc+":e2"];
 async function post(path,data){
- const response=await fetch(base+path,{method:"POST",headers,body:JSON.stringify(data)});
+ const response=await fetch(new URL(path,qaOrigin),{method:"POST",headers,body:JSON.stringify(data),redirect:"manual",signal:AbortSignal.timeout(120000)});
  const text=await response.text();
  let json;
  try{json=JSON.parse(text)}catch{throw Error("NON_JSON_HTTP_"+response.status)}
