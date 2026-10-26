@@ -14,7 +14,7 @@ export function hasExactQaVectorReadback(records, expectedIds, documentId, finge
         !expected.has(record.id) || seen.has(record.id) ||
         record.metadata?.sourceFileId !== documentId ||
         record.metadata?.sourceFingerprint !== fingerprint ||
-        Number(record.metadata?.page) !== 1) return false;
+        (record.metadata?.page !== 1 && record.metadata?.page !== '1')) return false;
     seen.add(record.id);
   }
   return seen.size === expected.size;
