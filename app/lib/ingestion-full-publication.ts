@@ -103,6 +103,7 @@ export async function publishFullGeneration(
    "AND active_generation<? "+
    "AND EXISTS(SELECT 1 FROM ingestion_worker_leases WHERE job_key=? "+
    "AND owner=? AND generation=? AND lease_until_ms>?) AND "+checks;
+ const all=[rawIds,evidenceIds,mapIds];
  const params:any[]=[lease.generation,now,lease.jobKey,lease.jobKey,lease.generation,
    lease.jobKey,lease.owner,lease.generation,now];
  for(const ids of all)params.push(lease.jobKey,lease.generation,ids.length,
