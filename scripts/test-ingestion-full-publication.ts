@@ -56,6 +56,30 @@ assert.equal(
  sqlite.prepare("SELECT COUNT(*) AS n FROM ingestion_staged_map_receipts").get()?.n,
  0,"rejected map manifests must not leave partial staging rows"
 );
+// Direct D1 CAS calls must not bypass the route's bounded dual-Vectorize
+// readback contract. These invalid manifests must fail before SQL mutation.
+for(const [fingerprint,raw,evidenceIds,map] of [
+ ["revision-one",Array.from({length:4096},(_,i)=>"raw-"+i),["e1"],["m1"]],
+ ["revision-one",["r1"],["e1"],["r1"]],
+ ["revision-one",[" "],["e1"],["m1"]],
+ [" ",["r1"],["e1"],["m1"]],
+ ["x".repeat(513),["r1"],["e1"],["m1"]],
+] as [string,string[],string[],string[]][]){
+ await assert.rejects(
+   publishFullGeneration(db,a,fingerprint,raw,evidenceIds,map),
+   /INVALID_FULL_PUBLICATION_MANIFEST/,
+   "direct publication must reject unverified or unbounded manifests"
+ );
+}
+for(const fingerprint of [" ","x".repeat(513)]){
+ await assert.rejects(
+   recordStagedMap(db,a,"doc",["m1"],fingerprint),
+   /INVALID_STAGED_MAP/,
+   "malformed map source fingerprint must fail before D1 writes"
+ );
+}
+assert.equal(sqlite.prepare("SELECT active_generation AS g FROM ingestion_document_publications").get()?.g,0);
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM ingestion_staged_map_receipts").get()?.n,0);
 await recordStagedMap(db,a,"doc",["m1"],"revision-one");
 assert.equal(await publishFullGeneration(db,a,"wrong",["r1","r2"],["e1"],["m1"]),false,"wrong fingerprint");
 assert.equal(await publishFullGeneration(db,a,"revision-one",["r1","wrong"],["e1"],["m1"]),false,"wrong raw manifest");
