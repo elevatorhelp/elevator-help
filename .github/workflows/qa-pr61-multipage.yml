@@ -24,6 +24,16 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
+      - name: Preflight isolated QA credentials before consuming build quota
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::Missing Cloudflare QA credential"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::Missing Cloudflare QA account"; exit 1; }
+          test -n "$GOOGLE_SERVICE_ACCOUNT_JSON" || { echo "::error::Missing Drive QA credential"; exit 1; }
       - name: Install
         run: npm ci
       - name: Enforce Next.js security floor and QA-only OpenNext compatibility
@@ -86,7 +96,8 @@ jobs:
             echo "Gemini secret present in isolated Cloudflare Worker"
           else
             echo "positive=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::GEMINI_API_KEY absent from isolated Cloudflare QA Worker. Run negative safety tests only."
+            echo "::error::GEMINI_API_KEY absent from isolated Cloudflare QA Worker; real multipage Drive QA cannot be skipped as a successful run."
+            exit 1
           fi
       - name: Test real deployed application
         if: ${{ inputs.allow_paid_qa == true }}
