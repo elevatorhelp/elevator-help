@@ -1,5 +1,5 @@
 import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
-import {hasExactStagedVectorReadback} from "../../lib/ingestion-vector-readback";
+import {hasExactStagedVectorReadback,hasBoundedFullPublicationManifest} from "../../lib/ingestion-vector-readback";
 import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
 import {stagedVectorId,recordStagedBatch,publishExactStagedManifest} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
@@ -446,6 +446,8 @@ export async function POST(request: NextRequest) {
          !Array.isArray(rawIds)||!Array.isArray(evidenceIds)||!Array.isArray(mapIds)||
          typeof body?.sourceFingerprint!=="string")
         return NextResponse.json({ok:false,error:"INVALID_FULL_PUBLICATION_REQUEST"},{status:400});
+      if(!hasBoundedFullPublicationManifest(rawIds,evidenceIds,mapIds,body.sourceFingerprint))
+        return NextResponse.json({ok:false,error:"INVALID_FULL_PUBLICATION_MANIFEST"},{status:400});
       try{
         const {env: fullEnv}=getCloudflareContext();
         const db=(fullEnv as any).CORTEX_DB;
