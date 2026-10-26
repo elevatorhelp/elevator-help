@@ -13,6 +13,12 @@ assert.match(workflow,/ref: \$\{\{ github\.sha \}\}/,'must check out the dispatc
 assert.match(workflow,/\$GITHUB_EVENT_NAME.*workflow_dispatch/,'paid path must require manual event');
 assert.match(workflow,/ALLOW_PAID_GEMINI:-false/,'paid path must fail closed');
 assert.match(workflow,/qa-pr61-ensure-lease-schema\.mjs/,'isolated D1 lease schema reconciliation required');
+// Worker logs may contain non-hex credentials, headers or source text.
+// Hex-only redaction does not make persistent Actions logs safe.
+assert.doesNotMatch(workflow,/^\\s*(?:grep|cat|tail|head|sed|awk)\\b[^\\n]*qa-app-worker\\.log/m,
+  'QA startup failure must not dump worker logs to Actions output');
+assert.match(workflow,/QA worker startup diagnostics withheld/,
+  'QA startup failure must explain why diagnostics were withheld');
 // Lockfile fidelity: no second mutable npm resolution after npm ci.
 const packageJson=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8'));
 const packageLock=JSON.parse(readFileSync(new URL('../package-lock.json',import.meta.url),'utf8'));
