@@ -41,9 +41,8 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::CLOUDFLARE_API_TOKEN unavailable"; exit 1; }
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::CLOUDFLARE_ACCOUNT_ID unavailable"; exit 1; }
           if [ "${{ inputs.allow_paid_gemini || false }}" = "true" ] && [ -z "$GEMINI_API_KEY" ]; then echo "::error::Paid QA opted in but Gemini key missing"; exit 1; fi
-      - name: QA-only OpenNext compatibility upgrade
+      - name: Verify exact lockfile-pinned OpenNext and Next versions
         run: |
-          npm install --no-save --ignore-scripts @opennextjs/cloudflare@1.20.12
           test "$(node -p 'require("next/package.json").version')" = "16.4.2"
           test "$(node -p 'require("./node_modules/@opennextjs/cloudflare/package.json").version')" = "1.20.12"
       - name: Build actual OpenNext Worker
