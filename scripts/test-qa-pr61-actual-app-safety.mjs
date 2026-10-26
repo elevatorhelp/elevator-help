@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {hasExactQaVectorReadback} from './qa-pr61-vector-readback.mjs';
 import {readFileSync} from 'node:fs';
 const workflow=readFileSync(new URL('../.github/workflows/qa-pr61-actual-app.yml',import.meta.url),'utf8');
 const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.meta.url),'utf8'));
@@ -35,4 +36,20 @@ assert.deepEqual(Object.fromEntries(config.vectorize.map(x=>[x.binding,x.index_n
 assert.equal(new Set(config.vectorize.map(x=>x.index_name)).size,2,'two bindings must not alias one index');
 assert.match(runner,/elevator-help-lease-test-01/);
 assert.match(runner,/elevator-help-staging-test/);
+// A stale ID from another revision must never satisfy isolated dual-index recovery QA.
+assert.match(runner,/hasExactQaVectorReadback\(records,expectedIds,doc,fp\)/);
+assert.match(runner,/redirect:"manual",signal:AbortSignal.timeout\(30000\)/,
+  'Cloudflare bearer must not follow redirects and reads must be bounded');
+const idA={id:'qa:1',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:1}};
+const idB={id:'qa:2',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:1}};
+assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:2'],'qa-doc','rev-1'),true);
+for(const bad of [
+  [idA], [idA,idA], [idA,idB,{...idB,id:'qa:3'}],
+  [idA,{...idB,metadata:{...idB.metadata,sourceFingerprint:'rev-old'}}],
+  [idA,{...idB,metadata:{...idB.metadata,sourceFileId:'other-doc'}}],
+  [idA,{...idB,metadata:{...idB.metadata,page:2}}],
+  [idA,{...idB,metadata:null}],
+]) assert.equal(hasExactQaVectorReadback(bad,['qa:1','qa:2'],'qa-doc','rev-1'),false,
+  'missing, duplicate, extra, stale or mismatched metadata must fail readback');
+assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:1'],'qa-doc','rev-1'),false);
 console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');
