@@ -1,9 +1,9 @@
-name: Isolated Vectorize test index
+name: Isolated dual Vectorize test indices
 on:
   workflow_dispatch:
     inputs:
       allow_isolated_vectorize_provision:
-        description: Explicitly authorize isolated Vectorize index creation and quota usage
+        description: Explicitly authorize TWO isolated Vectorize QA indices and quota usage (never production)
         type: boolean
         required: true
         default: false
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Create isolated test index
+      - name: Provision only the two allowlisted isolated QA indices
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -26,9 +26,39 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-          if npx --yes wrangler@4.125.0 vectorize list --json | grep -q 'elevator-help-staging-test'; then
-            echo 'Test index already exists; no changes made.'
-          else
-            npx --yes wrangler@4.125.0 vectorize create elevator-help-staging-test --dimensions=768 --metric=cosine
-          fi
-          npx --yes wrangler@4.125.0 vectorize list --json | grep -q 'elevator-help-staging-test'
+          # These are persistent, isolated QA resources. No production index
+          # may be selected by an input or environment variable.
+          for index in elevator-help-staging-test elevator-help-staging-test-v2; do
+            case "$index" in
+              elevator-help-staging-test|elevator-help-staging-test-v2) ;;
+              *) echo "::error::Unsafe QA index"; exit 1 ;;
+            esac
+            list=$(npx --yes wrangler@4.125.0 vectorize list --json)
+            state=$(printf '%s' "$list" | node -e '
+              let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+                const data=JSON.parse(s);
+                const rows=Array.isArray(data)?data:data.result;
+                if(!Array.isArray(rows))throw Error("UNEXPECTED_VECTORIZE_LIST");
+                const name=process.argv[1];
+                const match=rows.find(x=>x.name===name);
+                if(match&&Number(match.dimensions??768)!==768)throw Error("QA_DIMENSION_MISMATCH");
+                console.log((match?"present":"absent")+":"+rows.length);
+              })' "$index")
+            if [[ "$state" == absent:* ]]; then
+              count="${state#absent:}"
+              if [ "$count" -ge 8 ]; then
+                echo "::error::At least $count Vectorize indices exist; refuse quota-sensitive QA provision"
+                exit 1
+              fi
+              npx --yes wrangler@4.125.0 vectorize create "$index" --dimensions=768 --metric=cosine
+            fi
+            # Exact-name verification, not substring grep.
+            npx --yes wrangler@4.125.0 vectorize list --json | node -e '
+              let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+                const data=JSON.parse(s);
+                const rows=Array.isArray(data)?data:data.result;
+                if(!Array.isArray(rows)||!rows.some(x=>x.name===process.argv[1]))
+                  throw Error("QA_VECTORIZE_INDEX_MISSING");
+                console.log("PASS: isolated QA index present: "+process.argv[1]);
+              })' "$index"
+          done
