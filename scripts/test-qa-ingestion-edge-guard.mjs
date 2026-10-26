@@ -28,4 +28,27 @@ assert.match(recovery,/target\.href!==approvedOrigin\+"\/"/);
 assert.match(recovery,/redirect:"manual"/);
 assert.match(recovery,/AbortSignal\.timeout\(30000\)/);
 
+// Exercise preflight failures in a separate process; the invalid origins
+// cannot reach fetch or Cloudflare, and no real credential is involved.
+const {spawnSync}=await import("node:child_process");
+const origin="https://elevator-help-pr61-app-qa.baharmand.workers.dev";
+function denied(url,runId="12345"){
+ const child=spawnSync(process.execPath,["scripts/qa-drive-recovery-live.mjs"],{
+  cwd:new URL("../",import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/,""),
+  env:{...process.env,QA_APP_BASE_URL:url,QA_INGESTION_TOKEN:"synthetic-only",GITHUB_RUN_ID:runId,GITHUB_RUN_ATTEMPT:"1"},
+  encoding:"utf8",timeout:5000,
+ });
+ assert.notEqual(child.status,0,"Unsafe Drive QA preflight unexpectedly succeeded");
+ assert.match(child.stderr,/QA_(?:ISOLATED_ORIGIN|UNIQUE_RUN_ID)_REQUIRED/);
+ assert.ok(!child.stdout.includes("synthetic-only")&&!child.stderr.includes("synthetic-only"));
+}
+for(const url of [
+ "https://elevator.help",
+ "https://elevator-help-pr61-app-qa.baharmand.workers.dev.attacker.example",
+ "http://elevator-help-pr61-app-qa.baharmand.workers.dev",
+ origin+":8443",origin+"/unexpected-path",origin+"?redirect=https://elevator.help",
+])denied(url);
+denied(origin,"");
+
+
 console.log("PASS: isolated ingestion QA edge denies /api/ask and only allows token-protected POST ingestion/readback routes; live Drive restart is pinned to isolated origin, rejects redirects and requires unique run ID");
