@@ -1,4 +1,5 @@
 import {assertActiveIngestionLease,type IngestionLease} from "./ingestion-lease-guard.ts";
+import {hasBoundedFullPublicationManifest} from "./ingestion-vector-readback.ts";
 
 export type StagedExactEvidence={
  id:string;text:string;sourceFileId:string;fileName:string;sourcePath:string;
@@ -48,7 +49,8 @@ export async function stageExactEvidence(
 export async function recordStagedMap(
  db:any,lease:IngestionLease,documentId:string,ids:string[],sourceFingerprint:string
 ):Promise<void>{
- if(lease.jobKey!==documentId||!sourceFingerprint||!Array.isArray(ids)||
+ if(lease.jobKey!==documentId||typeof sourceFingerprint!=="string"||
+   !sourceFingerprint.trim()||sourceFingerprint.length>512||!Array.isArray(ids)||
    ids.length<1||ids.length>100||
    ids.some(id=>typeof id!=="string"||!id.trim()||id.length>512)||
    new Set(ids).size!==ids.length)
@@ -79,10 +81,11 @@ export async function publishFullGeneration(
  db:any,lease:IngestionLease,sourceFingerprint:string,
  rawIds:string[],evidenceIds:string[],mapIds:string[]
 ):Promise<boolean>{
- const all=[rawIds,evidenceIds,mapIds];
- if(!sourceFingerprint||all.some(xs=>!Array.isArray(xs)||
-    xs.length>100000||xs.some(x=>typeof x!=="string"||!x)||
-    new Set(xs).size!==xs.length)||rawIds.length===0||evidenceIds.length===0||mapIds.length===0)
+ // Defence in depth: direct internal callers must obey the same bounded
+ // RAW/Evidence/Map contract as the HTTP route, before any D1 CAS.
+ // Otherwise a caller can activate a manifest that was too large or
+ // malformed to verify in both physical Vectorize indices.
+ if(!hasBoundedFullPublicationManifest(rawIds,evidenceIds,mapIds,sourceFingerprint))
    throw Error("INVALID_FULL_PUBLICATION_MANIFEST");
  const now=Date.now();
  const tables=["ingestion_staged_receipts","ingestion_staged_evidence",
