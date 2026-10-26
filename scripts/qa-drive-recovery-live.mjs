@@ -11,7 +11,7 @@ if(target.origin!==approvedOrigin||target.href!==approvedOrigin+"/")
   throw Error("QA_ISOLATED_ORIGIN_REQUIRED");
 const runId=process.env.GITHUB_RUN_ID;
 const attempt=process.env.GITHUB_RUN_ATTEMPT||"1";
-if(!/^[1-9]\\d{0,19}$/.test(runId||"")||!/^[1-9]\\d{0,5}$/.test(attempt))
+if(!/^[1-9]\d{0,19}$/.test(runId||"")||!/^[1-9]\d{0,5}$/.test(attempt))
   throw Error("QA_UNIQUE_RUN_ID_REQUIRED");
 const id="qa-resume-"+runId+"-"+attempt;
 const ownerA="qa-recover-a",ownerB="qa-recover-b",fingerprint="revision-a";
