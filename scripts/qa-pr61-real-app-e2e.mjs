@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
-const base=(process.env.QA_APP_BASE_URL||"http://127.0.0.1:8787")+"/api/drive-ingest-batch";
+import {PR61_LOOPBACK_QA_ORIGIN,requirePr61LoopbackQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+const base=new URL("/api/drive-ingest-batch",requirePr61LoopbackQaOrigin(process.env.QA_APP_BASE_URL||PR61_LOOPBACK_QA_ORIGIN));
 const secret=process.env.QA_INGESTION_TOKEN;
 if(!secret)throw Error("QA_INGESTION_TOKEN_REQUIRED");
 const run=((process.env.GITHUB_RUN_ID||Date.now().toString())+"-"+(process.env.GITHUB_RUN_ATTEMPT||"1")).replace(/[^0-9-]/g,"");
@@ -15,7 +16,7 @@ sql(`INSERT OR IGNORE INTO ingestion_document_publications(document_id,job_key,a
 INSERT INTO ingestion_worker_leases(job_key,owner,generation,lease_until_ms,updated_at_ms) VALUES(${quote(doc)},${quote(owner)},1,${now+420000},${now});`);
 const lease={jobKey:doc,owner,generation:1};
 async function post(payload){
- const response=await fetch(base,{method:"POST",headers:{Authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify(payload)});
+ const response=await fetch(base,{method:"POST",headers:{Authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify(payload),redirect:"manual",signal:AbortSignal.timeout(120000)});
  const data=await response.json();
  return {status:response.status,...data};
 }
