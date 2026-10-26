@@ -28,37 +28,49 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           # These are persistent, isolated QA resources. No production index
           # may be selected by an input or environment variable.
-          for index in elevator-help-staging-test elevator-help-staging-test-v2; do
+          # Reserve space for both missing indices BEFORE any create call.
+          # A sequential count check could create the first index and then
+          # fail on the second, leaving an unnecessary quota-consuming orphan.
+          list=$(npx --yes wrangler@4.125.0 vectorize list --json)
+          preflight=$(printf '%s' "$list" | node -e '
+            let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+              const data=JSON.parse(s);
+              const rows=Array.isArray(data)?data:data.result;
+              if(!Array.isArray(rows))throw Error("UNEXPECTED_VECTORIZE_LIST");
+              if(rows.some(x=>!x||typeof x.name!=="string")||
+                 new Set(rows.map(x=>x.name)).size!==rows.length)
+                throw Error("AMBIGUOUS_VECTORIZE_LIST");
+              const wanted=["elevator-help-staging-test","elevator-help-staging-test-v2"];
+              for(const name of wanted){
+                const match=rows.find(x=>x.name===name);
+                if(match&&Number(match.dimensions)!==768)
+                  throw Error("QA_DIMENSION_MISMATCH:"+name);
+                if(match&&match.metric!=="cosine")
+                  throw Error("QA_METRIC_MISMATCH:"+name);
+              }
+              const missing=wanted.filter(name=>!rows.some(x=>x.name===name));
+              if(rows.length+missing.length>8)
+                throw Error("QA_QUOTA_PREFLIGHT_BLOCKED");
+              console.log(missing.join(" "));
+            })')
+          for index in $preflight; do
             case "$index" in
               elevator-help-staging-test|elevator-help-staging-test-v2) ;;
               *) echo "::error::Unsafe QA index"; exit 1 ;;
             esac
-            list=$(npx --yes wrangler@4.125.0 vectorize list --json)
-            state=$(printf '%s' "$list" | node -e '
-              let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
-                const data=JSON.parse(s);
-                const rows=Array.isArray(data)?data:data.result;
-                if(!Array.isArray(rows))throw Error("UNEXPECTED_VECTORIZE_LIST");
-                const name=process.argv[1];
-                const match=rows.find(x=>x.name===name);
-                if(match&&Number(match.dimensions??768)!==768)throw Error("QA_DIMENSION_MISMATCH");
-                console.log((match?"present":"absent")+":"+rows.length);
-              })' "$index")
-            if [[ "$state" == absent:* ]]; then
-              count="${state#absent:}"
-              if [ "$count" -ge 8 ]; then
-                echo "::error::At least $count Vectorize indices exist; refuse quota-sensitive QA provision"
-                exit 1
-              fi
-              npx --yes wrangler@4.125.0 vectorize create "$index" --dimensions=768 --metric=cosine
-            fi
-            # Exact-name verification, not substring grep.
+            npx --yes wrangler@4.125.0 vectorize create "$index" --dimensions=768 --metric=cosine
+          done
+          # Independently read back both physical indices, including metadata.
+          for index in elevator-help-staging-test elevator-help-staging-test-v2; do
             npx --yes wrangler@4.125.0 vectorize list --json | node -e '
               let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
                 const data=JSON.parse(s);
                 const rows=Array.isArray(data)?data:data.result;
-                if(!Array.isArray(rows)||!rows.some(x=>x.name===process.argv[1]))
-                  throw Error("QA_VECTORIZE_INDEX_MISSING");
+                if(!Array.isArray(rows))throw Error("UNEXPECTED_VECTORIZE_LIST");
+                const matches=rows.filter(x=>x&&x.name===process.argv[1]);
+                if(matches.length!==1)throw Error("QA_VECTORIZE_INDEX_MISSING_OR_AMBIGUOUS");
+                if(Number(matches[0].dimensions)!==768||matches[0].metric!=="cosine")
+                  throw Error("QA_VECTORIZE_INDEX_METADATA_MISMATCH");
                 console.log("PASS: isolated QA index present: "+process.argv[1]);
               })' "$index"
           done
