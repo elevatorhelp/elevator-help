@@ -67,8 +67,8 @@ jobs:
           printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put QA_INGESTION_TOKEN --config wrangler.qa-app-deployed.json >/dev/null
           printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put INGESTION_TOKEN --config wrangler.qa-app-deployed.json >/dev/null
           QA_APP_BASE_URL=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' /tmp/qa61-deploy.log | head -n1 | sed 's/[[:space:]]*$//' || true)
-          if [ -z "$QA_APP_BASE_URL" ]; then
-            echo "::error::Cloudflare worker URL could not be verified from deploy output"
+          if [ "$QA_APP_BASE_URL" != "https://elevator-help-pr61-app-qa.baharmand.workers.dev" ]; then
+            echo "::error::QA deploy URL is missing or differs from the isolated approved Worker origin"
             exit 1
           fi
           echo "QA_APP_BASE_URL=$QA_APP_BASE_URL" >> "$GITHUB_ENV"
@@ -100,8 +100,6 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           TARGET_FILE_ID: 1OlUlR0NQNhOwHtUb-MHq0DPbGtzwhPZJ
           DRIVE_FOLDER_ID: 1Epm79FVfcRhAb51WtKPxl_ZtHHNVDVN1
-          INGEST_ENDPOINT: https://elevator-help-pr61-app-qa.baharmand.workers.dev/api/drive-ingest-batch
-          DOCUMENT_MAP_ENDPOINT: https://elevator-help-pr61-app-qa.baharmand.workers.dev/api/document-map-ingest
           STAGED_AUTO_LEASE: "true"
           ALLOW_EMPTY_INGESTION_STATE: "true"
           STATE_PATH: .ingestion-state/qa-drive-multipage.json
@@ -111,6 +109,12 @@ jobs:
           set -euo pipefail
           test -n "$GOOGLE_SERVICE_ACCOUNT_JSON" || { echo "::error::Missing existing Drive QA secret"; exit 1; }
           test -n "$QA_INGESTION_TOKEN" || exit 1
+          test "$QA_APP_BASE_URL" = "https://elevator-help-pr61-app-qa.baharmand.workers.dev" || {
+            echo "::error::Refusing Drive QA against a non-isolated or unverified Worker origin"
+            exit 1
+          }
+          export INGEST_ENDPOINT="$QA_APP_BASE_URL/api/drive-ingest-batch"
+          export DOCUMENT_MAP_ENDPOINT="$QA_APP_BASE_URL/api/document-map-ingest"
           export ELEVATOR_INGESTION_TOKEN="$QA_INGESTION_TOKEN"
           set +e
           QA_INTERRUPT_AFTER_FIRST_RAW_BATCH=true node scripts/drive-ingest.mjs > /tmp/qa61-interruption.log 2>&1
