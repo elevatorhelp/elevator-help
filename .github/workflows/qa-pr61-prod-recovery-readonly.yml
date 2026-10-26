@@ -1,14 +1,20 @@
 name: PR61 production D1 recovery readiness (read-only)
 on:
   workflow_dispatch:
-  push:
-    branches: [integration/pr61-reconciled-20261024]
-    paths:
-      - .github/workflows/qa-pr61-prod-recovery-readonly.yml
+    inputs:
+      allow_production_d1_readonly:
+        description: "Explicitly authorize production D1 metadata/bookmark and row-count reads (no writes)"
+        type: boolean
+        required: true
+        default: false
 permissions:
   contents: read
+concurrency:
+  group: qa-pr61-prod-recovery-readonly
+  cancel-in-progress: false
 jobs:
   inspect:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_production_d1_readonly == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -17,6 +23,8 @@ jobs:
       DB: elevator-help-cortex
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
