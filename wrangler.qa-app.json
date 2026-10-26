@@ -47,7 +47,7 @@
     },
     {
       "binding": "VECTORIZE_V2",
-      "index_name": "elevator-help-staging-test"
+      "index_name": "elevator-help-staging-test-v2"
     }
   ]
 }
