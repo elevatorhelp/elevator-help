@@ -10,7 +10,9 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: qa-pr61-cloudflare-gemini
+  # Both QA workflows mutate elevator-help-lease-test-01 and dual QA Vectorize indices.
+  # Serialize across workflows; separate groups would permit destructive races.
+  group: qa-pr61-isolated-d1-mutating
   cancel-in-progress: false
 jobs:
   isolated-app:
