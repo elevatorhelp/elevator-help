@@ -32,7 +32,7 @@ const multipage = byName.get('Real multi-page Drive interruption and same-genera
 assert.ok(deployment && multipage, 'deployed QA origin and Drive recovery must both be present');
 assert.ok(deployment.includes('if [ "$QA_APP_BASE_URL" != "' + approvedQaOrigin + '" ]'), 'deploy output must match approved isolated QA origin');
 assert.ok(multipage.includes('test "$QA_APP_BASE_URL" = "' + approvedQaOrigin + '"'), 'Drive recovery must fail closed on unexpected QA origin');
-assert.doesNotMatch(multipage, /^\\s*(?:INGEST_ENDPOINT|DOCUMENT_MAP_ENDPOINT):\\s*https?:\\/\\//m, 'do not hardcode a possibly stale or unrelated QA Worker endpoint');
+assert.doesNotMatch(multipage, /(?:INGEST_ENDPOINT|DOCUMENT_MAP_ENDPOINT):\s*https?:\/\//, 'do not hardcode a possibly stale or unrelated QA Worker endpoint');
 assert.ok(multipage.includes('export INGEST_ENDPOINT="$QA_APP_BASE_URL/api/drive-ingest-batch"'), 'Drive RAW endpoint must follow the verified deployment');
 assert.ok(multipage.includes('export DOCUMENT_MAP_ENDPOINT="$QA_APP_BASE_URL/api/document-map-ingest"'), 'Drive Map endpoint must follow the verified deployment');
 console.log('PASS: multipage recovery targets only the exact verified freshly deployed isolated Worker');
