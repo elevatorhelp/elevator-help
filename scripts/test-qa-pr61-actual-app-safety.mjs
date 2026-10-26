@@ -15,7 +15,7 @@ assert.match(workflow,/ALLOW_PAID_GEMINI:-false/,'paid path must fail closed');
 assert.match(workflow,/qa-pr61-ensure-lease-schema\.mjs/,'isolated D1 lease schema reconciliation required');
 // Worker logs may contain non-hex credentials, headers or source text.
 // Hex-only redaction does not make persistent Actions logs safe.
-assert.doesNotMatch(workflow,/^\\s*(?:grep|cat|tail|head|sed|awk)\\b[^\\n]*qa-app-worker\\.log/m,
+assert.doesNotMatch(workflow,/^\s*(?:grep|cat|tail|head|sed|awk)\b[^\n]*qa-app-worker\.log/m,
   'QA startup failure must not dump worker logs to Actions output');
 assert.match(workflow,/QA worker startup diagnostics withheld/,
   'QA startup failure must explain why diagnostics were withheld');
