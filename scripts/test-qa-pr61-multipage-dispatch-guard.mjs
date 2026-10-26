@@ -26,6 +26,17 @@ for (const name of remoteSteps) {
 for (const name of remoteSteps.slice(4)) {
   assert.match(byName.get(name), /steps\.secret-check\.outputs\.positive == 'true'/, `missing positive-test secret gate: ${name}`);
 }
+const approvedQaOrigin = 'https://elevator-help-pr61-app-qa.baharmand.workers.dev';
+const deployment = byName.get('Deploy protected QA Worker and inject disposable auth token only');
+const multipage = byName.get('Real multi-page Drive interruption and same-generation checkpoint resume (isolated only)');
+assert.ok(deployment && multipage, 'deployed QA origin and Drive recovery must both be present');
+assert.ok(deployment.includes('if [ "$QA_APP_BASE_URL" != "' + approvedQaOrigin + '" ]'), 'deploy output must match approved isolated QA origin');
+assert.ok(multipage.includes('test "$QA_APP_BASE_URL" = "' + approvedQaOrigin + '"'), 'Drive recovery must fail closed on unexpected QA origin');
+assert.doesNotMatch(multipage, /^\\s*(?:INGEST_ENDPOINT|DOCUMENT_MAP_ENDPOINT):\\s*https?:\\/\\//m, 'do not hardcode a possibly stale or unrelated QA Worker endpoint');
+assert.ok(multipage.includes('export INGEST_ENDPOINT="$QA_APP_BASE_URL/api/drive-ingest-batch"'), 'Drive RAW endpoint must follow the verified deployment');
+assert.ok(multipage.includes('export DOCUMENT_MAP_ENDPOINT="$QA_APP_BASE_URL/api/document-map-ingest"'), 'Drive Map endpoint must follow the verified deployment');
+console.log('PASS: multipage recovery targets only the exact verified freshly deployed isolated Worker');
+
 console.log('PASS: manual-only, explicit opt-in, all remote QA steps fail closed by default');
 
 
