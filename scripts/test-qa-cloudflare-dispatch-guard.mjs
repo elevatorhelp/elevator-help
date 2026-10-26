@@ -6,6 +6,7 @@ for (const [file,job,input] of [
   ['isolated-vectorize-test.yml','provision','allow_isolated_vectorize_provision'],
   ['qa-pr61-d1-restore.yml','restore','allow_remote_d1_qa'],
   ['qa-pr61-actual-app.yml','actual-app','allow_isolated_d1_mutation'],
+  ['qa-pr61-prod-recovery-readonly.yml','inspect','allow_production_d1_readonly'],
 ]) {
   const yaml=readFileSync(new URL('../.github/workflows/'+file,import.meta.url),'utf8');
   const header=yaml.split(/^permissions:/m)[0];
@@ -64,4 +65,4 @@ assert.match(readback,/const qaIndexes=\["elevator-help-staging-test","elevator-
 assert.match(readback,/assert\.equal\(pending\.size,0/,
   'actual-app QA must fail if either physical index lacks vectors');
 
-console.log('PASS: isolated Cloudflare, actual-app D1, restore D1 and Vectorize writes require opt-in; D1 failed-create cleanup is guarded');
+console.log('PASS: isolated Cloudflare writes and production D1 read-only inspection require explicit manual opt-in; D1 cleanup and dual-Vectorize bindings guarded');
