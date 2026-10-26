@@ -59,28 +59,33 @@ assert.equal(r.published,true);
 console.log("PASS: actual Next.js API exact-manifest atomic publication");
 // Prove real read-after-publication: a successful API write alone is not retrieval evidence.
 const expectedIds=actualStagedIds;
-const vectorUrl="https://api.cloudflare.com/client/v4/accounts/"+
- encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)+
- "/vectorize/v2/indexes/elevator-help-staging-test/get_by_ids";
+const qaIndexes=["elevator-help-staging-test","elevator-help-staging-test-v2"];
 if(!process.env.CLOUDFLARE_API_TOKEN||!process.env.CLOUDFLARE_ACCOUNT_ID)
  throw Error("QA_CLOUDFLARE_CREDENTIALS_REQUIRED");
-let verified=false;
-for(let attempt=0;attempt<24;attempt++){
- const response=await fetch(vectorUrl,{method:"POST",headers:{
-  Authorization:"Bearer "+process.env.CLOUDFLARE_API_TOKEN,
-  "Content-Type":"application/json"
- },body:JSON.stringify({ids:expectedIds})});
- const payload=await response.json();
- if(!response.ok||payload.success===false)
-  throw Error("QA_VECTORIZE_READ_FAILED_HTTP_"+response.status);
- const records=Array.isArray(payload.result)?payload.result:
-  Array.isArray(payload.result?.vectors)?payload.result.vectors:[];
- if(attempt===0||attempt===5||attempt===15||attempt===23)
-  console.log("QA Vectorize read",JSON.stringify({attempt,found:records.length,returnedIds:records.map(v=>v.id),expectedIds}));
- if(expectedIds.every(id=>records.some(v=>v.id===id))){verified=true;break;}
- await new Promise(resolve=>setTimeout(resolve,5000));
+const pending=new Set(qaIndexes);
+// Both physical indices must return all expected IDs. Aliasing two bindings to
+// the same index would conceal an incomplete dual-index recovery.
+for(let attempt=0;attempt<24&&pending.size;attempt++){
+ for(const index of [...pending]){
+  const vectorUrl="https://api.cloudflare.com/client/v4/accounts/"+
+   encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)+
+   "/vectorize/v2/indexes/"+encodeURIComponent(index)+"/get_by_ids";
+  const response=await fetch(vectorUrl,{method:"POST",headers:{
+   Authorization:"Bearer "+process.env.CLOUDFLARE_API_TOKEN,
+   "Content-Type":"application/json"
+  },body:JSON.stringify({ids:expectedIds})});
+  const payload=await response.json();
+  if(!response.ok||payload.success===false)
+   throw Error("QA_VECTORIZE_READ_FAILED_HTTP_"+response.status+"_"+index);
+  const records=Array.isArray(payload.result)?payload.result:
+   Array.isArray(payload.result?.vectors)?payload.result.vectors:[];
+  if(attempt===0||attempt===5||attempt===15||attempt===23)
+   console.log("QA isolated Vectorize read",JSON.stringify({index,attempt,found:records.length,expected:expectedIds.length}));
+  if(expectedIds.every(id=>records.some(v=>v.id===id)))pending.delete(index);
+ }
+ if(pending.size)await new Promise(resolve=>setTimeout(resolve,5000));
 }
-assert.equal(verified,true,"staged vectors not readable from isolated Vectorize");
+assert.equal(pending.size,0,"Staged vectors missing from independent QA indices: "+[...pending].join(","));
 const d1Read=execFileSync("npx",["wrangler","d1","execute",
  "elevator-help-lease-test-01","--remote","--config","wrangler.qa-app.json",
  "--command",`SELECT active_generation FROM ingestion_document_publications WHERE document_id=${quote(doc)}`,
