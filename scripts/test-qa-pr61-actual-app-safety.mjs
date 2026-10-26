@@ -49,11 +49,15 @@ assert.match(runner,/redirect:"manual",signal:AbortSignal.timeout\(30000\)/,
 const idA={id:'qa:1',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:1}};
 const idB={id:'qa:2',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:1}};
 assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:2'],'qa-doc','rev-1'),true);
+assert.equal(hasExactQaVectorReadback([{...idA,metadata:{...idA.metadata,page:'1'}},idB],['qa:1','qa:2'],'qa-doc','rev-1'),true,
+  'literal decimal string page 1 remains compatible');
 for(const bad of [
   [idA], [idA,idA], [idA,idB,{...idB,id:'qa:3'}],
   [idA,{...idB,metadata:{...idB.metadata,sourceFingerprint:'rev-old'}}],
   [idA,{...idB,metadata:{...idB.metadata,sourceFileId:'other-doc'}}],
   [idA,{...idB,metadata:{...idB.metadata,page:2}}],
+  ...[true,[1],'1e0','1.0',' 1 ',{value:1}].map(page =>
+    [idA,{...idB,metadata:{...idB.metadata,page}}]),
   [idA,{...idB,metadata:null}],
 ]) assert.equal(hasExactQaVectorReadback(bad,['qa:1','qa:2'],'qa-doc','rev-1'),false,
   'missing, duplicate, extra, stale or mismatched metadata must fail readback');
