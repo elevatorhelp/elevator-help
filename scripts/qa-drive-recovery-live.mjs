@@ -2,12 +2,23 @@ import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 const base=process.env.QA_APP_BASE_URL,token=process.env.QA_INGESTION_TOKEN;
 if(!base||!token)throw Error("QA_PARAMETERS_MISSING");
-const id="qa-resume-"+process.env.GITHUB_RUN_ID+"-"+(process.env.GITHUB_RUN_ATTEMPT||"1");
+// This script stages evidence and mutates a D1 lease. Never send its bearer
+// token to production, a lookalike hostname, a redirect, or an arbitrary URL.
+const approvedOrigin="https://elevator-help-pr61-app-qa.baharmand.workers.dev";
+let target;
+try { target=new URL(base); } catch { throw Error("QA_ISOLATED_ORIGIN_REQUIRED"); }
+if(target.origin!==approvedOrigin||target.href!==approvedOrigin+"/")
+  throw Error("QA_ISOLATED_ORIGIN_REQUIRED");
+const runId=process.env.GITHUB_RUN_ID;
+const attempt=process.env.GITHUB_RUN_ATTEMPT||"1";
+if(!/^[1-9]\\d{0,19}$/.test(runId||"")||!/^[1-9]\\d{0,5}$/.test(attempt))
+  throw Error("QA_UNIQUE_RUN_ID_REQUIRED");
+const id="qa-resume-"+runId+"-"+attempt;
 const ownerA="qa-recover-a",ownerB="qa-recover-b",fingerprint="revision-a";
 async function post(body){
- const response=await fetch(base+"/api/drive-ingest-batch",{
+ const response=await fetch(new URL("/api/drive-ingest-batch",target),{
  method:"POST",headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},
- body:JSON.stringify(body)});
+ body:JSON.stringify(body),redirect:"manual",signal:AbortSignal.timeout(30000)});
  return {status:response.status,...await response.json()};
 }
 let r=await post({action:"lease_claim",documentId:id,owner:ownerA,durationMs:30000});
