@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 import {extractReferenceIdentifiers} from "../app/lib/reference-identifiers.ts";
+import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+// Validate before any remote D1 read or bearer-bearing HTTP request.
+const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
+const qaToken=process.env.QA_INGESTION_TOKEN;
+if(typeof qaToken!=="string" || !qaToken)throw Error("QA_INGESTION_TOKEN_REQUIRED");
 const fileId=process.env.TARGET_FILE_ID || "1VRn4-2Pm_Pl_W5gU0OYmRl_Oh2xljMYf";
 if(!/^[A-Za-z0-9_-]{10,128}$/.test(fileId))throw Error("QA_INVALID_TARGET_FILE_ID");
 const sql="SELECT e.document_id,e.generation,e.chunk_id,e.identifiers_json,e.page "+
@@ -18,9 +23,10 @@ const ids=JSON.parse(record.identifiers_json);
 const candidate=ids.find(x=>typeof x.label==="string"&&
   extractReferenceIdentifiers(x.label).some(y=>y.key===x.key));
 assert.ok(candidate,"pilot document has no queryable deterministic identifier");
-const response=await fetch(process.env.QA_APP_BASE_URL+"/api/qa-evidence-lookup",{
- method:"POST",headers:{"Authorization":"Bearer "+process.env.QA_INGESTION_TOKEN,
- "Content-Type":"application/json"},body:JSON.stringify({query:candidate.label})
+const response=await fetch(new URL("/api/qa-evidence-lookup",qaOrigin),{
+ method:"POST",headers:{"Authorization":"Bearer "+qaToken,
+ "Content-Type":"application/json"},body:JSON.stringify({query:candidate.label}),
+ redirect:"manual",signal:AbortSignal.timeout(30000)
 });
 if(response.status!==200) {
  const errorBody=await response.clone().json().catch(()=>({error:"NON_JSON"}));
