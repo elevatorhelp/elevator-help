@@ -46,7 +46,16 @@ for(const file of ['wrangler.qa-app.json','wrangler.qa-staged.json','wrangler.qa
 const vectorProvision=readFileSync(new URL('../.github/workflows/isolated-vectorize-test.yml',import.meta.url),'utf8');
 assert.match(vectorProvision,/for index in elevator-help-staging-test elevator-help-staging-test-v2;/,
   'manual QA provisioning must cover both physical indices');
-assert.match(vectorProvision,/count.*-ge 8/,'isolated Vectorize provisioning must have a quota preflight');
+assert.match(vectorProvision,/rows\.length\+missing\.length>8/,
+  'preflight must reserve quota for BOTH missing QA indices before creating either');
+assert.match(vectorProvision,/new Set\(rows\.map\(x=>x\.name\)\)\.size!==rows\.length/,
+  'preflight must reject duplicate or ambiguous index identities');
+assert.match(vectorProvision,/Number\(match\.dimensions\)!==768/,
+  'existing QA indices must have verified dimensions');
+assert.match(vectorProvision,/match\.metric!=="cosine"/,
+  'existing QA indices must have verified cosine metric');
+assert.doesNotMatch(vectorProvision,/dimensions\?\?768/,
+  'missing dimension metadata must not silently pass as 768');
 assert.doesNotMatch(vectorProvision,/elevator-help-index|elevator-help-multilingual-v2/,
   'isolated provisioning must never address production index names');
 const readback=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
