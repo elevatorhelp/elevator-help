@@ -14,7 +14,7 @@ for (const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]
   assert.ok(guard>0 && test>guard && firstRemote>test,
     name+' must validate QA-only config and negative fixtures before remote D1 writes');
   assert.match(qa,/run: npm ci/,name+' must install from pinned lockfile');
-  assert.doesNotMatch(qa,/npm install\\b|npm update\\b/,
+  assert.doesNotMatch(qa,/npm install\b|npm update\b/,
     name+' must not re-resolve dependencies after npm ci');
 }
 // Both manual QA workflows mutate the SAME isolated D1 database and Vectorize
