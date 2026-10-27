@@ -58,7 +58,7 @@ try {
     writeFileSync(log, '');
     const result = run();
     assert.notEqual(result.status, 0, name + ' must fail closed');
-    assert.equal(readFileSync(log, 'utf8'), 'called\\n',
+    assert.equal(readFileSync(log, 'utf8'), 'called\n',
       name + ' should fail on the first mocked D1 response');
   }
   writeFileSync(resultFile, JSON.stringify(validResult));
