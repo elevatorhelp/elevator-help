@@ -6,6 +6,17 @@ const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.me
 const runner=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
 
 const multipageWorkflow=readFileSync(new URL('../.github/workflows/qa-pr61-multipage.yml',import.meta.url),'utf8');
+// The exact isolated resource check must execute BEFORE any remote mutation/deploy.
+for (const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  const guard=qa.indexOf('node scripts/qa-pr61-assert-isolated-config.mjs');
+  const test=qa.indexOf('node scripts/test-qa-pr61-assert-isolated-config.mjs');
+  const firstRemote=qa.indexOf('npx wrangler d1 execute');
+  assert.ok(guard>0 && test>guard && firstRemote>test,
+    name+' must validate QA-only config and negative fixtures before remote D1 writes');
+  assert.match(qa,/run: npm ci/,name+' must install from pinned lockfile');
+  assert.doesNotMatch(qa,/npm install\\b|npm update\\b/,
+    name+' must not re-resolve dependencies after npm ci');
+}
 // Both manual QA workflows mutate the SAME isolated D1 database and Vectorize
 // indices. Separate concurrency groups allow overlapping publication/reset
 // operations and make readback evidence nondeterministic.
