@@ -1,16 +1,14 @@
 // Safe, idempotent schema compatibility for the dedicated PR61 QA database only.
 // Never invoke against production D1.
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
 import {execFileSync} from "node:child_process";
+import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";
 
-const config=JSON.parse(readFileSync(new URL("../wrangler.qa-app.json",import.meta.url),"utf8"));
-assert.equal(config.name,"elevator-help-pr61-app-qa");
-assert.equal(config.d1_databases?.length,1);
-assert.equal(config.d1_databases[0].binding,"CORTEX_DB");
-assert.equal(config.d1_databases[0].database_name,"elevator-help-lease-test-01");
-assert.equal(config.d1_databases[0].database_id,"02716877-15e3-4478-9e24-f1ba6e5dfb00");
-assert.ok(config.vectorize?.every(v=>v.index_name==="elevator-help-staging-test"));
+// Fail closed before ANY remote D1 call. The old single-index every() check
+// rejected the valid distinct VECTORIZE_V2 QA binding and silently accepted
+// an empty vectorize array. Share the exact reviewed dual-index guard instead.
+assertBothQaConfigs();
+
 const execute=(command)=>{
   const result=execFileSync("npx",["wrangler","d1","execute",
     "elevator-help-lease-test-01","--remote","--config","wrangler.qa-app.json",
