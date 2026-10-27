@@ -1,9 +1,136 @@
 import assert from 'node:assert/strict';
 import {hasExactQaVectorReadback} from './qa-pr61-vector-readback.mjs';
+import {parseQaHttpResponse} from './qa-pr61-verified-http-response.mjs';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
 const workflow=readFileSync(new URL('../.github/workflows/qa-pr61-actual-app.yml',import.meta.url),'utf8');
 const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.meta.url),'utf8'));
 const runner=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
+const fullAppRunner=readFileSync(new URL('./qa-pr61-full-app-e2e.mjs',import.meta.url),'utf8');
+// These opt-in remote E2E runners are not imported by ordinary CI, so an
+// unterminated assertion string can silently survive a green build. Parse both
+// complete modules without executing them or touching Cloudflare/Gemini.
+for (const [name, source] of [['actual-app', runner], ['full-app', fullAppRunner]]) {
+  const check = spawnSync(process.execPath, ['--check', '--input-type=module'], {
+    input: source, encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(check.status, 0, name+' remote E2E script must be valid JavaScript');
+  const broken = spawnSync(process.execPath, ['--check', '--input-type=module'], {
+    input: source+'\nconst intentionallyBrokenSyntax = ";\n',
+    encoding: 'utf8', timeout: 15000,
+  });
+  assert.notEqual(broken.status, 0, name+' syntax regression must be detected');
+}
+
+// These scripts can also be invoked directly outside the guarded Actions jobs.
+// A direct invocation must reject changed QA bindings before its first remote action.
+function assertStandaloneResourceGuard(name, source, firstAction) {
+  const importLine='import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";';
+  const call='\nassertBothQaConfigs();\n';
+  const guard=source.indexOf(call);
+  assert.ok(source.includes(importLine) && guard>0 && source.indexOf(firstAction)>guard,
+    name+' must enforce isolated QA resources before remote operations');
+}
+for (const [name,source,firstAction] of [
+  ['actual-app',runner,'const base=new URL('],
+  ['full-app',fullAppRunner,'const qaOrigin=requirePr61IsolatedQaOrigin('],
+]) {
+  assertStandaloneResourceGuard(name,source,firstAction);
+  assert.throws(()=>assertStandaloneResourceGuard(name,source.replace('\nassertBothQaConfigs();\n','\n'),firstAction),
+    name+' must reject removal of the standalone resource guard');
+}
+
+
+const multipageWorkflow=readFileSync(new URL('../.github/workflows/qa-pr61-multipage.yml',import.meta.url),'utf8');
+// The exact isolated resource check must execute BEFORE any remote mutation/deploy.
+for (const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  const guard=qa.indexOf('node scripts/qa-pr61-assert-isolated-config.mjs');
+  const test=qa.indexOf('node scripts/test-qa-pr61-assert-isolated-config.mjs');
+  const firstRemote=qa.indexOf('npx wrangler d1 execute');
+  assert.ok(guard>0 && test>guard && firstRemote>test,
+    name+' must validate QA-only config and negative fixtures before remote D1 writes');
+  assert.match(qa,/run: npm ci/,name+' must install from pinned lockfile');
+  assert.doesNotMatch(qa,/npm install\b|npm update\b/,
+    name+' must not re-resolve dependencies after npm ci');
+}
+// Verify both manual QA workflows check out the dispatched commit, not a
+// moving branch, and do not persist GitHub credentials on Cloudflare QA runners.
+function assertPinnedCheckout(name, qa) {
+  const pinned = [
+    '      - name: Checkout exact dispatched branch commit',
+    '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7',
+    '        with:',
+    '          ref: ${{ github.sha }}',
+    '          persist-credentials: false',
+  ].join('\n');
+  assert.ok(qa.includes(pinned),
+    name+' must check out exact github.sha without persisting GitHub credentials');
+}
+for (const [name, qa] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  assertPinnedCheckout(name, qa);
+  assert.throws(()=>assertPinnedCheckout(name, qa.replace('ref: ${{ github.sha }}','ref: main')),
+    name+' must reject moving-branch checkout');
+  assert.throws(()=>assertPinnedCheckout(name, qa.replace('persist-credentials: false','persist-credentials: true')),
+    name+' must reject persisted GitHub credentials');
+}
+
+// Config validation alone cannot protect a literal Wrangler D1 command: a
+// mistyped database name or --config would bypass the QA-only config guard.
+// Assert every mutating D1 CLI command before anyone dispatches remote QA.
+const expectedD1Commands={
+  'actual-app': [
+    'npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app.json --file scripts/qa-pr61-bootstrap.sql',
+  ],
+  'multipage': [
+    'npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app-deployed.json --file scripts/qa-pr61-bootstrap.sql',
+    'npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app-deployed.json --file docs/ingestion-full-publication-schema.sql',
+  ],
+};
+function assertQaD1Commands(name, qa) {
+  const commands=[...qa.matchAll(/^\s*(?:run:\s*)?npx wrangler d1 execute[^\n]*$/gm)]
+    .map(match=>match[0].trim().replace(/^run:\s*/,''));
+  assert.deepEqual(commands,expectedD1Commands[name],
+    name+' must mutate only approved isolated D1 using the reviewed config and SQL');
+}
+assertQaD1Commands('actual-app',workflow);
+assertQaD1Commands('multipage',multipageWorkflow);
+for(const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  for(const mutation of [
+    text=>text.replace('d1 execute elevator-help-lease-test-01','d1 execute elevator-help-cortex'),
+    text=>text.replace(' --remote --config ',' --local --config '),
+    text=>text.replace('--config wrangler.qa-app','--config wrangler.production'),
+  ]) {
+    assert.throws(()=>assertQaD1Commands(name,mutation(qa)),
+      name+' unsafe D1 command mutation must be rejected');
+  }
+}
+
+// Cloudflare CLI diagnostics may include headers, credentials or source text.
+// Do not stream raw deploy logs into durable GitHub Actions output.
+assert.match(multipageWorkflow,
+  /^\s*npx wrangler deploy --config wrangler\.qa-app-deployed\.json > \/tmp\/qa61-deploy\.log 2>&1\s*$/m,
+  'deployed QA Worker must capture both stdout and stderr locally');
+assert.doesNotMatch(multipageWorkflow,/npx wrangler deploy[^\n]*\|\s*tee\b/,
+  'QA deploy must not tee raw Wrangler diagnostics into Actions logs');
+assert.doesNotMatch(multipageWorkflow,/^\s*(?:cat|tail|head|sed|awk)\b[^\n]*qa61-deploy\.log/m,
+  'QA failure must not print raw deployment diagnostics');
+
+// Both manual QA workflows mutate the SAME isolated D1 database and Vectorize
+// indices. Separate concurrency groups allow overlapping publication/reset
+// operations and make readback evidence nondeterministic.
+const qaGroup=(text)=>text.match(/^  group: ([a-z0-9-]+)$/m)?.[1] ?? null;
+assert.equal(qaGroup(workflow),'qa-pr61-isolated-d1-mutating',
+  'actual-app must use the shared isolated QA mutation lock');
+assert.equal(qaGroup(multipageWorkflow),qaGroup(workflow),
+  'multipage Drive and actual-app QA must not mutate shared D1/Vectorize concurrently');
+for(const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  assert.match(qa,/^  workflow_dispatch:/m,name+' must require manual dispatch');
+  assert.doesNotMatch(qa,/^  (?:push|pull_request|schedule|workflow_run):/m,
+    name+' must not automatically mutate QA resources');
+  assert.match(qa,/^  cancel-in-progress: false$/m,
+    name+' must queue rather than cancel an in-flight QA run');
+}
+
 assert.match(workflow,/^  workflow_dispatch:/m,'actual-app cloud QA must be manually dispatched');
 assert.doesNotMatch(workflow,/^  (push|pull_request|schedule|workflow_run):/m,'no automatic cloud QA triggers');
 assert.match(workflow,/allow_isolated_d1_mutation:[\s\S]*?required: true[\s\S]*?default: false/,'existing isolated D1 mutation must require explicit opt-in');
@@ -62,4 +189,41 @@ for(const bad of [
 ]) assert.equal(hasExactQaVectorReadback(bad,['qa:1','qa:2'],'qa-doc','rev-1'),false,
   'missing, duplicate, extra, stale or mismatched metadata must fail readback');
 assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:1'],'qa-doc','rev-1'),false);
+// Regression: both E2E scripts previously spread untrusted JSON after the
+// transport status, so {status:200} could make a real HTTP 409 look successful.
+for (const [name, source] of [['actual-app',runner],['full-app',fullAppRunner]]) {
+  assert.ok(source.includes('return parseQaHttpResponse(response);'),
+    name+' must use the shared transport-status-preserving response parser');
+  assert.ok(!source.includes('return {status:response.status,...'),
+    name+' must not permit JSON status to overwrite HTTP status');
+}
+const spoofedSuccess=await parseQaHttpResponse(new Response(
+  JSON.stringify({status:200,published:true}),{status:409}));
+assert.equal(spoofedSuccess.status,409,'HTTP 409 must not be spoofed by JSON status 200');
+const spoofedFailure=await parseQaHttpResponse(new Response(
+  JSON.stringify({status:409,published:true}),{status:200}));
+assert.equal(spoofedFailure.status,200,'HTTP 200 must remain authoritative');
+await assert.rejects(
+  parseQaHttpResponse(new Response('private diagnostic',{status:502})),
+  error=>error.message==='QA_NON_JSON_HTTP_502' && !error.message.includes('private'));
+await assert.rejects(
+  parseQaHttpResponse(new Response('null',{status:200})),
+  /QA_INVALID_JSON_HTTP_200/);
+await assert.rejects(
+  parseQaHttpResponse(new Response('[]',{status:200})),
+  /QA_INVALID_JSON_HTTP_200/);
+
+// HTTP response bodies may contain confidential server diagnostics or echoed
+// input. QA failures must not serialize the untrusted payload into Actions logs.
+function assertNoUntrustedQaPayloadInErrors(name, source) {
+  assert.doesNotMatch(source, /JSON\.stringify\((?:r|res|result|map)\)/,
+    name+' must not log remote response payloads on assertion failure');
+}
+for (const [name, source] of [['actual-app', runner], ['full-app', fullAppRunner]]) {
+  assertNoUntrustedQaPayloadInErrors(name, source);
+  assert.throws(() => assertNoUntrustedQaPayloadInErrors(name,
+    source+'\\nthrow Error(JSON.stringify(res));'),
+    name+' must reject unsafe response-body logging');
+}
+
 console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');

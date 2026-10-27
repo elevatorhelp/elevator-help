@@ -9,8 +9,10 @@ on:
         default: false
 permissions:
   contents: read
+# Both QA workflows mutate elevator-help-lease-test-01 and dual QA Vectorize indices.
+# Serialize across workflows; separate groups would permit destructive races.
 concurrency:
-  group: qa-pr61-cloudflare-gemini
+  group: qa-pr61-isolated-d1-mutating
   cancel-in-progress: false
 jobs:
   isolated-app:
@@ -18,12 +20,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - name: Checkout exact triggering integration commit
+      - name: Checkout exact dispatched branch commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Node 22
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
+      - name: Fail closed on unreviewed Cloudflare QA resources before remote mutation
+        run: |
+          node scripts/qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-assert-isolated-config.mjs
       - name: Preflight isolated QA credentials before consuming build quota
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -40,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/guard-next-security-baseline.mjs
-          npm install --no-save --ignore-scripts @opennextjs/cloudflare@1.20.12
+          # OpenNext and Next are already pinned in package-lock.json; do not re-resolve.
           test "$(node -p 'require("next/package.json").version')" = "16.4.2"
           test "$(node -p 'require("./node_modules/@opennextjs/cloudflare/package.json").version')" = "1.20.12"
       - name: Validate isolated lease and three-layer publication contracts
@@ -74,7 +83,9 @@ jobs:
           QA_INGESTION_TOKEN=$(openssl rand -hex 32)
           echo "::add-mask::$QA_INGESTION_TOKEN"
           echo "QA_INGESTION_TOKEN=$QA_INGESTION_TOKEN" >> "$GITHUB_ENV"
-          npx wrangler deploy --config wrangler.qa-app-deployed.json 2>&1 | tee /tmp/qa61-deploy.log
+          # Wrangler diagnostics can include request metadata and credential material.
+          # Keep the deploy log local; only emit a sanitized failure status to Actions.
+          npx wrangler deploy --config wrangler.qa-app-deployed.json > /tmp/qa61-deploy.log 2>&1
           printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put QA_INGESTION_TOKEN --config wrangler.qa-app-deployed.json >/dev/null
           printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put INGESTION_TOKEN --config wrangler.qa-app-deployed.json >/dev/null
           QA_APP_BASE_URL=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' /tmp/qa61-deploy.log | head -n1 | sed 's/[[:space:]]*$//' || true)

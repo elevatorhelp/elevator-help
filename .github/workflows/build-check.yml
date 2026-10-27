@@ -6,7 +6,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Also validate the stacked PR74 against its integration base before reconciliation.
+    branches: [main, integration/pr61-reconciled-20261024]
 
 permissions:
   contents: read
@@ -54,6 +55,9 @@ jobs:
         run: |
           node --experimental-sqlite scripts/test-qa-pr61-bootstrap.mjs
           node scripts/test-qa-pr61-actual-app-safety.mjs
+          node scripts/qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-ensure-lease-schema.mjs
 
       - name: Test multilingual physical PDF page labels and source-bound clause verification
         run: node --experimental-strip-types scripts/test-standards-source-page.ts

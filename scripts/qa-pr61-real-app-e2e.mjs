@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import {hasExactQaVectorReadback} from "./qa-pr61-vector-readback.mjs";
+import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";
+import {parseQaHttpResponse} from "./qa-pr61-verified-http-response.mjs";
 import {execFileSync} from "node:child_process";
 import {PR61_LOOPBACK_QA_ORIGIN,requirePr61LoopbackQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+// Direct CLI invocation must also fail closed before remote D1 or Vectorize calls.
+assertBothQaConfigs();
 const base=new URL("/api/drive-ingest-batch",requirePr61LoopbackQaOrigin(process.env.QA_APP_BASE_URL||PR61_LOOPBACK_QA_ORIGIN));
 const secret=process.env.QA_INGESTION_TOKEN;
 if(!secret)throw Error("QA_INGESTION_TOKEN_REQUIRED");
@@ -18,11 +22,10 @@ INSERT INTO ingestion_worker_leases(job_key,owner,generation,lease_until_ms,upda
 const lease={jobKey:doc,owner,generation:1};
 async function post(payload){
  const response=await fetch(base,{method:"POST",headers:{Authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify(payload),redirect:"manual",signal:AbortSignal.timeout(120000)});
- const data=await response.json();
- return {status:response.status,...data};
+ return parseQaHttpResponse(response);
 }
 let r=await post({action:"status",lease});
-assert.equal(r.status,200,"actual Next.js status route failed: "+JSON.stringify(r));
+assert.equal(r.status,200,"actual Next.js status route failed (HTTP status only)");
 assert.equal(r.legacyConfigured,true);assert.equal(r.multilingualConfigured,true);
 assert.equal(r.archiveIndexConfigured,true);
 console.log("PASS: real OpenNext API /api/drive-ingest-batch active on isolated bindings");
@@ -48,7 +51,7 @@ if (process.env.QA_NEGATIVE_ONLY === "true") {
   process.exit(0);
 }
 r=await post({action:"upsert",lease,chunks:[{id:doc+":1",text:"EN 81-20 QA test technical sentence one.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:0,sourceFingerprint:fp},{id:doc+":2",text:"EN 81-50 QA test technical sentence two.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:1,sourceFingerprint:fp}]});
-assert.equal(r.status,200,"real application upsert failed: "+JSON.stringify(r));
+assert.equal(r.status,200,"real application upsert failed (HTTP status only)");
 assert.equal(r.staged,true);
 const actualStagedIds=r.ids;
 assert.ok(Array.isArray(actualStagedIds)&&actualStagedIds.length===2,"server did not return both staged IDs");
@@ -56,7 +59,7 @@ console.log("PASS: real Next.js API staged 2 raw document chunks");
 r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":wrong"]});
 assert.equal(r.status,409,"wrong manifest erroneously published");
 r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":2"]});
-assert.equal(r.status,200,"real application publish failed: "+JSON.stringify(r));
+assert.equal(r.status,200,"real application publish failed (HTTP status only)");
 assert.equal(r.published,true);
 console.log("PASS: actual Next.js API exact-manifest atomic publication");
 // Prove real read-after-publication: a successful API write alone is not retrieval evidence.

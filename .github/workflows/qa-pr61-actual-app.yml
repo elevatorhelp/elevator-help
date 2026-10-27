@@ -13,8 +13,10 @@ on:
         default: false
 permissions:
   contents: read
+# Both QA workflows mutate elevator-help-lease-test-01 and dual QA Vectorize indices.
+# Serialize across workflows; separate groups would permit destructive races.
 concurrency:
-  group: qa-pr61-actual-app
+  group: qa-pr61-isolated-d1-mutating
   cancel-in-progress: false
 jobs:
   actual-app:
@@ -26,10 +28,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Node 22
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
+      - name: Fail closed on unreviewed Cloudflare QA resources before remote mutation
+        run: |
+          node scripts/qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-assert-isolated-config.mjs
       - name: Dependencies
         run: npm ci
       - name: Validate isolated credentials
