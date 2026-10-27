@@ -80,7 +80,9 @@ jobs:
           QA_INGESTION_TOKEN=$(openssl rand -hex 32)
           echo "::add-mask::$QA_INGESTION_TOKEN"
           echo "QA_INGESTION_TOKEN=$QA_INGESTION_TOKEN" >> "$GITHUB_ENV"
-          npx wrangler deploy --config wrangler.qa-app-deployed.json 2>&1 | tee /tmp/qa61-deploy.log
+          # Wrangler diagnostics can include request metadata and credential material.
+          # Keep the deploy log local; only emit a sanitized failure status to Actions.
+          npx wrangler deploy --config wrangler.qa-app-deployed.json > /tmp/qa61-deploy.log 2>&1
           printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put QA_INGESTION_TOKEN --config wrangler.qa-app-deployed.json >/dev/null
           printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put INGESTION_TOKEN --config wrangler.qa-app-deployed.json >/dev/null
           QA_APP_BASE_URL=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' /tmp/qa61-deploy.log | head -n1 | sed 's/[[:space:]]*$//' || true)
