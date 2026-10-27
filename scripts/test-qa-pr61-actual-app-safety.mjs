@@ -2,10 +2,26 @@ import assert from 'node:assert/strict';
 import {hasExactQaVectorReadback} from './qa-pr61-vector-readback.mjs';
 import {parseQaHttpResponse} from './qa-pr61-verified-http-response.mjs';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
 const workflow=readFileSync(new URL('../.github/workflows/qa-pr61-actual-app.yml',import.meta.url),'utf8');
 const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.meta.url),'utf8'));
 const runner=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
 const fullAppRunner=readFileSync(new URL('./qa-pr61-full-app-e2e.mjs',import.meta.url),'utf8');
+// These opt-in remote E2E runners are not imported by ordinary CI, so an
+// unterminated assertion string can silently survive a green build. Parse both
+// complete modules without executing them or touching Cloudflare/Gemini.
+for (const [name, source] of [['actual-app', runner], ['full-app', fullAppRunner]]) {
+  const check = spawnSync(process.execPath, ['--check', '--input-type=module'], {
+    input: source, encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(check.status, 0, name+' remote E2E script must be valid JavaScript');
+  const broken = spawnSync(process.execPath, ['--check', '--input-type=module'], {
+    input: source+'\nconst intentionallyBrokenSyntax = ";\n',
+    encoding: 'utf8', timeout: 15000,
+  });
+  assert.notEqual(broken.status, 0, name+' syntax regression must be detected');
+}
+
 // These scripts can also be invoked directly outside the guarded Actions jobs.
 // A direct invocation must reject changed QA bindings before its first remote action.
 function assertStandaloneResourceGuard(name, source, firstAction) {
