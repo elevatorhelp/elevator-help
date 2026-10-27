@@ -20,8 +20,22 @@ for (const [name, change] of [
   ['unreviewed secret var', x => {x.vars.GEMINI_API_KEY='secret';}],
   ['unbounded Gemini budget', x => {x.vars.GEMINI_MAX_CALLS_PER_INGEST_REQUEST='100';}],
   ['wrong entrypoint', x => {x.main='.open-next/worker.js';}],
+  ['unsafe compatibility flag', x => {x.compatibility_flags.push('unsafe_eval');}],
+  ['unreviewed compatibility date', x => {x.compatibility_date='2026-10-27';}],
+  ['assets runtime override', x => {x.assets.run_worker_first=true;}],
+  ['rate limiter disabled', x => {x.ratelimits=[];}],
+  ['rate limiter unbounded', x => {x.ratelimits[0].simple.limit=100000;}],
+  ['rate limiter namespace swapped', x => {x.ratelimits[0].namespace_id='1';}],
+  ['observability logging changed', x => {x.observability.enabled=true;}],
+  ['QA auth toggled', x => {x.vars.AUTH_REQUIRED='true';}],
+  ['extra allowed QA flag toggled', x => {x.vars.QA_EXACT_EVIDENCE_LOOKUP='false';}],
+  ['workers dev disabled', x => {x.workers_dev=false;}],
 ]) {
   const mutated = clone(qa); change(mutated);
   assert.throws(()=>assertIsolatedQaConfig(mutated,'deployed'), undefined, name);
 }
-console.log('PASS: isolated config guard rejects 11 unsafe mutations; no remote calls');
+// Also reject a QA-only feature flag accidentally enabled on the local config.
+const unsafeLocal=clone(local);
+unsafeLocal.vars.QA_EXACT_EVIDENCE_LOOKUP='true';
+assert.throws(()=>assertIsolatedQaConfig(unsafeLocal,'local'));
+console.log('PASS: isolated config guard rejects 22 unsafe mutations; no remote calls');
