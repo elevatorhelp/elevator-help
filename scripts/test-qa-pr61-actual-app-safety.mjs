@@ -26,7 +26,7 @@ function assertPinnedCheckout(name, qa) {
     '        with:',
     '          ref: ${{ github.sha }}',
     '          persist-credentials: false',
-  ].join('\\n');
+  ].join('\n');
   assert.ok(qa.includes(pinned),
     name+' must check out exact github.sha without persisting GitHub credentials');
 }
