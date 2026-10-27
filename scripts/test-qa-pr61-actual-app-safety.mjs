@@ -30,8 +30,8 @@ const expectedD1Commands={
   ],
 };
 function assertQaD1Commands(name, qa) {
-  const commands=[...qa.matchAll(/^\s*npx wrangler d1 execute[^\n]*$/gm)]
-    .map(match=>match[0].trim());
+  const commands=[...qa.matchAll(/^\s*(?:run:\s*)?npx wrangler d1 execute[^\n]*$/gm)]
+    .map(match=>match[0].trim().replace(/^run:\s*/,''));
   assert.deepEqual(commands,expectedD1Commands[name],
     name+' must mutate only approved isolated D1 using the reviewed config and SQL');
 }
