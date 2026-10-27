@@ -17,6 +17,27 @@ for (const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]
   assert.doesNotMatch(qa,/npm install\b|npm update\b/,
     name+' must not re-resolve dependencies after npm ci');
 }
+// Verify both manual QA workflows check out the dispatched commit, not a
+// moving branch, and do not persist GitHub credentials on Cloudflare QA runners.
+function assertPinnedCheckout(name, qa) {
+  const pinned = [
+    '      - name: Checkout exact dispatched branch commit',
+    '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7',
+    '        with:',
+    '          ref: ${{ github.sha }}',
+    '          persist-credentials: false',
+  ].join('\\n');
+  assert.ok(qa.includes(pinned),
+    name+' must check out exact github.sha without persisting GitHub credentials');
+}
+for (const [name, qa] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  assertPinnedCheckout(name, qa);
+  assert.throws(()=>assertPinnedCheckout(name, qa.replace('ref: ${{ github.sha }}','ref: main')),
+    name+' must reject moving-branch checkout');
+  assert.throws(()=>assertPinnedCheckout(name, qa.replace('persist-credentials: false','persist-credentials: true')),
+    name+' must reject persisted GitHub credentials');
+}
+
 // Config validation alone cannot protect a literal Wrangler D1 command: a
 // mistyped database name or --config would bypass the QA-only config guard.
 // Assert every mutating D1 CLI command before anyone dispatches remote QA.
