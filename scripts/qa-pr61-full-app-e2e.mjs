@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";
+// Protect standalone execution as well as workflow-dispatched runs.
+assertBothQaConfigs();
 const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
 const token=process.env.QA_INGESTION_TOKEN;
 if(!token)throw Error("QA_APP_CONFIGURATION_MISSING");
