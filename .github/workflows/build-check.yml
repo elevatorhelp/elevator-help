@@ -57,6 +57,7 @@ jobs:
           node scripts/test-qa-pr61-actual-app-safety.mjs
           node scripts/qa-pr61-assert-isolated-config.mjs
           node scripts/test-qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-ensure-lease-schema.mjs
 
       - name: Test multilingual physical PDF page labels and source-bound clause verification
         run: node --experimental-strip-types scripts/test-standards-source-page.ts
