@@ -17,6 +17,37 @@ for (const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]
   assert.doesNotMatch(qa,/npm install\b|npm update\b/,
     name+' must not re-resolve dependencies after npm ci');
 }
+// Config validation alone cannot protect a literal Wrangler D1 command: a
+// mistyped database name or --config would bypass the QA-only config guard.
+// Assert every mutating D1 CLI command before anyone dispatches remote QA.
+const expectedD1Commands={
+  'actual-app': [
+    'npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app.json --file scripts/qa-pr61-bootstrap.sql',
+  ],
+  'multipage': [
+    'npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app-deployed.json --file scripts/qa-pr61-bootstrap.sql',
+    'npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app-deployed.json --file docs/ingestion-full-publication-schema.sql',
+  ],
+};
+function assertQaD1Commands(name, qa) {
+  const commands=[...qa.matchAll(/^\\s*npx wrangler d1 execute[^\\n]*$/gm)]
+    .map(match=>match[0].trim());
+  assert.deepEqual(commands,expectedD1Commands[name],
+    name+' must mutate only approved isolated D1 using the reviewed config and SQL');
+}
+assertQaD1Commands('actual-app',workflow);
+assertQaD1Commands('multipage',multipageWorkflow);
+for(const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  for(const mutation of [
+    text=>text.replace('d1 execute elevator-help-lease-test-01','d1 execute elevator-help-cortex'),
+    text=>text.replace(' --remote --config ',' --local --config '),
+    text=>text.replace('--config wrangler.qa-app','--config wrangler.production'),
+  ]) {
+    assert.throws(()=>assertQaD1Commands(name,mutation(qa)),
+      name+' unsafe D1 command mutation must be rejected');
+  }
+}
+
 // Cloudflare CLI diagnostics may include headers, credentials or source text.
 // Do not stream raw deploy logs into durable GitHub Actions output.
 assert.match(multipageWorkflow,
