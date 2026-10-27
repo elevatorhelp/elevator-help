@@ -34,17 +34,17 @@ const chunks=[
 ];
 const evidence=chunks.map((ch,i)=>({...ch,id:evidenceIds[i]}));
 res=await ingest({action:"index_evidence",lease,chunks:evidence});
-assert.equal(res.status,200,"generation staged evidence must return HTTP 200);
+assert.equal(res.status,200,"generation staged evidence must return HTTP 200");
 assert.equal(res.staged,true);
 res=await ingest({action:"upsert",lease,chunks});
-assert.equal(res.status,200,"raw upsert must return HTTP 200);
+assert.equal(res.status,200,"raw upsert must return HTTP 200");
 assert.equal(res.staged,true);
 const map=await post("/api/document-map-ingest",{
  lease,document:{sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/synthetic",
  sourceFingerprint:revision,mapVersion:4},
  pages:[{page:1,text:"EN 81-20: Sample QA safety equipment description. EN 81-50: Sample QA component verification procedures and section identifiers. This document describes technical inspection steps and a maintenance checklist."}]
 });
-assert.equal(map.status,200,"staged map must return HTTP 200);
+assert.equal(map.status,200,"staged map must return HTTP 200");
 assert.ok(Array.isArray(map.ids)&&map.ids.length>0,"map should generate actual staged nodes");
 const prefix="g"+lease.generation+":";
 assert.ok(map.ids.every(id=>id.startsWith(prefix)));
@@ -65,7 +65,7 @@ for(let attempt=0;attempt<36;attempt++){
  }
  res=await ingest(payload);
  if(res.status===200&&res.published===true){published=true;break;}
- assert.equal(res.status,409,"unexpected publication HTTP status);
+ assert.equal(res.status,409,"unexpected publication HTTP status");
  if(!["STAGED_VECTOR_NOT_READY","FULL_PUBLICATION_FAILED"].includes(res.error||""))
   throw Error("UNEXPECTED_PUBLICATION_REJECTION_HTTP_"+res.status);
  await new Promise(resolve=>setTimeout(resolve,5000));
