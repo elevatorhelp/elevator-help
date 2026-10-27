@@ -4,6 +4,25 @@ import {readFileSync} from 'node:fs';
 const workflow=readFileSync(new URL('../.github/workflows/qa-pr61-actual-app.yml',import.meta.url),'utf8');
 const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.meta.url),'utf8'));
 const runner=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
+const fullAppRunner=readFileSync(new URL('./qa-pr61-full-app-e2e.mjs',import.meta.url),'utf8');
+// These scripts can also be invoked directly outside the guarded Actions jobs.
+// A direct invocation must reject changed QA bindings before its first remote action.
+function assertStandaloneResourceGuard(name, source, firstAction) {
+  const importLine='import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";';
+  const call='\nassertBothQaConfigs();\n';
+  const guard=source.indexOf(call);
+  assert.ok(source.includes(importLine) && guard>0 && source.indexOf(firstAction)>guard,
+    name+' must enforce isolated QA resources before remote operations');
+}
+for (const [name,source,firstAction] of [
+  ['actual-app',runner,'const base=new URL('],
+  ['full-app',fullAppRunner,'const qaOrigin=requirePr61IsolatedQaOrigin('],
+]) {
+  assertStandaloneResourceGuard(name,source,firstAction);
+  assert.throws(()=>assertStandaloneResourceGuard(name,source.replace('\nassertBothQaConfigs();\n','\n'),firstAction),
+    name+' must reject removal of the standalone resource guard');
+}
+
 
 const multipageWorkflow=readFileSync(new URL('../.github/workflows/qa-pr61-multipage.yml',import.meta.url),'utf8');
 // The exact isolated resource check must execute BEFORE any remote mutation/deploy.
