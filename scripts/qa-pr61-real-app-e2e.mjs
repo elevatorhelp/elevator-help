@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import {hasExactQaVectorReadback} from "./qa-pr61-vector-readback.mjs";
+import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";
 import {execFileSync} from "node:child_process";
 import {PR61_LOOPBACK_QA_ORIGIN,requirePr61LoopbackQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+// Direct CLI invocation must also fail closed before remote D1 or Vectorize calls.
+assertBothQaConfigs();
 const base=new URL("/api/drive-ingest-batch",requirePr61LoopbackQaOrigin(process.env.QA_APP_BASE_URL||PR61_LOOPBACK_QA_ORIGIN));
 const secret=process.env.QA_INGESTION_TOKEN;
 if(!secret)throw Error("QA_INGESTION_TOKEN_REQUIRED");
