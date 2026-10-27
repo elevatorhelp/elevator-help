@@ -196,4 +196,18 @@ await assert.rejects(
 await assert.rejects(
   parseQaHttpResponse(new Response('[]',{status:200})),
   /QA_INVALID_JSON_HTTP_200/);
+
+// HTTP response bodies may contain confidential server diagnostics or echoed
+// input. QA failures must not serialize the untrusted payload into Actions logs.
+function assertNoUntrustedQaPayloadInErrors(name, source) {
+  assert.doesNotMatch(source, /JSON\.stringify\((?:r|res|result|map)\)/,
+    name+' must not log remote response payloads on assertion failure');
+}
+for (const [name, source] of [['actual-app', runner], ['full-app', fullAppRunner]]) {
+  assertNoUntrustedQaPayloadInErrors(name, source);
+  assert.throws(() => assertNoUntrustedQaPayloadInErrors(name,
+    source+'\\nthrow Error(JSON.stringify(res));'),
+    name+' must reject unsafe response-body logging');
+}
+
 console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');
