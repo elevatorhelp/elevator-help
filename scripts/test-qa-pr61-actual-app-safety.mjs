@@ -176,9 +176,9 @@ assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:1'],'qa-doc','rev-1'
 // Regression: both E2E scripts previously spread untrusted JSON after the
 // transport status, so {status:200} could make a real HTTP 409 look successful.
 for (const [name, source] of [['actual-app',runner],['full-app',fullAppRunner]]) {
-  assert.match(source,/return parseQaHttpResponse\\(response\\);/,
+  assert.ok(source.includes('return parseQaHttpResponse(response);'),
     name+' must use the shared transport-status-preserving response parser');
-  assert.doesNotMatch(source,/return \\{status:response\\.status,\\.\\.\\./,
+  assert.ok(!source.includes('return {status:response.status,...'),
     name+' must not permit JSON status to overwrite HTTP status');
 }
 const spoofedSuccess=await parseQaHttpResponse(new Response(
