@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {hasExactQaVectorReadback} from './qa-pr61-vector-readback.mjs';
+import {parseQaHttpResponse} from './qa-pr61-verified-http-response.mjs';
 import {readFileSync} from 'node:fs';
 const workflow=readFileSync(new URL('../.github/workflows/qa-pr61-actual-app.yml',import.meta.url),'utf8');
 const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.meta.url),'utf8'));
@@ -172,4 +173,27 @@ for(const bad of [
 ]) assert.equal(hasExactQaVectorReadback(bad,['qa:1','qa:2'],'qa-doc','rev-1'),false,
   'missing, duplicate, extra, stale or mismatched metadata must fail readback');
 assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:1'],'qa-doc','rev-1'),false);
+// Regression: both E2E scripts previously spread untrusted JSON after the
+// transport status, so {status:200} could make a real HTTP 409 look successful.
+for (const [name, source] of [['actual-app',runner],['full-app',fullAppRunner]]) {
+  assert.match(source,/return parseQaHttpResponse\\(response\\);/,
+    name+' must use the shared transport-status-preserving response parser');
+  assert.doesNotMatch(source,/return \\{status:response\\.status,\\.\\.\\./,
+    name+' must not permit JSON status to overwrite HTTP status');
+}
+const spoofedSuccess=await parseQaHttpResponse(new Response(
+  JSON.stringify({status:200,published:true}),{status:409}));
+assert.equal(spoofedSuccess.status,409,'HTTP 409 must not be spoofed by JSON status 200');
+const spoofedFailure=await parseQaHttpResponse(new Response(
+  JSON.stringify({status:409,published:true}),{status:200}));
+assert.equal(spoofedFailure.status,200,'HTTP 200 must remain authoritative');
+await assert.rejects(
+  parseQaHttpResponse(new Response('private diagnostic',{status:502})),
+  error=>error.message==='QA_NON_JSON_HTTP_502' && !error.message.includes('private'));
+await assert.rejects(
+  parseQaHttpResponse(new Response('null',{status:200})),
+  /QA_INVALID_JSON_HTTP_200/);
+await assert.rejects(
+  parseQaHttpResponse(new Response('[]',{status:200})),
+  /QA_INVALID_JSON_HTTP_200/);
 console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');
