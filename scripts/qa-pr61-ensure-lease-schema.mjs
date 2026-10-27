@@ -16,7 +16,9 @@ const execute=(command)=>{
     encoding:"utf8",timeout:120000,stdio:["ignore","pipe","pipe"]
   });
   const parsed=JSON.parse(result);
-  assert.ok(Array.isArray(parsed)&&parsed[0]?.success!==false,"QA D1 command failed");
+  assert.ok(Array.isArray(parsed) && parsed.length > 0 && parsed.every(entry =>
+    entry && entry.success === true && Array.isArray(entry.results)),
+    "QA D1 command failed or returned malformed Wrangler JSON");
   return parsed.flatMap(entry=>entry.results||[]);
 };
 let cols=execute("PRAGMA table_info(ingestion_worker_leases)").map(row=>row.name);
