@@ -20,11 +20,11 @@ for (const [name,qa] of [['actual-app',workflow],['multipage',multipageWorkflow]
 // Cloudflare CLI diagnostics may include headers, credentials or source text.
 // Do not stream raw deploy logs into durable GitHub Actions output.
 assert.match(multipageWorkflow,
-  /^\\s*npx wrangler deploy --config wrangler\\.qa-app-deployed\\.json > \\/tmp\\/qa61-deploy\\.log 2>&1\\s*$/m,
+  /^\s*npx wrangler deploy --config wrangler\.qa-app-deployed\.json > \/tmp\/qa61-deploy\.log 2>&1\s*$/m,
   'deployed QA Worker must capture both stdout and stderr locally');
-assert.doesNotMatch(multipageWorkflow,/npx wrangler deploy[^\\n]*\\|\\s*tee\\b/,
+assert.doesNotMatch(multipageWorkflow,/npx wrangler deploy[^\n]*\|\s*tee\b/,
   'QA deploy must not tee raw Wrangler diagnostics into Actions logs');
-assert.doesNotMatch(multipageWorkflow,/^\\s*(?:cat|tail|head|sed|awk)\\b[^\\n]*qa61-deploy\\.log/m,
+assert.doesNotMatch(multipageWorkflow,/^\s*(?:cat|tail|head|sed|awk)\b[^\n]*qa61-deploy\.log/m,
   'QA failure must not print raw deployment diagnostics');
 
 // Both manual QA workflows mutate the SAME isolated D1 database and Vectorize
