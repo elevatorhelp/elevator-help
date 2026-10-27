@@ -25,7 +25,7 @@ async function post(payload){
  return parseQaHttpResponse(response);
 }
 let r=await post({action:"status",lease});
-assert.equal(r.status,200,"actual Next.js status route failed: "+JSON.stringify(r));
+assert.equal(r.status,200,"actual Next.js status route failed (HTTP status only));
 assert.equal(r.legacyConfigured,true);assert.equal(r.multilingualConfigured,true);
 assert.equal(r.archiveIndexConfigured,true);
 console.log("PASS: real OpenNext API /api/drive-ingest-batch active on isolated bindings");
@@ -51,7 +51,7 @@ if (process.env.QA_NEGATIVE_ONLY === "true") {
   process.exit(0);
 }
 r=await post({action:"upsert",lease,chunks:[{id:doc+":1",text:"EN 81-20 QA test technical sentence one.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:0,sourceFingerprint:fp},{id:doc+":2",text:"EN 81-50 QA test technical sentence two.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/test",page:1,chunkIndex:1,sourceFingerprint:fp}]});
-assert.equal(r.status,200,"real application upsert failed: "+JSON.stringify(r));
+assert.equal(r.status,200,"real application upsert failed (HTTP status only));
 assert.equal(r.staged,true);
 const actualStagedIds=r.ids;
 assert.ok(Array.isArray(actualStagedIds)&&actualStagedIds.length===2,"server did not return both staged IDs");
@@ -59,7 +59,7 @@ console.log("PASS: real Next.js API staged 2 raw document chunks");
 r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":wrong"]});
 assert.equal(r.status,409,"wrong manifest erroneously published");
 r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":2"]});
-assert.equal(r.status,200,"real application publish failed: "+JSON.stringify(r));
+assert.equal(r.status,200,"real application publish failed (HTTP status only));
 assert.equal(r.published,true);
 console.log("PASS: actual Next.js API exact-manifest atomic publication");
 // Prove real read-after-publication: a successful API write alone is not retrieval evidence.
