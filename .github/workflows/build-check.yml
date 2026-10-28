@@ -79,6 +79,9 @@ jobs:
       - name: Reject unsafe QA Drive evidence bearer destinations and redirects
         run: node scripts/test-qa-drive-evidence-origin.mjs
 
+      - name: Verify active Drive evidence identifier selection across pages
+        run: node --experimental-sqlite --test scripts/test-qa-drive-evidence-selector.mjs
+
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
