@@ -49,8 +49,10 @@ if(process.env.QA_INTERRUPT_AFTER_FIRST_RAW_BATCH==="true" && !STAGED_AUTO_LEASE
   throw new Error("QA_INTERRUPTION_REQUIRES_ISOLATED_STAGED_AUTO_LEASE");
 if (STAGED_AUTO_LEASE && (
   !TARGET_FILE_ID || STAGED_LEASE ||
-  new URL(DOCUMENT_MAP_ENDPOINT).origin !== new URL(INGEST_ENDPOINT).origin ||
-  new URL(INGEST_ENDPOINT).hostname !== "elevator-help-pr61-app-qa.baharmand.workers.dev"
+  // Compare the full destinations, not only hostnames/origins: no HTTP downgrade,
+  // alternate port, credentials, query, fragment or wrong API route may receive QA tokens.
+  INGEST_ENDPOINT !== "https://elevator-help-pr61-app-qa.baharmand.workers.dev/api/drive-ingest-batch" ||
+  DOCUMENT_MAP_ENDPOINT !== "https://elevator-help-pr61-app-qa.baharmand.workers.dev/api/document-map-ingest"
 )) throw new Error("STAGED_AUTO_LEASE_REQUIRES_ISOLATED_SINGLE_DOCUMENT");
 let activeStagedLease = STAGED_LEASE;
 const BATCH_SIZE = 8;
