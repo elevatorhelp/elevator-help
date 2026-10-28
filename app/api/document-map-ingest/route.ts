@@ -1,5 +1,5 @@
 import {stagedVectorId} from "../../lib/ingestion-generation-publication";
-import { isOrderedDocumentMapPageWindow } from "../../lib/document-map-page-window";
+import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange } from "../../lib/document-map-page-window";
 import {recordStagedMap} from "../../lib/ingestion-full-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
@@ -92,12 +92,6 @@ function cleanTopics(value: unknown) {
         .map((item) => item.slice(0, 80)),
     ),
   ).slice(0, 10);
-}
-
-function clampPage(value: unknown, minPage: number, maxPage: number) {
-  const page = Number(value);
-  if (!Number.isInteger(page)) return minPage;
-  return Math.max(minPage, Math.min(maxPage, page));
 }
 
 async function stableId(parts: string[]) {
@@ -250,11 +244,9 @@ ${JSON.stringify(pages)}
       const summary =
         typeof item?.summary === "string" ? item.summary.trim() : "";
       if (!summary) return null;
-      const pageStart = clampPage(item.pageStart, firstPage, lastPage);
-      const pageEnd = Math.max(
-        pageStart,
-        clampPage(item.pageEnd, pageStart, lastPage),
-      );
+      const range = validatedDocumentMapNodePageRange(item.pageStart, item.pageEnd, pages);
+      if (!range) return null;
+      const { pageStart, pageEnd } = range;
       const nodeType =
         typeof item?.nodeType === "string" && item.nodeType.trim()
           ? item.nodeType.trim().toLowerCase().slice(0, 80)
