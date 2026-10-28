@@ -70,6 +70,9 @@ jobs:
           node scripts/test-qa-physical-pdf-page.mjs
           node scripts/test-qa-authenticated-citation-contract.mjs
 
+      - name: Verify complete-publication QA fixture spans physical pages 1 and 2
+        run: node --test scripts/test-qa-pr61-full-app-fixture.mjs
+
       - name: Reject forged HTTP status in Drive recovery QA
         run: node --test scripts/test-qa-drive-recovery-response.mjs
 

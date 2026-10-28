@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+import {buildQaFullAppMultipageFixture} from "./qa-pr61-full-app-fixture.mjs";
 const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
 const token=process.env.QA_INGESTION_TOKEN;
 if(!token)throw Error("QA_APP_CONFIGURATION_MISSING");
@@ -9,7 +10,7 @@ const doc="qa61-complete-"+run;
 const revision="revision-"+doc;
 const owner="qa-full-"+run;
 const headers={"content-type":"application/json",Authorization:"Bearer "+token};
-const rawIds=[doc+":r1",doc+":r2"], evidenceIds=[doc+":e1",doc+":e2"];
+const {chunks,evidence,pages,rawIds,evidenceIds}=buildQaFullAppMultipageFixture(doc,revision);
 async function post(path,data){
  const response=await fetch(new URL(path,qaOrigin),{method:"POST",headers,body:JSON.stringify(data),redirect:"manual",signal:AbortSignal.timeout(120000)});
  try {
@@ -29,11 +30,6 @@ console.log("PASS: isolated actual app issues and fences automatic document leas
 const renew=()=>ingest({action:"lease_renew",lease,durationMs:180000});
 let res=await renew();
 assert.equal(res.status,200,"lease renewal");
-const chunks=[
- {id:rawIds[0],text:"EN 81-20 QA synthetic document first technical paragraph.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/synthetic",page:1,chunkIndex:0,sourceFingerprint:revision},
- {id:rawIds[1],text:"EN 81-50 QA synthetic document second technical paragraph.",sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/synthetic",page:1,chunkIndex:1,sourceFingerprint:revision},
-];
-const evidence=chunks.map((ch,i)=>({...ch,id:evidenceIds[i]}));
 res=await ingest({action:"index_evidence",lease,chunks:evidence});
 assert.equal(res.status,200,"generation staged evidence: "+JSON.stringify(res));
 assert.equal(res.staged,true);
@@ -43,7 +39,7 @@ assert.equal(res.staged,true);
 const map=await post("/api/document-map-ingest",{
  lease,document:{sourceFileId:doc,fileName:"qa.txt",sourcePath:"qa/synthetic",
  sourceFingerprint:revision,mapVersion:4},
- pages:[{page:1,text:"EN 81-20: Sample QA safety equipment description. EN 81-50: Sample QA component verification procedures and section identifiers. This document describes technical inspection steps and a maintenance checklist."}]
+ pages
 });
 assert.equal(map.status,200,"staged map: "+JSON.stringify(map));
 assert.ok(Array.isArray(map.ids)&&map.ids.length>0,"map should generate actual staged nodes");
