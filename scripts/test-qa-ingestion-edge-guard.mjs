@@ -51,4 +51,40 @@ for(const url of [
 denied(origin,"");
 
 
+// Execute the actual Drive ingestion preflight expression in an isolated VM.
+// Source-level regex alone cannot prove that an unsafe destination is rejected.
+const {runInNewContext}=await import("node:vm");
+const driveSource=readFileSync(new URL("./drive-ingest.mjs",import.meta.url),"utf8");
+const stagedGate=driveSource.match(/if \\(STAGED_AUTO_LEASE && \\([\\s\\S]*?\\)\\) throw new Error\\("STAGED_AUTO_LEASE_REQUIRES_ISOLATED_SINGLE_DOCUMENT"\\);/);
+assert.ok(stagedGate,"Missing staged Drive auto-lease preflight");
+const rawEndpoint=origin+"/api/drive-ingest-batch";
+const mapEndpoint=origin+"/api/document-map-ingest";
+function stagedGateDenies(raw=rawEndpoint,map=mapEndpoint,target="file-1",lease=null){
+  try {
+    runInNewContext(stagedGate[0],{
+      STAGED_AUTO_LEASE:true,TARGET_FILE_ID:target,STAGED_LEASE:lease,
+      INGEST_ENDPOINT:raw,DOCUMENT_MAP_ENDPOINT:map,URL,
+    });
+    return false;
+  } catch(error) {
+    assert.match(error.message,/STAGED_AUTO_LEASE_REQUIRES_ISOLATED_SINGLE_DOCUMENT/);
+    return true;
+  }
+}
+assert.equal(stagedGateDenies(),false,"Exact isolated HTTPS QA routes must remain usable");
+for(const [label,raw,map] of [
+  ["HTTP downgrade",rawEndpoint.replace("https:","http:"),mapEndpoint.replace("https:","http:")],
+  ["alternate port",rawEndpoint.replace(origin,origin+":8443"),mapEndpoint.replace(origin,origin+":8443")],
+  ["wrong RAW path",origin+"/api/qa-evidence-lookup",mapEndpoint],
+  ["wrong Map path",rawEndpoint,origin+"/api/qa-evidence-lookup"],
+  ["RAW query",rawEndpoint+"?next=https://elevator.help",mapEndpoint],
+  ["Map fragment",rawEndpoint,mapEndpoint+"#fragment"],
+  ["URL credentials",rawEndpoint.replace("https://","https://user:pass@"),mapEndpoint],
+  ["production", "https://elevator.help/api/drive-ingest-batch","https://elevator.help/api/document-map-ingest"],
+  ["lookalike host",rawEndpoint.replace(".workers.dev",".workers.dev.attacker.example"),mapEndpoint],
+  ["trailing slash",rawEndpoint+"/",mapEndpoint],
+]) assert.equal(stagedGateDenies(raw,map),true,label+" must be rejected before any network call");
+assert.equal(stagedGateDenies(rawEndpoint,mapEndpoint,""),true,"Missing single-file target must fail closed");
+assert.equal(stagedGateDenies(rawEndpoint,mapEndpoint,"file-1",{owner:"synthetic"}),true,"Existing staged lease must fail closed");
+
 console.log("PASS: isolated ingestion QA edge denies /api/ask and only allows token-protected POST ingestion/readback routes; live Drive restart is pinned to isolated origin, rejects redirects and requires unique run ID");
