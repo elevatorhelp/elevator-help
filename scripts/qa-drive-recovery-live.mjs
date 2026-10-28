@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {execFileSync} from "node:child_process";
 const base=process.env.QA_APP_BASE_URL,token=process.env.QA_INGESTION_TOKEN;
 if(!base||!token)throw Error("QA_PARAMETERS_MISSING");
@@ -19,7 +20,7 @@ async function post(body){
  const response=await fetch(new URL("/api/drive-ingest-batch",target),{
  method:"POST",headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},
  body:JSON.stringify(body),redirect:"manual",signal:AbortSignal.timeout(30000)});
- return {status:response.status,...await response.json()};
+ return parseQaDriveRecoveryResponse(response);
 }
 let r=await post({action:"lease_claim",documentId:id,owner:ownerA,durationMs:30000});
 assert.equal(r.status,200,"initial lease claim");

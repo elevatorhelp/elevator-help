@@ -70,6 +70,9 @@ jobs:
           node scripts/test-qa-physical-pdf-page.mjs
           node scripts/test-qa-authenticated-citation-contract.mjs
 
+      - name: Reject forged HTTP status in Drive recovery QA
+        run: node --test scripts/test-qa-drive-recovery-response.mjs
+
       - name: Regress numeric run ID validation for isolated Drive restart QA
         run: node --experimental-strip-types scripts/test-qa-drive-recovery-run-id.mjs
 
