@@ -73,6 +73,9 @@ jobs:
       - name: Verify complete-publication QA fixture spans physical pages 1 and 2
         run: node --test scripts/test-qa-pr61-full-app-fixture.mjs
 
+      - name: Reject reordered document-map physical page inputs
+        run: node --experimental-strip-types --test scripts/test-document-map-page-window.ts
+
       - name: Reject forged HTTP status in Drive recovery QA
         run: node --test scripts/test-qa-drive-recovery-response.mjs
 

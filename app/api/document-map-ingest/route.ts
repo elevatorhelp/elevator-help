@@ -1,4 +1,5 @@
 import {stagedVectorId} from "../../lib/ingestion-generation-publication";
+import { isOrderedDocumentMapPageWindow } from "../../lib/document-map-page-window";
 import {recordStagedMap} from "../../lib/ingestion-full-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
@@ -345,16 +346,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let totalText = 0;
-    for (const page of pages) {
-      if (!Number.isInteger(page?.page) || typeof page?.text !== "string") {
-        return NextResponse.json(
-          { ok: false, error: "Invalid page payload" },
-          { status: 400 },
-        );
-      }
-      totalText += page.text.length;
+    // The map model uses pages[0] and pages[last] as physical bounds.
+    // Reject reordered/duplicate pages rather than silently attributing
+    // generated clauses to the wrong PDF page interval.
+    if (!isOrderedDocumentMapPageWindow(pages)) {
+      return NextResponse.json(
+        { ok: false, error: "Physical page numbers must be unique, positive and strictly ascending" },
+        { status: 400 },
+      );
     }
+    let totalText = 0;
+    for (const page of pages) totalText += page.text.length;
     if (totalText > MAX_TOTAL_TEXT) {
       return NextResponse.json(
         { ok: false, error: "Document window is too large" },
