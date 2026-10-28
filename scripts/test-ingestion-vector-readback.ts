@@ -46,10 +46,10 @@ console.log("PASS: dual staged Vectorize readbacks require exact document/revisi
 // checking that either physical Vectorize index could read the staged vectors.
 const rawIds=Array.from({length:21},(_,i)=>"raw-"+i);
 const goodIndex=()=>({getByIds:async (requested:string[])=>requested.map(id=>({
- id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new"}
+ id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:1,chunkIndex:0,contentType:"general"}
 }))});
 const staleIndex=()=>({getByIds:async (requested:string[])=>requested.map(id=>({
- id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-old"}
+ id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-old",page:1,chunkIndex:0,contentType:"general"}
 }))});
 assert.equal(rawBounded(rawIds,2,"doc-1","revision-new"),true);
 let readCalls=0;
@@ -89,3 +89,19 @@ assert.ok(rawBranch.indexOf("hasReadyRawStagedVectors(")>rawBranch.indexOf("hasB
 assert.ok(rawBranch.indexOf("publishExactStagedManifest(")>rawBranch.indexOf("hasReadyRawStagedVectors("));
 assert.match(rawBranch,/STAGED_VECTOR_NOT_READY/);
 console.log("PASS: RAW-only publication requires bounded exact readback from both Vectorize indices before D1 CAS");
+
+// Regressions for source-page and RAW/MAP type integrity at publication.
+const rawVector={id:"g2:raw",metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:7,chunkIndex:0,contentType:"general"}};
+const mapVector={id:"g2:map",metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:7,pageEnd:8,chunkIndex:-1,contentType:"document-map"}};
+assert.equal(ready([rawVector],["g2:raw"],"doc-1","revision-new","raw"),true);
+assert.equal(ready([mapVector],["g2:map"],"doc-1","revision-new","map"),true);
+assert.equal(ready([rawVector],["g2:raw"],"doc-1","revision-new","map"),false);
+assert.equal(ready([mapVector],["g2:map"],"doc-1","revision-new","raw"),false);
+assert.equal(ready([{...rawVector,metadata:{...rawVector.metadata,page:0}}],["g2:raw"],"doc-1","revision-new","raw"),false);
+assert.equal(ready([{...rawVector,metadata:{...rawVector.metadata,chunkIndex:-1}}],["g2:raw"],"doc-1","revision-new","raw"),false);
+assert.equal(ready([{...mapVector,metadata:{...mapVector.metadata,pageEnd:6}}],["g2:map"],"doc-1","revision-new","map"),false);
+assert.equal(ready([{...mapVector,metadata:{...mapVector.metadata,chunkIndex:0}}],["g2:map"],"doc-1","revision-new","map"),false);
+const fullBranch=route.split('if (body?.action === "publish_full")')[1]?.split('if (body?.action === "publish_staged")')[0];
+assert.ok(fullBranch?.includes('kind:"raw" as const') && fullBranch.includes('kind:"map" as const'));
+assert.ok(fullBranch.includes("body.sourceFingerprint,group.kind"));
+console.log("PASS: staged RAW/MAP readback enforces physical-page and vector-kind integrity");

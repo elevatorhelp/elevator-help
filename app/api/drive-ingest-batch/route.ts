@@ -457,13 +457,19 @@ export async function POST(request: NextRequest) {
         const ids=[...rawIds,...mapIds].map((id:string)=>stagedVectorId(id,lease.generation));
         if(ids.length>100000||new Set(ids).size!==ids.length||ids.some((id:string)=>id.length>512))
           return NextResponse.json({ok:false,error:"FULL_MANIFEST_TOO_LARGE"},{status:400});
+        // Verify RAW and MAP independently: both need valid physical-page
+        // anchors, and a MAP vector must never masquerade as RAW (or vice versa).
+        const groups=[{kind:"raw" as const,ids:rawIds},{kind:"map" as const,ids:mapIds}];
         for(const index of [(fullEnv as any).VECTORIZE,(fullEnv as any).VECTORIZE_V2]){
           if(!index?.getByIds)return NextResponse.json({ok:false,error:"VECTOR_READ_UNAVAILABLE"},{status:409});
-          for(let start=0;start<ids.length;start+=20){
-            const expected=ids.slice(start,start+20);
-            const found=await index.getByIds(expected);
-            if(!hasExactStagedVectorReadback(found,expected,body.documentId,body.sourceFingerprint))
-              return NextResponse.json({ok:false,error:"STAGED_VECTOR_NOT_READY"},{status:409});
+          for(const group of groups){
+            const stagedIds=group.ids.map((id:string)=>stagedVectorId(id,lease.generation));
+            for(let start=0;start<stagedIds.length;start+=20){
+              const expected=stagedIds.slice(start,start+20);
+              const found=await index.getByIds(expected);
+              if(!hasExactStagedVectorReadback(found,expected,body.documentId,body.sourceFingerprint,group.kind))
+                return NextResponse.json({ok:false,error:"STAGED_VECTOR_NOT_READY"},{status:409});
+            }
           }
         }
         const published=await publishFullGeneration(db,lease,body.sourceFingerprint,

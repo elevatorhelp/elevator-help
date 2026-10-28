@@ -8,6 +8,7 @@ export function hasExactStagedVectorReadback(
   expectedIds: readonly string[],
   documentId: string,
   sourceFingerprint: string,
+  kind?: "raw" | "map",
 ): boolean {
   if (!Array.isArray(found) || !Array.isArray(expectedIds) ||
       expectedIds.length < 1 || expectedIds.length > 20 ||
@@ -25,6 +26,19 @@ export function hasExactStagedVectorReadback(
         vector.metadata.sourceFileId !== documentId ||
         vector.metadata.sourceFingerprint !== sourceFingerprint)
       return false;
+    // A matching ID/revision is insufficient if its physical page or vector
+    // kind is invalid; citations require an actual positive PDF page anchor.
+    if (kind) {
+      const meta = vector.metadata;
+      if (!Number.isSafeInteger(meta.page) || meta.page < 1 ||
+          (kind === "raw"
+            ? meta.contentType === "document-map" ||
+              !Number.isSafeInteger(meta.chunkIndex) || meta.chunkIndex < 0
+            : meta.contentType !== "document-map" ||
+              meta.chunkIndex !== -1 ||
+              !Number.isSafeInteger(meta.pageEnd) || meta.pageEnd < meta.page))
+        return false;
+    }
     seen.add(vector.id);
   }
   return seen.size === expected.size;
@@ -75,7 +89,7 @@ export async function hasReadyRawStagedVectors(indices:readonly unknown[],ids:un
    for(let start=0;start<staged.length;start+=20){
     const expected=staged.slice(start,start+20);
     if(!hasExactStagedVectorReadback(await reader.getByIds(expected),
-      expected,documentId,fingerprint))return false;
+      expected,documentId,fingerprint,"raw"))return false;
    }
   }
  }catch{return false;}
