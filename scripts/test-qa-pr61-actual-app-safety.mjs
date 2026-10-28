@@ -66,4 +66,32 @@ for(const bad of [
 ]) assert.equal(hasExactQaVectorReadback(bad,['qa:1','qa:2'],'qa-doc','rev-1'),false,
   'missing, duplicate, extra, stale or mismatched metadata must fail readback');
 assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:1'],'qa-doc','rev-1'),false);
+// Positive multipage QA must verify the exact page for each ID, not assume page 1.
+const idBPage2={...idB,metadata:{...idB.metadata,page:2}};
+const idCPage3={id:'qa:3',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:3}};
+const pageMap=new Map([['qa:1',1],['qa:2',2],['qa:3',3]]);
+assert.equal(hasExactQaVectorReadback([idCPage3,idA,idBPage2],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',pageMap),true);
+assert.equal(hasExactQaVectorReadback([idA,{...idBPage2,metadata:{...idBPage2.metadata,page:'2'}},idCPage3],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',pageMap),true);
+assert.equal(hasExactQaVectorReadback([idA,idBPage2],['qa:1','qa:2'],'qa-doc','rev-1'),false,
+  'legacy page-1-only calls must not silently accept page 2');
+for (const badPages of [
+  new Map([['qa:1',1],['qa:2',2]]),
+  new Map([['qa:1',1],['qa:2',1],['qa:3',3]]),
+  new Map([['qa:1',1],['qa:2',2],['qa:3',0]]),
+  new Map([['qa:1',1],['qa:2','2'],['qa:3',3]]),
+  new Map([['qa:1',1],['qa:2',2],['wrong',3]]),
+]) assert.equal(hasExactQaVectorReadback([idA,idBPage2,idCPage3],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',badPages),false,
+  'missing, extra, invalid or mismatched page mappings must fail closed');
+for (const badPage of [true,2.5,'02','2.0',' 2 ',null,0]) {
+  const bad={...idBPage2,metadata:{...idBPage2.metadata,page:badPage}};
+  assert.equal(hasExactQaVectorReadback([idA,bad,idCPage3],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',pageMap),false,
+    'malformed or incorrect physical page must fail readback');
+}
+assert.equal(hasExactQaVectorReadback([idA,idBPage2,{...idCPage3,metadata:{...idCPage3.metadata,sourceFingerprint:'stale'}}],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',pageMap),false);
+assert.ok(runner.includes('page:2,chunkIndex:1,sourceFingerprint:fp'),
+  'actual-app positive E2E must stage a real second physical page');
+assert.ok(runner.includes('new Map([[doc+":1",1],[doc+":2",2]])'),
+  'actual-app E2E must specify each expected page');
+assert.ok(runner.includes('hasExactQaVectorReadback(records,expectedIds,doc,fp,expectedPages)'),
+  'actual-app E2E must verify both physical Vectorize indices against the page manifest');
 console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');
