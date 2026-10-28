@@ -51,6 +51,22 @@ try {
   const auth = route.indexOf("await authorizeChatRequest(request)");
   assert.ok(auth >= 0 && auth < route.indexOf("await request.json()"));
   assert.match(route.slice(auth, route.indexOf("await request.json()")), /if \(!authorization\.ok\)/);
+  // A missing Gemini key must NEVER forward customer question/history from
+  // a preview or isolated QA origin to the production /api/ask endpoint.
+  // This is a static fail-closed guard, not a live Clerk/QA E2E test.
+  assert.doesNotMatch(route, /proxyProductionAnswer|X-Elevator-Preview-Proxy|https:\/\/elevator\\.help\/api\/ask/,
+    "the chat route must not proxy customer conversations to production");
+  const missingKeyStart = route.indexOf("    if (!key) {");
+  const missingKeyEnd = route.indexOf("    if (asksResponseProvenance(question))", missingKeyStart);
+  assert.ok(missingKeyStart >= 0 && missingKeyEnd > missingKeyStart,
+    "the missing-Gemini-key branch must remain explicit");
+  const missingKeyBranch = route.slice(missingKeyStart, missingKeyEnd);
+  assert.match(missingKeyBranch, /retrieveFaultEvidenceWithoutGemini\\(question\\)/,
+    "local evidence may still be used without Gemini");
+  assert.match(missingKeyBranch, /return NextResponse\\.json\\(\\s*\\{ error: "AI is not configured\\." \\}/,
+    "missing configuration must return a local error, not delegate");
+  assert.doesNotMatch(missingKeyBranch, /\\bfetch\\s*\\(/,
+    "missing-Gemini-key branch must not make an outbound fetch");
   const client = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(client, /getAuthToken=\{getToken\}/);
   assert.match(client, /Authorization: `Bearer \$\{authToken\}`/);
