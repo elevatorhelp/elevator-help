@@ -53,6 +53,8 @@ export async function recordStagedBatch(db:any,lease:IngestionLease,documentId:s
  *
  * All receipts for a generation are immutable and revision-bound. Publication
  * callers supply the deterministic, deduplicated complete list of raw chunk IDs.
+ * Publication is monotonic: even an unexpectedly live older lease cannot
+ * roll the active document generation back after a newer publication.
  */
 export async function publishExactStagedManifest(
  db:any,lease:IngestionLease,documentId:string,sourceFingerprint:string,chunkIds:string[],
@@ -66,7 +68,7 @@ export async function publishExactStagedManifest(
  const manifest=JSON.stringify(chunkIds);
  const result=await db.prepare(`UPDATE ingestion_document_publications
  SET active_generation=?,updated_at_ms=?
- WHERE document_id=? AND job_key=?
+ WHERE document_id=? AND job_key=? AND active_generation<?
  AND EXISTS (SELECT 1 FROM ingestion_worker_leases WHERE job_key=? AND owner=?
    AND generation=? AND lease_until_ms>?)
  AND (SELECT COUNT(*) FROM ingestion_staged_receipts
@@ -78,7 +80,7 @@ export async function publishExactStagedManifest(
        SELECT 1 FROM json_each(?) j WHERE j.value=r.chunk_id
      ))
  )`)
- .bind(lease.generation,now,documentId,lease.jobKey,lease.jobKey,lease.owner,
+ .bind(lease.generation,now,documentId,lease.jobKey,lease.generation,lease.jobKey,lease.owner,
    lease.generation,now,documentId,lease.generation,chunkIds.length,
    documentId,lease.generation,sourceFingerprint,manifest).run();
  return Number(result?.meta?.changes)===1;

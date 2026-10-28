@@ -29,6 +29,8 @@ assert.equal(stagedVectorId("chunk",1),"g1:chunk");
 await recordStagedBatch(db,a,"doc-1",["chunk"],"version-1");
 assert.equal(await publishExactStagedManifest(db,a,"doc-1","version-1",["chunk"]),true);
 assert.equal(sqlite.prepare("SELECT active_generation FROM ingestion_document_publications").get()?.active_generation,1);
+assert.equal(await publishExactStagedManifest(db,a,"doc-1","version-1",["chunk"]),false,
+  "repeated publication of an already active generation must not rewrite D1");
 // Simulate worker A crashing after writing immutable staging IDs. B takes over.
 sqlite.exec("UPDATE ingestion_worker_leases SET owner='B',generation=2 WHERE job_key='doc-1'");
 assert.equal(await publishExactStagedManifest(db,a,"doc-1","version-1",["chunk"]).catch(()=>false),false);
@@ -37,6 +39,13 @@ const b={jobKey:"doc-1",owner:"B",generation:2};
 await recordStagedBatch(db,b,"doc-1",["chunk"],"version-2");
 assert.equal(await publishExactStagedManifest(db,b,"doc-1","version-2",["chunk"]),true);
 assert.equal(sqlite.prepare("SELECT active_generation FROM ingestion_document_publications").get()?.active_generation,2);
+// Simulate inconsistent restored lease metadata: even a valid old-generation
+// lease must never move the active document generation backwards.
+sqlite.exec("UPDATE ingestion_worker_leases SET owner='A',generation=1 WHERE job_key='doc-1'");
+assert.equal(await publishExactStagedManifest(db,a,"doc-1","version-1",["chunk"]),false,
+  "valid lower-generation lease must not downgrade an already newer publication");
+assert.equal(sqlite.prepare("SELECT active_generation FROM ingestion_document_publications").get()?.active_generation,2);
+sqlite.exec("UPDATE ingestion_worker_leases SET owner='B',generation=2 WHERE job_key='doc-1'");
 // Crash / expiry before commit: no publish.
 sqlite.exec("UPDATE ingestion_worker_leases SET lease_until_ms=0 WHERE job_key='doc-1'");
 assert.equal(await publishExactStagedManifest(db,b,"doc-1","version-2",["chunk"]).catch(()=>false),false);
