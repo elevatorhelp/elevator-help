@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
 const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
 const token=process.env.QA_INGESTION_TOKEN;
@@ -11,10 +12,11 @@ const headers={"content-type":"application/json",Authorization:"Bearer "+token};
 const rawIds=[doc+":r1",doc+":r2"], evidenceIds=[doc+":e1",doc+":e2"];
 async function post(path,data){
  const response=await fetch(new URL(path,qaOrigin),{method:"POST",headers,body:JSON.stringify(data),redirect:"manual",signal:AbortSignal.timeout(120000)});
- const text=await response.text();
- let json;
- try{json=JSON.parse(text)}catch{throw Error("NON_JSON_HTTP_"+response.status)}
- return {status:response.status,...json};
+ try {
+  return await parseQaDriveRecoveryResponse(response);
+ } catch(error) {
+  throw new Error("INVALID_QA_JSON_HTTP_"+response.status,{cause:error});
+ }
 }
 const ingest=(value)=>post("/api/drive-ingest-batch",value);
 const result=await ingest({action:"lease_claim",documentId:doc,owner,durationMs:180000});

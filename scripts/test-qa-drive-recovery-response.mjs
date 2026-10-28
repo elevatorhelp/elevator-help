@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
+import {readFileSync} from "node:fs";
 import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 
 test("a JSON body cannot turn a 409 conflict into HTTP 200", async () => {
@@ -23,4 +24,12 @@ test("response without body status retains HTTP status and data", async () => {
 test("malformed JSON object shape fails closed", async () => {
   await assert.rejects(parseQaDriveRecoveryResponse(new Response("[]",{status:200})), /QA_DRIVE_RESPONSE_NOT_OBJECT/);
   await assert.rejects(parseQaDriveRecoveryResponse(new Response("null",{status:200})), /QA_DRIVE_RESPONSE_NOT_OBJECT/);
+});
+
+// Guard the real-app QA caller, not only the shared response parser.
+test("full-app QA runner cannot accept a JSON-forged HTTP status", () => {
+  const source = readFileSync(new URL("./qa-pr61-full-app-e2e.mjs", import.meta.url), "utf8");
+  assert.match(source, /import \{parseQaDriveRecoveryResponse\} from "\.\/qa-drive-recovery-response\.mjs"/);
+  assert.match(source, /return await parseQaDriveRecoveryResponse\(response\)/);
+  assert.doesNotMatch(source, /return\s*\{\s*status\s*:\s*response\.status\s*,\s*\.\.\./);
 });
