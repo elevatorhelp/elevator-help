@@ -49,3 +49,35 @@ export function hasBoundedFullPublicationManifest(
   return vectors.length <= MAX_FULL_PUBLICATION_VECTOR_READBACK_IDS &&
     new Set(vectors).size === vectors.length;
 }
+
+
+/** Bound all RAW-only dual-Vectorize reads before D1 generation publication. */
+export function hasBoundedRawPublicationManifest(ids:unknown,generation:number,documentId:string,fingerprint:string):boolean{
+ if(!Array.isArray(ids)||ids.length<1||ids.length>MAX_FULL_PUBLICATION_VECTOR_READBACK_IDS||
+    ids.some(id=>typeof id!=="string"||!id.trim()||id.length>512)||
+    new Set(ids).size!==ids.length||
+    !Number.isSafeInteger(generation)||generation<1||
+    typeof documentId!=="string"||!documentId||documentId.length>200||
+    typeof fingerprint!=="string"||!fingerprint.trim()||fingerprint.length>512)return false;
+ return ids.every(id=>`g${generation}:${id}`.length<=512);
+}
+/** Both independent indices must return every exact generation-qualified ID
+ * with the expected document and revision before a RAW-only publication CAS. */
+export async function hasReadyRawStagedVectors(indices:readonly unknown[],ids:unknown,
+ generation:number,documentId:string,fingerprint:string):Promise<boolean>{
+ if(!hasBoundedRawPublicationManifest(ids,generation,documentId,fingerprint)||
+    !Array.isArray(indices)||indices.length!==2||
+    indices.some(x=>!x||typeof (x as {getByIds?:unknown}).getByIds!=="function"))return false;
+ const staged=(ids as string[]).map(id=>`g${generation}:${id}`);
+ try{
+  for(const index of indices){
+   const reader=index as {getByIds(ids:string[]):Promise<unknown>};
+   for(let start=0;start<staged.length;start+=20){
+    const expected=staged.slice(start,start+20);
+    if(!hasExactStagedVectorReadback(await reader.getByIds(expected),
+      expected,documentId,fingerprint))return false;
+   }
+  }
+ }catch{return false;}
+ return true;
+}
