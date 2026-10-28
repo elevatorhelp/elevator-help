@@ -42,6 +42,13 @@ assert.deepEqual(Object.fromEntries(config.vectorize.map(x=>[x.binding,x.index_n
 assert.equal(new Set(config.vectorize.map(x=>x.index_name)).size,2,'two bindings must not alias one index');
 assert.match(runner,/elevator-help-lease-test-01/);
 assert.match(runner,/elevator-help-staging-test/);
+assert.match(runner,/import \\{parseQaDriveRecoveryResponse\\} from "\\.\\/qa-drive-recovery-response\\.mjs";/,
+  'actual-app QA must import the HTTP-authoritative response parser');
+assert.match(runner,/return parseQaDriveRecoveryResponse\\(response\\);/,
+  'actual-app QA must preserve real HTTP status over untrusted body fields');
+assert.doesNotMatch(runner,/return \\{status:response\\.status,\\.\\.\\.data\\};/,
+  'body status must not override real HTTP status');
+
 // A stale ID from another revision must never satisfy isolated dual-index recovery QA.
 assert.match(runner,/hasExactQaVectorReadback\(records,expectedIds,doc,fp\)/);
 assert.match(runner,/redirect:"manual",signal:AbortSignal.timeout\(30000\)/,

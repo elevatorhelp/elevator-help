@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {hasExactQaVectorReadback} from "./qa-pr61-vector-readback.mjs";
 import {execFileSync} from "node:child_process";
 import {PR61_LOOPBACK_QA_ORIGIN,requirePr61LoopbackQaOrigin} from "./qa-pr61-isolated-origin.mjs";
@@ -18,8 +19,7 @@ INSERT INTO ingestion_worker_leases(job_key,owner,generation,lease_until_ms,upda
 const lease={jobKey:doc,owner,generation:1};
 async function post(payload){
  const response=await fetch(base,{method:"POST",headers:{Authorization:"Bearer "+secret,"content-type":"application/json"},body:JSON.stringify(payload),redirect:"manual",signal:AbortSignal.timeout(120000)});
- const data=await response.json();
- return {status:response.status,...data};
+ return parseQaDriveRecoveryResponse(response);
 }
 let r=await post({action:"status",lease});
 assert.equal(r.status,200,"actual Next.js status route failed: "+JSON.stringify(r));
