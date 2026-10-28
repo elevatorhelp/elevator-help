@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
-import {buildQaFullAppMultipageFixture} from "./qa-pr61-full-app-fixture.mjs";
+import {buildQaFullAppMultipageFixture,hasQaFullAppMapPageCoverage} from "./qa-pr61-full-app-fixture.mjs";
 const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
 const token=process.env.QA_INGESTION_TOKEN;
 if(!token)throw Error("QA_APP_CONFIGURATION_MISSING");
@@ -43,6 +43,8 @@ const map=await post("/api/document-map-ingest",{
 });
 assert.equal(map.status,200,"staged map: "+JSON.stringify(map));
 assert.ok(Array.isArray(map.ids)&&map.ids.length>0,"map should generate actual staged nodes");
+assert.ok(hasQaFullAppMapPageCoverage(map.nodes,pages),
+ "generated Document Map must cover both physical QA pages, not just accept page-2 input");
 const prefix="g"+lease.generation+":";
 assert.ok(map.ids.every(id=>id.startsWith(prefix)));
 const mapIds=map.ids.map(id=>id.slice(prefix.length));

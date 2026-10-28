@@ -14,3 +14,15 @@ export function buildQaFullAppMultipageFixture(doc, revision) {
   ];
   return {chunks,evidence,pages,rawIds:chunks.map(c=>c.id),evidenceIds:evidence.map(c=>c.id)};
 }
+
+/** Require a generated map to actually cover every supplied physical page. */
+export function hasQaFullAppMapPageCoverage(nodes, pages) {
+  if (!Array.isArray(nodes) || !Array.isArray(pages) || pages.length < 2 ||
+      pages.some(p=>!Number.isSafeInteger(p?.page) || p.page<1)) return false;
+  const expected=new Set(pages.map(p=>p.page));
+  if(expected.size!==pages.length)return false;
+  const min=Math.min(...expected),max=Math.max(...expected);
+  return [...expected].every(page=>nodes.some(node=>
+    Number.isSafeInteger(node?.pageStart) && Number.isSafeInteger(node?.pageEnd) &&
+    node.pageStart>=min && node.pageEnd<=max && node.pageStart<=page && node.pageEnd>=page));
+}
