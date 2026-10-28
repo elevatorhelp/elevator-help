@@ -145,6 +145,9 @@ jobs:
       - name: Verify exact retrieval honors published document generations
         run: node --experimental-sqlite --experimental-strip-types scripts/test-published-evidence-generation.ts
 
+      - name: Reject invalid ingestion physical-page and chunk identities
+        run: node --experimental-strip-types scripts/test-ingestion-chunk-validation.ts
+
       - name: Test three-layer atomic RAW Evidence Map publication
         run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-full-publication.ts
 
