@@ -1,5 +1,5 @@
 import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
-import {hasExactStagedVectorReadback,hasBoundedFullPublicationManifest} from "../../lib/ingestion-vector-readback";
+import {hasExactStagedVectorReadback,hasBoundedFullPublicationManifest,hasBoundedRawPublicationManifest,hasReadyRawStagedVectors} from "../../lib/ingestion-vector-readback";
 import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
 import {stagedVectorId,recordStagedBatch,publishExactStagedManifest} from "../../lib/ingestion-generation-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
@@ -486,8 +486,17 @@ export async function POST(request: NextRequest) {
       if (!lease || typeof documentId !== "string" || lease.jobKey !== documentId ||
           !Array.isArray(manifestIds) || typeof sourceFingerprint !== "string")
         return NextResponse.json({ok:false,error:"INVALID_PUBLICATION_REQUEST"},{status:400});
+      // Reject oversized or malformed RAW manifests before any remote Vectorize
+      // reads. The D1 CAS alone cannot prove vectors are query-ready.
+      if(!hasBoundedRawPublicationManifest(manifestIds,lease.generation,documentId,sourceFingerprint))
+        return NextResponse.json({ok:false,error:"INVALID_PUBLICATION_MANIFEST"},{status:400});
       const {env: publishEnv} = getCloudflareContext();
       try {
+        const ready = await hasReadyRawStagedVectors(
+          [(publishEnv as any).VECTORIZE,(publishEnv as any).VECTORIZE_V2],
+          manifestIds,lease.generation,documentId,sourceFingerprint);
+        if(!ready)
+          return NextResponse.json({ok:false,error:"STAGED_VECTOR_NOT_READY"},{status:409});
         const published = await publishExactStagedManifest(
           (publishEnv as any).CORTEX_DB,lease,documentId,sourceFingerprint,manifestIds);
         return NextResponse.json({ok:published,published},
