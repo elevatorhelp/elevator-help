@@ -2,27 +2,22 @@ import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 import {extractReferenceIdentifiers} from "../app/lib/reference-identifiers.ts";
 import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+import {activeEvidenceQuery,selectQueryableEvidence} from "./qa-drive-evidence-selector.mjs";
 // Validate before any remote D1 read or bearer-bearing HTTP request.
 const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
 const qaToken=process.env.QA_INGESTION_TOKEN;
 if(typeof qaToken!=="string" || !qaToken)throw Error("QA_INGESTION_TOKEN_REQUIRED");
 const fileId=process.env.TARGET_FILE_ID || "1VRn4-2Pm_Pl_W5gU0OYmRl_Oh2xljMYf";
-if(!/^[A-Za-z0-9_-]{10,128}$/.test(fileId))throw Error("QA_INVALID_TARGET_FILE_ID");
-const sql="SELECT e.document_id,e.generation,e.chunk_id,e.identifiers_json,e.page "+
- "FROM ingestion_staged_evidence e JOIN ingestion_document_publications p "+
- "ON p.document_id=e.document_id AND p.active_generation=e.generation "+
- "WHERE e.document_id='"+fileId+"' ORDER BY e.chunk_id LIMIT 1";
+const sql=activeEvidenceQuery(fileId);
 const output=execFileSync("npx",["wrangler","d1","execute","elevator-help-lease-test-01",
  "--remote","--config","wrangler.qa-app-deployed.json","--command",sql,"--json"],{
  encoding:"utf8",timeout:120000,stdio:["ignore","pipe","pipe"]
 });
 const rows=JSON.parse(output).flatMap(x=>x.results||[]);
-assert.equal(rows.length,1,"pilot document active evidence missing from isolated D1");
-const record=rows[0];
-const ids=JSON.parse(record.identifiers_json);
-const candidate=ids.find(x=>typeof x.label==="string"&&
-  extractReferenceIdentifiers(x.label).some(y=>y.key===x.key));
-assert.ok(candidate,"pilot document has no queryable deterministic identifier");
+assert.ok(rows.length>0,"pilot document active evidence missing from isolated D1");
+const selected=selectQueryableEvidence(rows,extractReferenceIdentifiers);
+assert.ok(selected,"pilot document has no queryable deterministic identifier in active evidence");
+const {record,candidate}=selected;
 const response=await fetch(new URL("/api/qa-evidence-lookup",qaOrigin),{
  method:"POST",headers:{"Authorization":"Bearer "+qaToken,
  "Content-Type":"application/json"},body:JSON.stringify({query:candidate.label}),
