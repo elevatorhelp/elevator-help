@@ -55,7 +55,7 @@ denied(origin,"");
 // Source-level regex alone cannot prove that an unsafe destination is rejected.
 const {runInNewContext}=await import("node:vm");
 const driveSource=readFileSync(new URL("./drive-ingest.mjs",import.meta.url),"utf8");
-const stagedGate=driveSource.match(/if \\(STAGED_AUTO_LEASE && \\([\\s\\S]*?\\)\\) throw new Error\\("STAGED_AUTO_LEASE_REQUIRES_ISOLATED_SINGLE_DOCUMENT"\\);/);
+const stagedGate=driveSource.match(/if \(STAGED_AUTO_LEASE && \([\s\S]*?\)\) throw new Error\("STAGED_AUTO_LEASE_REQUIRES_ISOLATED_SINGLE_DOCUMENT"\);/);
 assert.ok(stagedGate,"Missing staged Drive auto-lease preflight");
 const rawEndpoint=origin+"/api/drive-ingest-batch";
 const mapEndpoint=origin+"/api/document-map-ingest";
