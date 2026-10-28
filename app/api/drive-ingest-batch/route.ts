@@ -1,3 +1,4 @@
+import { hasValidIngestionChunk } from "../../lib/ingestion-chunk-validation";
 import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
 import {hasExactStagedVectorReadback,hasBoundedFullPublicationManifest,hasBoundedRawPublicationManifest,hasReadyRawStagedVectors} from "../../lib/ingestion-vector-readback";
 import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
@@ -576,16 +577,7 @@ export async function POST(request: NextRequest) {
     }
 
     for (const chunk of chunks) {
-      if (
-        !chunk ||
-        typeof chunk.id !== "string" ||
-        typeof chunk.text !== "string" ||
-        typeof chunk.sourceFileId !== "string" ||
-        typeof chunk.fileName !== "string" ||
-        typeof chunk.sourcePath !== "string" ||
-        !Number.isInteger(chunk.page) ||
-        !Number.isInteger(chunk.chunkIndex)
-      ) {
+      if (!hasValidIngestionChunk(chunk)) {
         return NextResponse.json(
           { ok: false, error: "Invalid chunk payload" },
           { status: 400 },
