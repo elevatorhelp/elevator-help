@@ -32,3 +32,19 @@ export function hasValidStagedChunkBatch(
     typeof chunk.sourceFingerprint === "string" &&
     !!chunk.sourceFingerprint.trim() && chunk.sourceFingerprint.length <= 512);
 }
+
+/** Explicitly reject unsupported or malformed actions before any AI, D1 or
+ * Vectorize side effects. Only a missing action defaults to legacy upsert.
+ */
+export type DriveIngestAction =
+  "upsert" | "index_evidence" | "delete" | "status" |
+  "publish_staged" | "publish_full" | "lease_claim" | "lease_renew";
+const DRIVE_INGEST_ACTIONS: ReadonlySet<string> = new Set([
+  "upsert", "index_evidence", "delete", "status",
+  "publish_staged", "publish_full", "lease_claim", "lease_renew",
+]);
+export function parseDriveIngestAction(value: unknown): DriveIngestAction | null {
+  if (value === undefined) return "upsert";
+  return typeof value === "string" && DRIVE_INGEST_ACTIONS.has(value)
+    ? value as DriveIngestAction : null;
+}
