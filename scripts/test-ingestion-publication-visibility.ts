@@ -24,10 +24,14 @@ assert.deepEqual(await filterPublishedMatches({prepare:null},unattributedLegacy)
  "Unusable configured D1 must reject unattributed legacy vectors");
 
 // Invalid staged IDs must never masquerade as legacy Vectorize hits.
-const malformedStaged=["g0:chunk","g01:chunk","g999999999999999999999:chunk","g1:"]
+const malformedStaged=["g0:chunk","g01:chunk","g999999999999999999999:chunk","g1:",
+ "g-1:chunk","g+1:chunk","g1.0:chunk","g1e0:chunk"]
  .map(id=>({id,metadata:{sourceFileId:"doc"}}));
 assert.deepEqual(await filterPublishedMatches(null,malformedStaged),[],
  "Malformed staged IDs must not bypass the gate when D1 is absent");
+assert.deepEqual(await filterPublishedMatches(null,[{id:"gadget:legacy",metadata:{}}]),
+ [{id:"gadget:legacy",metadata:{}}],
+ "Unrelated legacy IDs beginning with g must remain readable");
 assert.deepEqual(await filterPublishedMatches(db,malformedStaged),[],
  "Malformed staged IDs must not bypass configured D1 checks");
 const noPublication={prepare:()=>({bind:()=>({first:async()=>null})})};
