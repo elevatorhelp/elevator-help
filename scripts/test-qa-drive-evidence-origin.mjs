@@ -22,6 +22,14 @@ const guard='requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL)';
 assert.ok(source.includes(guard),'real readback script must call origin guard');
 assert.ok(source.indexOf(guard)<source.indexOf('execFileSync('),
   'origin validation must happen before remote D1 access');
+assert.ok(source.includes('const fileId=process.env.TARGET_FILE_ID;'),
+  'QA readback must require the explicit selected Drive file; no silent fallback');
+assert.ok(source.indexOf('const sql=activeEvidenceQuery(fileId);')<source.indexOf('execFileSync('),
+  'selected Drive ID must be validated before any remote D1 read');
+assert.ok(source.includes('Number.isSafeInteger(record.page)&&record.page>=1'),
+  'QA readback must require a positive physical PDF page before bearer request');
+assert.ok(source.includes('NOT a Clerk /api/ask customer citation'),
+  'QA-only evidence lookup must never be reported as the customer auth/citation gate');
 assert.ok(source.includes('new URL("/api/qa-evidence-lookup",qaOrigin)'),
   'request must target a fixed absolute path on the validated origin');
 assert.ok(source.includes('redirect:"manual"'),'bearer request must never follow redirects');
