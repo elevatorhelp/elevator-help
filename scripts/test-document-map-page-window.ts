@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity, dedupeDocumentMapNodes, documentMapNodeIdentityParts } from "../app/lib/document-map-page-window.ts";
+import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity, hasValidDocumentMapMetadata, dedupeDocumentMapNodes, documentMapNodeIdentityParts } from "../app/lib/document-map-page-window.ts";
 
 test("accepts ordered physical pages, including legitimate gaps after empty-page filtering", () => {
   assert.equal(isOrderedDocumentMapPageWindow([{ page: 1, text: "one" }, { page: 2, text: "two" }]), true);
@@ -96,4 +96,40 @@ test("document-map route deduplicates before paid embedding and uses same stable
   assert.ok(dedupe >= 0 && paid > dedupe, "deduplicate before dual embedding calls");
   assert.match(route, /\.\.\.documentMapNodeIdentityParts\(node\)/);
   assert.match(route, /recordStagedMap\(/);
+});
+
+
+test("rejects malformed optional map metadata and unsafe versions before paid work", () => {
+  const valid = { sourceFileId: "doc-1", fileName: "test.pdf", sourcePath: "qa/test.pdf" };
+  assert.equal(hasValidDocumentMapMetadata(valid), true);
+  assert.equal(hasValidDocumentMapMetadata({
+    ...valid, mapVersion: 2, modifiedTime: "2026-10-29T00:00:00Z",
+    sourceFingerprint: "revision-a", languageHint: "de", documentGroupHint: "EN 81-20",
+  }), true);
+  assert.equal(hasValidDocumentMapMetadata({ ...valid, mapVersion: null, languageHint: null }), true);
+  for (const invalid of [
+    { ...valid, mapVersion: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, mapVersion: -1 },
+    { ...valid, mapVersion: 0 },
+    { ...valid, mapVersion: 1.5 },
+    { ...valid, mapVersion: "1" },
+    { ...valid, modifiedTime: { timestamp: "now" } },
+    { ...valid, sourceFingerprint: { value: "revision" } },
+    { ...valid, languageHint: ["de"] },
+    { ...valid, documentGroupHint: { group: "standard" } },
+    { ...valid, documentGroupHint: true },
+    null,
+    [],
+  ]) assert.equal(hasValidDocumentMapMetadata(invalid), false, JSON.stringify(invalid));
+});
+
+test("real map route validates optional metadata before Gemini and Vectorize", () => {
+  const route = readFileSync(new URL("../app/api/document-map-ingest/route.ts", import.meta.url), "utf8");
+  const guard = route.indexOf("hasValidDocumentMapMetadata(document)");
+  const gemini = route.indexOf("const geminiBudget = createGeminiCallBudget(");
+  const embedding = route.indexOf("const embeddingResult = await ai.run(");
+  const upsert = route.indexOf("await guardWrite(() => vectorize.upsert(");
+  assert.ok(guard >= 0 && gemini > guard && embedding > guard && upsert > guard,
+    "malformed optional metadata must be rejected before all paid work and writes");
+  assert.match(route, /Number\\.isSafeInteger\\(document\\.mapVersion\\)/);
 });
