@@ -22,7 +22,8 @@ export function hasValidStagedChunkBatch(
   lease: {jobKey:string;generation:number}|null,
 ): boolean {
   if (!lease || !Number.isSafeInteger(lease.generation) || lease.generation < 1 ||
-      !Array.isArray(chunks) || chunks.length < 1 || chunks.length > 8) return false;
+      !Array.isArray(chunks) || chunks.length < 1 || chunks.length > 8 ||
+      new Set(chunks.map(chunk => chunk?.id)).size !== chunks.length) return false;
   return chunks.every(chunk =>
     !!chunk && typeof chunk.id === "string" && !!chunk.id.trim() &&
     chunk.id.length <= 512 &&
