@@ -1,4 +1,4 @@
-import { hasValidIngestionChunk } from "../../lib/ingestion-chunk-validation";
+import { hasValidIngestionChunk, hasValidStagedChunkBatch } from "../../lib/ingestion-chunk-validation";
 import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
 import {hasExactStagedVectorReadback,hasBoundedFullPublicationManifest,hasBoundedRawPublicationManifest,hasReadyRawStagedVectors} from "../../lib/ingestion-vector-readback";
 import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
@@ -642,12 +642,21 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Validate staged revision before any paid embeddings or external Vectorize writes.
-    // Never persist a receipt for an inconsistent source revision.
-    if (runtimeValue("INGESTION_STAGED_PUBLICATION") === "true" &&
-        chunks.some((v) => !v.sourceFingerprint ||
+    // Validate staged revision and document ownership BEFORE any paid Gemini,
+    // Workers AI or multilingual embedding call. Late rejection wasted tokens
+    // and could still write a generation-qualified Vectorize ID too long to
+    // record as a durable D1 receipt.
+    const staged = runtimeValue("INGESTION_STAGED_PUBLICATION") === "true";
+    if (staged && chunks.some((v) => !v.sourceFingerprint ||
           v.sourceFingerprint !== chunks[0].sourceFingerprint)) {
       return NextResponse.json({ok:false,error:"STAGED_FINGERPRINT_MISMATCH"},{status:409});
+    }
+    const publicationLease = staged ? parseIngestionLease(body?.lease) : null;
+    const sourceId = chunks[0]?.sourceFileId;
+    if (staged && (!archiveDb ||
+        runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true" ||
+        !hasValidStagedChunkBatch(chunks, publicationLease))) {
+      return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_REQUIRES_DOCUMENT_LEASE"},{status:409});
     }
 
     const apiKey = runtimeValue("GEMINI_API_KEY");
@@ -712,17 +721,7 @@ export async function POST(request: NextRequest) {
       return { chunk, metadata, index };
     });
 
-    // Opt-in staged publication. Only one source document per request, and its
-    // lease key must equal the sourceFileId. Otherwise fail closed.
-    const staged = runtimeValue("INGESTION_STAGED_PUBLICATION") === "true";
-    const publicationLease = staged ? parseIngestionLease(body?.lease) : null;
-    const sourceId = chunks[0]?.sourceFileId;
-    if (staged && (!publicationLease || !archiveDb ||
-        chunks.some((chunk) => chunk.sourceFileId !== sourceId) ||
-        publicationLease.jobKey !== sourceId ||
-        runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true")) {
-      return NextResponse.json({ok:false,error:"STAGED_PUBLICATION_REQUIRES_DOCUMENT_LEASE"},{status:409});
-    }
+    // Staged ownership, fingerprint and ID bounds were checked before embedding.
     const legacyVectors = vectorRecords.map(({ chunk, metadata, index }) => ({
       id: staged ? stagedVectorId(chunk.id, publicationLease!.generation) : chunk.id,
       values: embeddings[index],
