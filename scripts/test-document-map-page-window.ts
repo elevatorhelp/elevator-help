@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity } from "../app/lib/document-map-page-window.ts";
+import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity, dedupeDocumentMapNodes, documentMapNodeIdentityParts } from "../app/lib/document-map-page-window.ts";
 
 test("accepts ordered physical pages, including legitimate gaps after empty-page filtering", () => {
   assert.equal(isOrderedDocumentMapPageWindow([{ page: 1, text: "one" }, { page: 2, text: "two" }]), true);
@@ -68,4 +68,32 @@ test("actual document-map HTTP path rejects bad revisions before paid calls", ()
   const paid = route.indexOf("const geminiBudget = createGeminiCallBudget(");
   assert.ok(guard >= 0 && paid > guard, "staged revision guard must run before Gemini/embedding");
   assert.match(route, /INVALID_STAGED_MAP_LEASE/);
+});
+
+test("deduplicates model-generated map nodes by exact stable vector identity", () => {
+  const first = {
+    nodeType: "standard-clause", sectionId: "5.4.7.4", parentSection: null,
+    title: "Guardrail", topics: ["roof"], summary: "Same grounded requirement",
+    pageStart: 7, pageEnd: 7,
+  };
+  const duplicate = { ...first, topics: ["safety"], parentSection: "5.4.7" };
+  const nextPage = { ...first, pageStart: 8, pageEnd: 8 };
+  const nextClause = { ...first, sectionId: "5.4.7.5" };
+  const nextSummary = { ...first, summary: "Different grounded requirement" };
+  const result = dedupeDocumentMapNodes([first, duplicate, nextPage, nextClause, nextSummary]);
+  assert.equal(result.length, 4);
+  assert.strictEqual(result[0], first, "retain first node and its source topics");
+  assert.deepEqual(result.slice(1), [nextPage, nextClause, nextSummary]);
+  assert.deepEqual(documentMapNodeIdentityParts(first), [
+    "7", "7", "standard-clause", "5.4.7.4", "Guardrail", "Same grounded requirement",
+  ]);
+});
+
+test("document-map route deduplicates before paid embedding and uses same stable ID parts", () => {
+  const route = readFileSync(new URL("../app/api/document-map-ingest/route.ts", import.meta.url), "utf8");
+  const dedupe = route.indexOf("const nodes = dedupeDocumentMapNodes(await analyzeDocumentWindow(");
+  const paid = route.indexOf("const embeddingResult = await ai.run(");
+  assert.ok(dedupe >= 0 && paid > dedupe, "deduplicate before dual embedding calls");
+  assert.match(route, /\.\.\.documentMapNodeIdentityParts\(node\)/);
+  assert.match(route, /recordStagedMap\(/);
 });
