@@ -49,6 +49,7 @@ jobs:
         run: |
           node scripts/test-qa-pr61-multipage-dispatch-guard.mjs
           node scripts/test-qa-cloudflare-dispatch-guard.mjs
+          node --test scripts/test-qa-pr61-d1-ownership.mjs
 
       - name: Guard isolated actual-app QA checkout, billing opt-in and D1 bindings
         run: |
