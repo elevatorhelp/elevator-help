@@ -4,10 +4,13 @@ const qaName = /^qa-pr61-restore-[1-9]\d{0,19}$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function rows(value) {
-  if (!Array.isArray(value) || value.some(row => !row || typeof row !== 'object' || typeof row.name !== 'string')) {
+  if (!Array.isArray(value) || value.some(row => !row || typeof row !== 'object' ||
+      typeof row.name !== 'string' || typeof row.uuid !== 'string' || !uuid.test(row.uuid))) {
     throw Error('QA_D1_LIST_INVALID');
   }
-  if (new Set(value.map(row => row.name)).size !== value.length) throw Error('QA_D1_LIST_AMBIGUOUS');
+  if (new Set(value.map(row => row.name)).size !== value.length ||
+      new Set(value.map(row => row.uuid.toLowerCase())).size !== value.length)
+    throw Error('QA_D1_LIST_AMBIGUOUS');
   return value;
 }
 function requireName(name) {
