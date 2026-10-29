@@ -50,8 +50,8 @@ assert.ok(!runner.includes('return {status:response.status,...data};'),
   'body status must not override real HTTP status');
 assert.match(runner,/redirect:"manual",signal:AbortSignal.timeout\(30000\)/,
   'Cloudflare bearer must not follow redirects and reads must be bounded');
-const idA={id:'qa:1',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:1}};
-const idB={id:'qa:2',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:1}};
+const idA={id:'qa:1',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:1,status:'active',text:'QA source page one',fileName:'qa.pdf',sourcePath:'qa/test',chunkIndex:0,contentType:'general'}};
+const idB={id:'qa:2',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:1,status:'active',text:'QA source page two',fileName:'qa.pdf',sourcePath:'qa/test',chunkIndex:1,contentType:'general'}};
 assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:2'],'qa-doc','rev-1'),true);
 assert.equal(hasExactQaVectorReadback([{...idA,metadata:{...idA.metadata,page:'1'}},idB],['qa:1','qa:2'],'qa-doc','rev-1'),true,
   'literal decimal string page 1 remains compatible');
@@ -63,12 +63,18 @@ for(const bad of [
   ...[true,[1],'1e0','1.0',' 1 ',{value:1}].map(page =>
     [idA,{...idB,metadata:{...idB.metadata,page}}]),
   [idA,{...idB,metadata:null}],
+  // Regression: ID, fingerprint and page alone do not prove a usable citation.
+  ...[
+    {status:'deleted'}, {status:undefined}, {text:'  '}, {text:null},
+    {fileName:''}, {sourcePath:null}, {chunkIndex:-1},
+    {chunkIndex:'1'}, {contentType:'document-map'},
+  ].map(invalid => [idA,{...idB,metadata:{...idB.metadata,...invalid}}]),
 ]) assert.equal(hasExactQaVectorReadback(bad,['qa:1','qa:2'],'qa-doc','rev-1'),false,
   'missing, duplicate, extra, stale or mismatched metadata must fail readback');
 assert.equal(hasExactQaVectorReadback([idA,idB],['qa:1','qa:1'],'qa-doc','rev-1'),false);
 // Positive multipage QA must verify the exact page for each ID, not assume page 1.
 const idBPage2={...idB,metadata:{...idB.metadata,page:2}};
-const idCPage3={id:'qa:3',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:3}};
+const idCPage3={id:'qa:3',metadata:{sourceFileId:'qa-doc',sourceFingerprint:'rev-1',page:3,status:'active',text:'QA source page three',fileName:'qa.pdf',sourcePath:'qa/test',chunkIndex:0,contentType:'general'}};
 const pageMap=new Map([['qa:1',1],['qa:2',2],['qa:3',3]]);
 assert.equal(hasExactQaVectorReadback([idCPage3,idA,idBPage2],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',pageMap),true);
 assert.equal(hasExactQaVectorReadback([idA,{...idBPage2,metadata:{...idBPage2.metadata,page:'2'}},idCPage3],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',pageMap),true);
@@ -109,4 +115,4 @@ assert.ok(runner.includes('new Map([[expectedStagedIds[0],1],[expectedStagedIds[
   'actual-app E2E must map physical pages by the staged IDs returned by the route');
 assert.ok(runner.includes('hasExactQaVectorReadback(records,expectedIds,doc,fp,expectedPages)'),
   'actual-app E2E must verify both physical Vectorize indices against the page manifest');
-console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');
+console.log('PASS: exact-head manual-only isolated actual-app QA checks active RAW source-page provenance in both indices; no cloud requests');
