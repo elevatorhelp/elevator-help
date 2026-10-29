@@ -46,7 +46,7 @@ console.log("PASS: dual staged Vectorize readbacks require exact document/revisi
 // checking that either physical Vectorize index could read the staged vectors.
 const rawIds=Array.from({length:21},(_,i)=>"raw-"+i);
 const goodIndex=()=>({getByIds:async (requested:string[])=>requested.map(id=>({
- id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:1,chunkIndex:0,contentType:"general"}
+ id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:1,chunkIndex:0,contentType:"general",status:"active",text:"Exact source page text",fileName:"source.pdf",sourcePath:"qa/source.pdf"}
 }))});
 const staleIndex=()=>({getByIds:async (requested:string[])=>requested.map(id=>({
  id,metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-old",page:1,chunkIndex:0,contentType:"general"}
@@ -91,8 +91,8 @@ assert.match(rawBranch,/STAGED_VECTOR_NOT_READY/);
 console.log("PASS: RAW-only publication requires bounded exact readback from both Vectorize indices before D1 CAS");
 
 // Regressions for source-page and RAW/MAP type integrity at publication.
-const rawVector={id:"g2:raw",metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:7,chunkIndex:0,contentType:"general"}};
-const mapVector={id:"g2:map",metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:7,pageEnd:8,chunkIndex:-1,contentType:"document-map"}};
+const rawVector={id:"g2:raw",metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:7,chunkIndex:0,contentType:"general",status:"active",text:"Exact source text",fileName:"source.pdf",sourcePath:"qa/source.pdf"}};
+const mapVector={id:"g2:map",metadata:{sourceFileId:"doc-1",sourceFingerprint:"revision-new",page:7,pageEnd:8,chunkIndex:-1,contentType:"document-map",status:"active",text:"Map page summary",fileName:"source.pdf",sourcePath:"qa/source.pdf"}};
 assert.equal(ready([rawVector],["g2:raw"],"doc-1","revision-new","raw"),true);
 assert.equal(ready([mapVector],["g2:map"],"doc-1","revision-new","map"),true);
 assert.equal(ready([rawVector],["g2:raw"],"doc-1","revision-new","map"),false);
@@ -101,6 +101,24 @@ assert.equal(ready([{...rawVector,metadata:{...rawVector.metadata,page:0}}],["g2
 assert.equal(ready([{...rawVector,metadata:{...rawVector.metadata,chunkIndex:-1}}],["g2:raw"],"doc-1","revision-new","raw"),false);
 assert.equal(ready([{...mapVector,metadata:{...mapVector.metadata,pageEnd:6}}],["g2:map"],"doc-1","revision-new","map"),false);
 assert.equal(ready([{...mapVector,metadata:{...mapVector.metadata,chunkIndex:0}}],["g2:map"],"doc-1","revision-new","map"),false);
+// A vector can have the right generation/revision and page yet still be
+// unusable as a citation (missing source, missing provenance, or tombstone).
+// Both RAW and MAP readback must reject it before the D1 publication CAS.
+for(const [kind,vector] of [["raw",rawVector],["map",mapVector]] as const){
+ for(const invalid of [
+  {...vector,metadata:{...vector.metadata,status:"deleted"}},
+  {...vector,metadata:{...vector.metadata,status:undefined}},
+  {...vector,metadata:{...vector.metadata,text:"  "}},
+  {...vector,metadata:{...vector.metadata,text:null}},
+  {...vector,metadata:{...vector.metadata,fileName:""}},
+  {...vector,metadata:{...vector.metadata,sourcePath:null}},
+ ]){
+  assert.equal(ready([invalid],[vector.id],"doc-1","revision-new",kind),false,
+   `staged ${kind} without active source-page provenance must not publish`);
+ }
+}
+console.log("PASS: staged RAW/MAP publication rejects inactive or missing citation provenance");
+
 const fullBranch=route.split('if (body?.action === "publish_full")')[1]?.split('if (body?.action === "publish_staged")')[0];
 assert.ok(fullBranch?.includes('kind:"raw" as const') && fullBranch.includes('kind:"map" as const'));
 assert.ok(fullBranch.includes("body.sourceFingerprint,group.kind"));
