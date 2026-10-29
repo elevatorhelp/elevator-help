@@ -1,4 +1,5 @@
 import { hasValidIngestionChunk, hasValidStagedChunkBatch } from "../../lib/ingestion-chunk-validation";
+import { hasValidLegacyEmbeddingBatch } from "../../lib/ingestion-legacy-embedding-validation";
 import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
 import {hasExactStagedVectorReadback,hasBoundedFullPublicationManifest,hasBoundedRawPublicationManifest,hasReadyRawStagedVectors} from "../../lib/ingestion-vector-readback";
 import {claimIngestionLease,renewIngestionLease,leaseDuration} from "../../lib/ingestion-lease-operations";
@@ -687,8 +688,8 @@ export async function POST(request: NextRequest) {
       geminiBudget.fetch,
     );
 
-    if (!Array.isArray(embeddings) || embeddings.length !== chunks.length) {
-      throw new Error("Embedding count does not match chunk count");
+    if (!hasValidLegacyEmbeddingBatch(embeddings, chunks.length)) {
+      throw new Error("Invalid legacy embedding batch");
     }
 
     const vectorRecords = chunks.map((chunk, index) => {
