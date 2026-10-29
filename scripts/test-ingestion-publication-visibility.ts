@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import {filterPublishedMatches} from "../app/lib/ingestion-publication-visibility.ts";
+const stagedSource=(item:{id:string;metadata?:Record<string,unknown>})=>
+ item.id.startsWith("g") ? {...item,metadata:{
+  status:"active",text:"Exact source text",fileName:"source.pdf",
+  sourcePath:"archive/source.pdf",sourceFingerprint:"revision-current",page:1,
+  ...item.metadata,
+ }} : item;
 let generation=1;
 const db={prepare:()=>({bind:()=>({first:async()=>({active_generation:generation})})})};
-const matches=[{id:"legacy",metadata:{sourceFileId:"doc"}},{id:"g1:chunk",metadata:{sourceFileId:"doc"}},{id:"g2:chunk",metadata:{sourceFileId:"doc"}},{id:"g3:chunk",metadata:{}}];
+const matches=[{id:"legacy",metadata:{sourceFileId:"doc"}},{id:"g1:chunk",metadata:{sourceFileId:"doc"}},{id:"g2:chunk",metadata:{sourceFileId:"doc"}},{id:"g3:chunk",metadata:{}}].map(stagedSource);
 assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g1:chunk"]);
 generation=2;
 assert.deepEqual((await filterPublishedMatches(db,matches)).map(x=>x.id),["g2:chunk"]);
@@ -47,7 +53,7 @@ const rollbackVectors=[
  {id:"legacy",metadata:{sourceFileId:"doc"}},
  {id:"g2:older",metadata:{sourceFileId:"doc"}},
  {id:"g3:newer",metadata:{sourceFileId:"doc"}},
-];
+].map(stagedSource);
 generation=3;
 assert.deepEqual((await filterPublishedMatches(db,rollbackVectors)).map(x=>x.id),["g3:newer"]);
 generation=2;
@@ -65,7 +71,7 @@ const repeated=[
  ...Array.from({length:12},(_,i)=>({id:"g4:other-"+i,metadata:{sourceFileId:"other"}})),
  {id:"g3:stale",metadata:{sourceFileId:"doc"}},
  {id:"legacy",metadata:{sourceFileId:"doc"}},
-];
+].map(stagedSource);
 assert.equal((await filterPublishedMatches(countingDb,repeated)).length,52);
 assert.equal(lookupCount,2,"D1 reads must be bounded by unique sourceFileId, not Vectorize match count");
 await filterPublishedMatches(countingDb,repeated);
@@ -78,4 +84,23 @@ const sharedOutage={prepare:()=>({bind:()=>({first:async()=>{
 assert.deepEqual(await filterPublishedMatches(sharedOutage,repeated),[],
  "Shared D1 lookup failure must fail closed for staged and legacy matches");
 assert.equal(outageReads,2,"A D1 outage must not be retried once per vector chunk");
-console.log("Staged Vectorize visibility respects published D1 generation and fails closed");
+// Publication can be correct in D1 while a Vectorize record is later
+// tombstoned or its source-page metadata is incomplete. Never cite it.
+const published=stagedSource({id:"g2:published",metadata:{sourceFileId:"doc"}});
+assert.deepEqual(await filterPublishedMatches(db,[published]),[published]);
+for(const invalid of [
+ {status:"deleted"},{status:undefined},{text:"  "},{text:null},
+ {fileName:""},{sourcePath:null},{sourceFingerprint:""},
+ {sourceFingerprint:null},{page:0},{page:"1"},{page:1.5},
+]){
+ const corrupted={...published,metadata:{...published.metadata,...invalid}};
+ assert.deepEqual(await filterPublishedMatches(db,[corrupted]),[],
+  "Published staged vector with inactive or missing source-page provenance must fail closed");
+ assert.deepEqual(await filterPublishedMatches(db,[corrupted],true),[],
+  "Strict staged retrieval must also reject corrupt published source metadata");
+}
+// Existing pre-staging documents may lack these newer fields; keep legacy
+// retrieval semantics while requiring them for immutable staged generations.
+assert.deepEqual(await filterPublishedMatches(null,[{id:"legacy",metadata:{}}]),
+ [{id:"legacy",metadata:{}}]);
+console.log("Staged Vectorize visibility respects published D1 generation and active source-page provenance");
