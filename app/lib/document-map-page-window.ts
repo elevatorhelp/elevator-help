@@ -85,3 +85,22 @@ export function dedupeDocumentMapNodes<T extends DocumentMapNodeIdentity>(
     return true;
   });
 }
+
+
+/** Reject malformed optional document-map metadata before Gemini and both embeddings.
+ * An object/array in these fields can otherwise reach Vectorize metadata after
+ * paid work; an unsafe mapVersion can alias distinct document revisions.
+ */
+export function hasValidDocumentMapMetadata(document: unknown): boolean {
+  if (!document || typeof document !== "object" || Array.isArray(document)) return false;
+  const value = document as Record<string, unknown>;
+  if (value.mapVersion !== undefined && value.mapVersion !== null &&
+      (!Number.isSafeInteger(value.mapVersion) || (value.mapVersion as number) <= 0))
+    return false;
+  for (const field of ["modifiedTime", "sourceFingerprint", "languageHint", "documentGroupHint"] as const) {
+    const item = value[field];
+    if (item !== undefined && item !== null && typeof item !== "string")
+      return false;
+  }
+  return true;
+}
