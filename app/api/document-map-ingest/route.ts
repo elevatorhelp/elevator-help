@@ -1,5 +1,5 @@
 import {stagedVectorId} from "../../lib/ingestion-generation-publication";
-import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity } from "../../lib/document-map-page-window";
+import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity, documentMapNodeIdentityParts, dedupeDocumentMapNodes } from "../../lib/document-map-page-window";
 import {recordStagedMap} from "../../lib/ingestion-full-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
@@ -368,12 +368,14 @@ export async function POST(request: NextRequest) {
     const geminiBudget = createGeminiCallBudget(
       (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST ?? 3,
     );
-    const nodes = await analyzeDocumentWindow(
+    // Gemini can repeat identical nodes; their stable vector IDs would collide.
+    // Deduplicate before paid embeddings and before immutable staged receipts.
+    const nodes = dedupeDocumentMapNodes(await analyzeDocumentWindow(
       document,
       pages,
       apiKey,
       geminiBudget.fetch,
-    );
+    ));
     if (!nodes.length)
       return NextResponse.json({ ok: true, upserted: 0, ids: [], nodes: [] });
 
@@ -411,12 +413,7 @@ export async function POST(request: NextRequest) {
           document.sourceFileId,
           String(mapVersion),
           document.modifiedTime || "",
-          String(node.pageStart),
-          String(node.pageEnd),
-          node.nodeType,
-          node.sectionId || "",
-          node.title || "",
-          node.summary,
+          ...documentMapNodeIdentityParts(node),
         ]);
 
         const metadata: Record<string, string | number> = {
