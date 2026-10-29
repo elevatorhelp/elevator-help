@@ -40,9 +40,11 @@ export async function renewIngestionLease(db:any,lease:IngestionLease,durationMs
  leaseDuration(durationMs);
  const columns=await db.prepare("PRAGMA table_info(ingestion_worker_leases)").all();
  const hasTimestamp=columns?.results?.some((row:any)=>row.name==="updated_at_ms");
+ // Renewal may extend but must never shorten an unexpired lease: a shorter
+ // request must not allow a second worker to steal ownership prematurely.
  const sql=hasTimestamp?
-   "UPDATE ingestion_worker_leases SET lease_until_ms=?,updated_at_ms=? WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?":
-   "UPDATE ingestion_worker_leases SET lease_until_ms=? WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?";
+   "UPDATE ingestion_worker_leases SET lease_until_ms=MAX(lease_until_ms,?),updated_at_ms=? WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?":
+   "UPDATE ingestion_worker_leases SET lease_until_ms=MAX(lease_until_ms,?) WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?";
  const r=await db.prepare(sql)
  .bind(...(hasTimestamp?[now+durationMs,now,lease.jobKey,lease.owner,lease.generation,now]:
   [now+durationMs,lease.jobKey,lease.owner,lease.generation,now])).run();
