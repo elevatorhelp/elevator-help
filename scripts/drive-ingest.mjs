@@ -852,10 +852,13 @@ async function main() {
   for (const file of allFiles) {
     if (scope.files[file.id]?.missingScanCount) delete scope.files[file.id].missingScanCount;
   }
-  // Rotate priority every six hours so a live Evidence backlog cannot starve vectors/maps.
-  // Dependency gates in createIngestionPlan ensure raw follows evidence and map follows raw per file.
+  // Persist the phase rotation per Drive scope instead of deriving it from wall-clock
+  // time: delayed GitHub schedules must not repeatedly skip an eligible phase.
+  // createIngestionPlan still enforces evidence -> raw -> map dependencies per file.
   const phaseOrder = ["evidence", "raw", "map"];
-  const preferredPhase = phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
+  const lastPhase = scope.lastSelectedPhase;
+  const lastIndex = phaseOrder.indexOf(lastPhase);
+  const preferredPhase = phaseOrder[(lastIndex + 1) % phaseOrder.length];
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
@@ -871,6 +874,9 @@ async function main() {
   );
   const selected = batch.files;
   if (selected.length && !TARGET_FILE_ID) {
+    // Record the attempted phase before external calls; retrying a failed run
+    // must not repeatedly select the same phase and starve the others.
+    scope.lastSelectedPhase = plan.phase;
     // Advance and checkpoint before any network call. A failed file cannot
     // pin the entire archive to the same first batch on the next scheduled run.
     scope.phaseCursors[plan.phase] = batch.nextCursor;
