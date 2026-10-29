@@ -16,5 +16,7 @@ CREATE TABLE IF NOT EXISTS ingestion_worker_leases (
 -- lease_until_ms=excluded.lease_until_ms,
 -- updated_at_ms=excluded.updated_at_ms
 -- WHERE ingestion_worker_leases.lease_until_ms <= ?3;
--- A zero changes count means another live owner holds the job.
+-- Use RETURNING owner,generation,lease_until_ms on the same atomic claim.
+-- A separate SELECT can read a successor generation after a same-owner takeover.
+-- No returned row means another live owner holds the job.
 -- Complete/renew MUST check owner, generation and lease_until_ms > now.
