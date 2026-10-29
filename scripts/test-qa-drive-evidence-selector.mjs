@@ -22,6 +22,21 @@ test("unqueryable identifiers are skipped, never treated as proof", () => {
   assert.equal(selectQueryableEvidence([row(1, "bad", invalid), row(2, "good", valid)], extract)?.record.chunk_id, "good");
   assert.equal(selectQueryableEvidence([row(1, "bad", invalid)], extract), null);
 });
+test("published exact evidence must have a positive safe physical PDF page", () => {
+  for (const page of [0, -1, null, 1.5, "1", Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(
+      () => selectQueryableEvidence([row(page, "bad-page", valid)], extract),
+      /QA_INVALID_EVIDENCE_PAGE/,
+      "must reject invalid source page: " + String(page),
+    );
+  }
+  assert.equal(selectQueryableEvidence([row(1, "good", valid)], extract)?.record.page, 1);
+  // A corrupt active row must not be skipped to manufacture a green QA result.
+  assert.throws(
+    () => selectQueryableEvidence([row(0, "bad", valid), row(2, "good", valid)], extract),
+    /QA_INVALID_EVIDENCE_PAGE/,
+  );
+});
 test("malformed JSON fails closed instead of silently passing", () => {
   assert.throws(() => selectQueryableEvidence([row(1, "bad", "{")], extract), SyntaxError);
   assert.throws(() => selectQueryableEvidence([row(1, "bad", "{}")], extract), /QA_INVALID_EVIDENCE_IDENTIFIERS/);
