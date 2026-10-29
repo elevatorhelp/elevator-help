@@ -51,8 +51,12 @@ r=await post({action:"upsert",lease,chunks:[{id:doc+":1",text:"EN 81-20 QA test 
 assert.equal(r.status,200,"real application upsert failed: "+JSON.stringify(r));
 assert.equal(r.staged,true);
 const actualStagedIds=r.ids;
+const originalIds=[doc+":1",doc+":2"];
+// The HTTP route returns generation-qualified Vectorize IDs; publication
+// receipts still use original chunk IDs. Confusing them made paid QA fail.
+const expectedStagedIds=originalIds.map(id=>`g${lease.generation}:${id}`);
 assert.ok(Array.isArray(actualStagedIds)&&actualStagedIds.length===2,"server did not return both staged IDs");
-assert.deepEqual(new Set(actualStagedIds),new Set([doc+":1",doc+":2"]),"staged IDs must match page manifest");
+assert.deepEqual(new Set(actualStagedIds),new Set(expectedStagedIds),"staged Vectorize IDs must match the lease generation and page manifest");
 console.log("PASS: real Next.js API staged 2 raw document chunks");
 r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":wrong"]});
 assert.equal(r.status,409,"wrong manifest erroneously published");
@@ -62,7 +66,7 @@ assert.equal(r.published,true);
 console.log("PASS: actual Next.js API exact-manifest atomic publication");
 // Prove real read-after-publication: a successful API write alone is not retrieval evidence.
 const expectedIds=actualStagedIds;
-const expectedPages=new Map([[doc+":1",1],[doc+":2",2]]);
+const expectedPages=new Map([[expectedStagedIds[0],1],[expectedStagedIds[1],2]]);
 const qaIndexes=["elevator-help-staging-test","elevator-help-staging-test-v2"];
 if(!process.env.CLOUDFLARE_API_TOKEN||!process.env.CLOUDFLARE_ACCOUNT_ID)
  throw Error("QA_CLOUDFLARE_CREDENTIALS_REQUIRED");

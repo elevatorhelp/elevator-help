@@ -74,6 +74,17 @@ assert.equal(hasExactQaVectorReadback([idCPage3,idA,idBPage2],['qa:1','qa:2','qa
 assert.equal(hasExactQaVectorReadback([idA,{...idBPage2,metadata:{...idBPage2.metadata,page:'2'}},idCPage3],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',pageMap),true);
 assert.equal(hasExactQaVectorReadback([idA,idBPage2],['qa:1','qa:2'],'qa-doc','rev-1'),false,
   'legacy page-1-only calls must not silently accept page 2');
+// Reproduce the real API contract: staged upsert returns g<generation>:<id>,
+// while the publish_staged manifest still contains original unprefixed IDs.
+const stagedA={...idA,id:'g1:qa:1'};
+const stagedB={...idBPage2,id:'g1:qa:2'};
+const stagedIds=['g1:qa:1','g1:qa:2'];
+const stagedPages=new Map([['g1:qa:1',1],['g1:qa:2',2]]);
+assert.equal(hasExactQaVectorReadback([stagedA,stagedB],stagedIds,'qa-doc','rev-1',stagedPages),true,
+  'generation-qualified staged vectors must pass exact two-page readback');
+assert.equal(hasExactQaVectorReadback([stagedA,stagedB],stagedIds,'qa-doc','rev-1',
+  new Map([['qa:1',1],['qa:2',2]])),false,
+  'raw receipt IDs cannot key staged Vectorize readback pages');
 for (const badPages of [
   new Map([['qa:1',1],['qa:2',2]]),
   new Map([['qa:1',1],['qa:2',1],['qa:3',3]]),
@@ -90,8 +101,12 @@ for (const badPage of [true,2.5,'02','2.0',' 2 ',null,0]) {
 assert.equal(hasExactQaVectorReadback([idA,idBPage2,{...idCPage3,metadata:{...idCPage3.metadata,sourceFingerprint:'stale'}}],['qa:1','qa:2','qa:3'],'qa-doc','rev-1',pageMap),false);
 assert.ok(runner.includes('page:2,chunkIndex:1,sourceFingerprint:fp'),
   'actual-app positive E2E must stage a real second physical page');
-assert.ok(runner.includes('new Map([[doc+":1",1],[doc+":2",2]])'),
-  'actual-app E2E must specify each expected page');
+assert.ok(runner.includes('const expectedStagedIds=originalIds.map(id=>`g${lease.generation}:${id}`);'),
+  'actual-app E2E must expect generation-qualified IDs returned by staged upsert');
+assert.ok(runner.includes('new Set(actualStagedIds),new Set(expectedStagedIds)'),
+  'actual-app E2E must verify the returned IDs match the lease generation');
+assert.ok(runner.includes('new Map([[expectedStagedIds[0],1],[expectedStagedIds[1],2]])'),
+  'actual-app E2E must map physical pages by the staged IDs returned by the route');
 assert.ok(runner.includes('hasExactQaVectorReadback(records,expectedIds,doc,fp,expectedPages)'),
   'actual-app E2E must verify both physical Vectorize indices against the page manifest');
 console.log('PASS: exact-head manual-only isolated actual-app QA with D1 mutation and Gemini opt-in; no cloud requests');
