@@ -1,4 +1,5 @@
 import {stagedVectorId} from "../../lib/ingestion-generation-publication";
+import { hasValidLegacyEmbeddingBatch } from "../../lib/ingestion-legacy-embedding-validation";
 import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity, documentMapNodeIdentityParts, dedupeDocumentMapNodes } from "../../lib/document-map-page-window";
 import {recordStagedMap} from "../../lib/ingestion-full-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
@@ -403,8 +404,8 @@ export async function POST(request: NextRequest) {
       apiKey,
       geminiBudget.fetch,
     );
-    if (!Array.isArray(embeddings) || embeddings.length !== nodes.length) {
-      throw new Error("Document-map embedding count mismatch");
+    if (!hasValidLegacyEmbeddingBatch(embeddings, nodes.length)) {
+      throw new Error("Invalid document-map legacy embedding batch");
     }
 
     const vectors = await Promise.all(
