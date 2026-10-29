@@ -18,11 +18,20 @@ export function hasExactQaVectorReadback(records, expectedIds, documentId, finge
   const seen = new Set();
   for (const record of records) {
     const page = expectedPages === null ? 1 : expectedPages.get(record?.id);
+    const metadata = record?.metadata;
+    // The real staged RAW route writes these fields to both physical indices.
+    // A tombstone, empty source, or map node must not satisfy citation QA.
     if (!record || typeof record.id !== 'string' ||
         !expected.has(record.id) || seen.has(record.id) ||
-        record.metadata?.sourceFileId !== documentId ||
-        record.metadata?.sourceFingerprint !== fingerprint ||
-        (record.metadata?.page !== page && record.metadata?.page !== String(page))) return false;
+        metadata?.sourceFileId !== documentId ||
+        metadata?.sourceFingerprint !== fingerprint ||
+        (metadata?.page !== page && metadata?.page !== String(page)) ||
+        metadata?.status !== 'active' ||
+        typeof metadata.text !== 'string' || !metadata.text.trim() ||
+        typeof metadata.fileName !== 'string' || !metadata.fileName.trim() ||
+        typeof metadata.sourcePath !== 'string' || !metadata.sourcePath.trim() ||
+        !Number.isSafeInteger(metadata.chunkIndex) || metadata.chunkIndex < 0 ||
+        metadata.contentType === 'document-map') return false;
     seen.add(record.id);
   }
   return seen.size === expected.size;
