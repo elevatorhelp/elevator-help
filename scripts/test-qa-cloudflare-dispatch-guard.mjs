@@ -21,19 +21,28 @@ for (const [file,job,input] of [
   assert.ok(yaml.replaceAll('\r\n','\n').includes(expected),file+' must gate entire job');
   assert.match(yaml,/^concurrency:\s*\r?\n  group: qa-pr61-/m,file+' needs serialized QA concurrency');
 }
-// Protect against orphaned disposable D1 databases when provisioning succeeds
-// remotely but the CLI exits nonzero before the next workflow step.
+// Regression: a failed create after the preflight can race with an external
+// create of the same name. The old QA_CREATED=true-before-create marker would
+// then delete a database the workflow did not create.
 const d1=readFileSync(new URL('../.github/workflows/qa-pr61-d1-restore.yml',import.meta.url),'utf8');
 const create=d1.indexOf('npx wrangler d1 create "$QA_DB"');
-const intent=d1.indexOf('echo "QA_CREATED=true" >> "$GITHUB_ENV"');
+const claim=d1.indexOf('qa-pr61-d1-ownership.mjs claim "$QA_DB"');
 const preexisting=d1.indexOf('QA_DATABASE_NAME_ALREADY_EXISTS');
-assert.ok(preexisting>=0&&preexisting<intent&&intent<create,
-  'D1 restore must reject pre-existing name and persist cleanup intent before create');
-assert.match(d1,/if: always\(\)/,'D1 cleanup must run even after a failed provision/restore');
+assert.ok(preexisting>=0&&preexisting<create&&create<claim,
+  'D1 restore must reject pre-existing names and claim UUID ownership only after successful create');
+assert.doesNotMatch(d1,/QA_CREATED=true/,
+  'pre-create ownership marker would allow deletion of a raced foreign database');
+assert.match(d1,/if: always\(\)/,'D1 cleanup must run after failure');
 assert.match(d1,/qa-pr61-restore-\$\{GITHUB_RUN_ID\}/,
-  'D1 cleanup must constrain deletion to the current run-specific name');
-assert.match(d1,/list=\$\(npx wrangler d1 list --json\)/,
-  'D1 cleanup must check resource existence before deletion');
+  'D1 cleanup must constrain its name to this exact run');
+assert.match(d1,/qa-pr61-d1-ownership\.mjs verify/,
+  'D1 cleanup must independently verify UUID ownership');
+assert.match(d1,/d1\/database\/\$QA_CREATED_DB_ID/,
+  'Cloudflare DELETE must address the verified immutable UUID');
+assert.doesNotMatch(d1,/npx wrangler d1 delete "\$QA_DB"/,
+  'deleting by reusable name can destroy a foreign replacement');
+assert.match(d1,/No verified create ownership; skipped D1 deletion/,
+  'ambiguous provisioning must fail safe and request orphan audit');
 // Two separate physical QA indices are required to validate the production
 // legacy/multilingual recovery contract. A single shared test index can mask
 // partial publication or recovery failure in the second index.
