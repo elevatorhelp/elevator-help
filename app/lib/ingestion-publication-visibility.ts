@@ -23,6 +23,19 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
   // Reject malformed staged IDs before any legacy compatibility fallback.
   if(!stage && /^g[0-9]+:/.test(id))continue;
   const documentId=match.metadata?.sourceFileId;
+  // A published generation alone does not make a later tombstone or a
+  // partially restored vector a usable citation. Only staged records have
+  // the guaranteed source-page metadata contract; legacy compatibility is
+  // handled separately below.
+  if(stage){
+   const meta=match.metadata;
+   if(meta?.status!=="active" ||
+      typeof meta.text!=="string" || !meta.text.trim() ||
+      typeof meta.fileName!=="string" || !meta.fileName.trim() ||
+      typeof meta.sourcePath!=="string" || !meta.sourcePath.trim() ||
+      typeof meta.sourceFingerprint!=="string" || !meta.sourceFingerprint.trim() ||
+      !Number.isSafeInteger(meta.page) || (meta.page as number)<1)continue;
+  }
   if(!stage && strict)continue;
   // Only a deliberately absent D1 binding permits legacy-only retrieval.
   // An unusable configured binding or missing source identity cannot prove
