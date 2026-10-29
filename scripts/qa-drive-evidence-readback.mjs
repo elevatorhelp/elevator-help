@@ -1,0 +1,39 @@
+import assert from "node:assert/strict";
+import {execFileSync} from "node:child_process";
+import {extractReferenceIdentifiers} from "../app/lib/reference-identifiers.ts";
+import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+import {activeEvidenceQuery,selectQueryableEvidence} from "./qa-drive-evidence-selector.mjs";
+// Validate before any remote D1 read or bearer-bearing HTTP request.
+const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
+const qaToken=process.env.QA_INGESTION_TOKEN;
+if(typeof qaToken!=="string" || !qaToken)throw Error("QA_INGESTION_TOKEN_REQUIRED");
+// Never silently test a different Drive document when the workflow input is absent.
+const fileId=process.env.TARGET_FILE_ID;
+const sql=activeEvidenceQuery(fileId);
+const output=execFileSync("npx",["wrangler","d1","execute","elevator-help-lease-test-01",
+ "--remote","--config","wrangler.qa-app-deployed.json","--command",sql,"--json"],{
+ encoding:"utf8",timeout:120000,stdio:["ignore","pipe","pipe"]
+});
+const rows=JSON.parse(output).flatMap(x=>x.results||[]);
+assert.ok(rows.length>0,"pilot document active evidence missing from isolated D1");
+const selected=selectQueryableEvidence(rows,extractReferenceIdentifiers);
+assert.ok(selected,"pilot document has no queryable deterministic identifier in active evidence");
+const {record,candidate}=selected;
+assert.ok(Number.isSafeInteger(record.page)&&record.page>=1,"invalid physical PDF citation page");
+const response=await fetch(new URL("/api/qa-evidence-lookup",qaOrigin),{
+ method:"POST",headers:{"Authorization":"Bearer "+qaToken,
+ "Content-Type":"application/json"},body:JSON.stringify({query:candidate.label}),
+ redirect:"manual",signal:AbortSignal.timeout(30000)
+});
+if(response.status!==200) {
+ const errorBody=await response.clone().json().catch(()=>({error:"NON_JSON"}));
+ throw Error("QA_EVIDENCE_LOOKUP_HTTP_"+response.status+"_"+String(errorBody.error||"UNKNOWN"));
+}
+const body=await response.json();
+assert.equal(body.ok,true);
+const match=body.results?.find(x=>x.sourceFileId===fileId&&x.chunkId===record.chunk_id);
+assert.ok(match,"published exact document not found from actual application lookup");
+assert.equal(match.page,record.page,"incorrect citation page");
+assert.ok(typeof match.text==="string"&&match.text.length>=20,"missing source quotation");
+assert.ok(match.fileName&&match.chunkId,"incomplete source citation");
+console.log("PASS: QA-only exact evidence endpoint located published Drive evidence with a positive physical PDF page; NOT a Clerk /api/ask customer citation");

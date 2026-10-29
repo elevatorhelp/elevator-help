@@ -1,0 +1,110 @@
+name: PR61 disposable D1 publication restore drill
+on:
+  workflow_dispatch:
+    inputs:
+      allow_remote_d1_qa:
+        description: 'Explicitly authorize isolated D1 create/write/restore/delete and quota usage'
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: qa-pr61-disposable-restore
+  cancel-in-progress: false
+jobs:
+  restore:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_remote_d1_qa == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      QA_DB: qa-pr61-restore-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Verify exact current PR63 HEAD before remote Cloudflare QA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/integration/pr61-reconciled-20261024" || {
+            echo "::error::Remote QA must select canonical PR63 integration branch"
+            exit 1
+          }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" || {
+            echo "::error::QA checkout differs from dispatched commit"
+            exit 1
+          }
+          current_sha=$(curl --fail --silent --show-error --max-time 20 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/63" \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s);if(p.state!=="open"||p.head?.ref!=="integration/pr61-reconciled-20261024")process.exit(1);process.stdout.write(p.head.sha)})')
+          test "$current_sha" = "$GITHUB_SHA" || {
+            echo "::error::Dispatched QA commit is not current PR63 HEAD"
+            exit 1
+          }
+      - run: npm ci --ignore-scripts
+      - name: Bound QA usage, require capacity, and create unique disposable database
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          list=$(npx wrangler d1 list --json)
+          count=$(printf '%s' "$list" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s);if(!Array.isArray(a))process.exit(2);console.log(a.length)})')
+          if [ "$count" -ge 8 ]; then
+            echo "::error::Account already has $count databases; no disposable D1 created to avoid hitting Free tier quota"
+            exit 1
+          fi
+          # Refuse to take ownership of any pre-existing database, even if its name matches.
+          printf '%s' "$list" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s);if(a.some(db=>db.name===process.env.QA_DB))throw Error("QA_DATABASE_NAME_ALREADY_EXISTS")})'
+          printf '%s' "$list" > "$RUNNER_TEMP/qa-pr61-d1-before.json"
+          # Never claim cleanup ownership before create succeeds. A competing
+          # create between preflight and this call must not be deleted by name.
+          npx wrangler d1 create "$QA_DB" --location weur
+          npx wrangler d1 list --json > "$RUNNER_TEMP/qa-pr61-d1-after.json"
+          created_id=$(node scripts/qa-pr61-d1-ownership.mjs claim "$QA_DB" "$RUNNER_TEMP/qa-pr61-d1-before.json" "$RUNNER_TEMP/qa-pr61-d1-after.json")
+          echo "QA_CREATED_DB_ID=$created_id" >> "$GITHUB_ENV"
+      - name: Stage published three-layer fixture on disposable D1
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute "$QA_DB" --remote --file docs/ingestion-staged-publication-schema.sql --yes
+          npx wrangler d1 execute "$QA_DB" --remote --file docs/ingestion-full-publication-schema.sql --yes
+          npx wrangler d1 execute "$QA_DB" --remote --command "INSERT INTO ingestion_document_publications VALUES ('qa-document','qa-document',2,100); INSERT INTO ingestion_staged_receipts VALUES ('qa-document',2,'raw-2',100,'fp-a'); INSERT INTO ingestion_staged_evidence VALUES ('qa-document',2,'evidence-2','fp-a','An E16 QA test passage','qa.pdf','QA',3,0,'[{\"key\":\"E16\"}]','[\"5.2\"]',100); INSERT INTO ingestion_staged_map_receipts VALUES ('qa-document',2,'map-2','fp-a',100)" --yes
+          info=$(npx wrangler d1 time-travel info "$QA_DB" --json)
+          bookmark=$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);if(!/^[a-f0-9]{8}(-[a-f0-9]{8}){2}-[a-f0-9]{32}$/i.test(v.bookmark||""))process.exit(1);console.log(v.bookmark)})')
+          echo "QA_BOOKMARK=$bookmark" >> "$GITHUB_ENV"
+          echo "PASS: remote isolated three-layer publication checkpoint taken"
+      - name: Advance generation then perform actual Cloudflare Time Travel restore
+        run: |
+          set -euo pipefail
+          test -n "$QA_BOOKMARK"
+          npx wrangler d1 execute "$QA_DB" --remote --command "UPDATE ingestion_document_publications SET active_generation=3 WHERE document_id='qa-document'; INSERT INTO ingestion_staged_receipts VALUES ('qa-document',3,'raw-3',110,'fp-b'); INSERT INTO ingestion_staged_evidence VALUES ('qa-document',3,'evidence-3','fp-b','new source','qa.pdf','QA',4,0,'[]','[]',110); INSERT INTO ingestion_staged_map_receipts VALUES ('qa-document',3,'map-3','fp-b',110)" --yes
+          printf 'y\n' | npx wrangler d1 time-travel restore "$QA_DB" --bookmark "$QA_BOOKMARK"
+          verify=$(npx wrangler d1 execute "$QA_DB" --remote --command "SELECT active_generation AS generation,(SELECT count(*) FROM ingestion_staged_receipts) AS raw_count,(SELECT count(*) FROM ingestion_staged_evidence) AS evidence_count,(SELECT count(*) FROM ingestion_staged_map_receipts) AS map_count,(SELECT count(*) FROM ingestion_staged_receipts WHERE generation=3) AS superseded_count FROM ingestion_document_publications WHERE document_id='qa-document'" --json)
+          printf '%s' "$verify" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);const r=v.flatMap(x=>x.results||[])[0];if(!r||r.generation!==2||r.raw_count!==1||r.evidence_count!==1||r.map_count!==1||r.superseded_count!==0)throw Error("D1_RESTORE_MANIFEST_MISMATCH "+JSON.stringify(r)); console.log("PASS: REAL disposable Cloudflare Time Travel restored active generation and all RAW/Evidence/Map receipts")})'
+      - name: Delete ONLY the verified database UUID created by this run
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${QA_CREATED_DB_ID:-}" ]; then
+            case "$QA_DB" in qa-pr61-restore-${GITHUB_RUN_ID}) ;; *) echo "::error::Unsafe QA db name"; exit 1;; esac
+            [[ "$CLOUDFLARE_ACCOUNT_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo "::error::Invalid account ID"; exit 1; }
+            # Refuse to delete a replaced or ambiguous database. Delete by
+            # immutable UUID, never by a name that another actor can reuse.
+            npx wrangler d1 list --json > "$RUNNER_TEMP/qa-pr61-d1-cleanup.json"
+            node scripts/qa-pr61-d1-ownership.mjs verify "$QA_DB" "$QA_CREATED_DB_ID" "$RUNNER_TEMP/qa-pr61-d1-cleanup.json" >/dev/null
+            curl --fail-with-body --silent --show-error --max-time 30 --request DELETE \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$QA_CREATED_DB_ID" \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);if(v.success!==true)throw Error("QA_D1_DELETE_FAILED");console.log("PASS: verified owned QA database removed by UUID")})'
+          else
+            echo "::warning::No verified create ownership; skipped D1 deletion. Audit for an orphaned QA DB by exact run ID."
+          fi

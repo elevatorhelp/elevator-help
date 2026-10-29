@@ -203,7 +203,13 @@ const exactArchive = await scenario({
 });
 assert.equal(exactArchive.result.sufficient, true);
 assert.deepEqual(exactArchive.result.checkedStandards, ["QRS SPEC 900-7"]);
-assert.equal(exactArchive.budget.used, 2);
+// Exact document identity is not topical evidence: require an actual semantic
+// embedding request, not merely a matching total of budgeted model calls.
+assert.ok(exactArchive.calls.some((url) => url.includes(":batchEmbedContents")),
+  "Exact document match must not skip semantic retrieval");
+assert.ok(exactArchive.calls.some((url) => url.includes(":generateContent")),
+  "Exact document match must still run source-bound claim verification");
+assert.equal(exactArchive.budget.used, 3);
 
 const iso = await scenario({
   question: "What does ISO 25745-2:2015 clause 7.1 say?",

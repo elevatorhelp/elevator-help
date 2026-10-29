@@ -334,22 +334,6 @@ function dailyQuotaError(q: string, limit: number) {
   return `Your ${limit} questions for today have been used. Please try again tomorrow.`;
 }
 
-async function proxyProductionAnswer(question: string, history: HistoryItem[]) {
-  const response = await fetch("https://elevator.help/api/ask", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Elevator-Preview-Proxy": "1",
-    },
-    body: JSON.stringify({ question, history }),
-    cache: "no-store",
-  });
-  const payload = await response.json().catch(() => null);
-  if (!payload || typeof payload !== "object")
-    throw new Error("PRODUCTION_ASK_INVALID_RESPONSE");
-  return NextResponse.json(payload, { status: response.status });
-}
-
 async function retrieveFaultEvidenceWithoutGemini(question: string) {
   const faultCode = extractFaultCode(question);
   const manufacturer = canonicalManufacturer(question);
@@ -512,8 +496,6 @@ export async function POST(request: NextRequest) {
       } catch (e) {
         console.error("Preview internal retrieval unavailable:", e);
       }
-      if (request.nextUrl.hostname !== "elevator.help")
-        return proxyProductionAnswer(question, history);
       return NextResponse.json(
         { error: "AI is not configured." },
         { status: 500 },

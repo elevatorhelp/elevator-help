@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
+import { planIngestion } from "./adaptive-ingestion-controller.mjs";
 
 const execFileAsync = promisify(execFile);
 const OFFICE_EXTENSIONS = new Set([
@@ -31,6 +32,29 @@ const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/ap
 const DOCUMENT_MAP_ENDPOINT =
   process.env.DOCUMENT_MAP_ENDPOINT || "https://elevator.help/api/document-map-ingest";
 const STATE_PATH = process.env.STATE_PATH || ".ingestion-state/drive.json";
+// Test-only bridge. A caller must provide a valid, server-issued per-document
+// lease. No production workflow sets this variable. Never use it for multi-file
+// or full-archive ingestion until durable lease acquisition/renewal is wired.
+const STAGED_LEASE_JSON = process.env.STAGED_INGESTION_LEASE_JSON || "";
+const STAGED_LEASE = STAGED_LEASE_JSON ? JSON.parse(STAGED_LEASE_JSON) : null;
+if(STAGED_LEASE && (!TARGET_FILE_ID || STAGED_LEASE.jobKey !== TARGET_FILE_ID ||
+    typeof STAGED_LEASE.owner !== "string" || !Number.isSafeInteger(STAGED_LEASE.generation) ||
+    STAGED_LEASE.generation < 1))
+  throw new Error("STAGING_REQUIRES_SINGLE_FILE_VALID_LEASE");
+// Opt-in single-document QA only. Do not use on production routes or normal schedules.
+const STAGED_AUTO_LEASE = process.env.STAGED_AUTO_LEASE === "true";
+// Fault injection is opt-in, QA-only, and requires the protected
+// single-document staged path. Never enable it on production ingestion.
+if(process.env.QA_INTERRUPT_AFTER_FIRST_RAW_BATCH==="true" && !STAGED_AUTO_LEASE)
+  throw new Error("QA_INTERRUPTION_REQUIRES_ISOLATED_STAGED_AUTO_LEASE");
+if (STAGED_AUTO_LEASE && (
+  !TARGET_FILE_ID || STAGED_LEASE ||
+  // Compare the full destinations, not only hostnames/origins: no HTTP downgrade,
+  // alternate port, credentials, query, fragment or wrong API route may receive QA tokens.
+  INGEST_ENDPOINT !== "https://elevator-help-pr61-app-qa.baharmand.workers.dev/api/drive-ingest-batch" ||
+  DOCUMENT_MAP_ENDPOINT !== "https://elevator-help-pr61-app-qa.baharmand.workers.dev/api/document-map-ingest"
+)) throw new Error("STAGED_AUTO_LEASE_REQUIRES_ISOLATED_SINGLE_DOCUMENT");
+let activeStagedLease = STAGED_LEASE;
 const BATCH_SIZE = 8;
 const CHUNK_SIZE = 2200;
 const CHUNK_OVERLAP = 250;
@@ -348,6 +372,17 @@ function fingerprint(file) {
   return file.md5Checksum || `${file.modifiedTime || ""}:${file.size || ""}`;
 }
 
+function deletionReceiptIds(previous) {
+  return Array.from(new Set([
+    ...(Array.isArray(previous.ids) ? previous.ids : []),
+    ...(Array.isArray(previous.evidenceIds) ? previous.evidenceIds : []),
+    ...(Array.isArray(previous.partialEvidenceIds) ? previous.partialEvidenceIds : []),
+    ...(Array.isArray(previous.partialRawIds) ? previous.partialRawIds : []),
+    ...(Array.isArray(previous.mapIds) ? previous.mapIds : []),
+    ...(Array.isArray(previous.partialMapIds) ? previous.partialMapIds : []),
+  ]));
+}
+
 async function loadState() {
   return readIngestionState();
 }
@@ -499,12 +534,29 @@ async function callIngest(payload, token) {
   if (payload?.action === "upsert") {
     ingestionBudget.reserve(GEMINI_CALLS_PER_RAW_BATCH, "raw chunk batch");
   }
-  return callJsonEndpoint(INGEST_ENDPOINT, payload, token, "Ingestion endpoint");
+  if (STAGED_AUTO_LEASE && activeStagedLease &&
+      (payload?.action === "upsert" || payload?.action === "publish_staged" || payload?.action === "publish_full")) {
+    const renewed = await callJsonEndpoint(INGEST_ENDPOINT,
+      {action:"lease_renew",lease:activeStagedLease,durationMs:180000},
+      token,"Lease renewal");
+    if(!renewed?.renewed)throw new Error("STAGED_LEASE_RENEWAL_FAILED");
+  }
+  return callJsonEndpoint(INGEST_ENDPOINT,
+    activeStagedLease && payload?.action === "upsert" ?
+      {...payload,lease:activeStagedLease} : payload,
+    token, "Ingestion endpoint");
 }
 
 async function callDocumentMap(payload, token) {
   ingestionBudget.reserve(GEMINI_CALLS_PER_MAP_WINDOW, "document-map window");
-  return callJsonEndpoint(DOCUMENT_MAP_ENDPOINT, payload, token, "Document-map endpoint");
+  if(STAGED_AUTO_LEASE && activeStagedLease){
+    const r=await callJsonEndpoint(INGEST_ENDPOINT,{action:"lease_renew",
+      lease:activeStagedLease,durationMs:180000},token,"Map lease renewal");
+    if(!r?.renewed)throw new Error("STAGED_MAP_LEASE_EXPIRED");
+  }
+  return callJsonEndpoint(DOCUMENT_MAP_ENDPOINT,
+    activeStagedLease ? {...payload,lease:activeStagedLease} : payload,
+    token, "Document-map endpoint");
 }
 
 async function deleteIds(ids, token) {
@@ -581,7 +633,7 @@ async function processEvidenceIndex(
     const batch = chunks.slice(index, index + BATCH_SIZE);
     const result = await callJsonEndpoint(
       INGEST_ENDPOINT,
-      { action: "index_evidence", chunks: batch },
+      { action: "index_evidence", chunks: batch, ...(activeStagedLease ? {lease:activeStagedLease} : {}) },
       ingestToken,
       "Archive evidence endpoint",
     );
@@ -800,6 +852,129 @@ async function processText(
   };
 }
 
+
+/** QA-only complete-document pilot. Skips the production phase scheduler.
+ * It never makes any production endpoint or D1 call: checked by the
+ * STAGED_AUTO_LEASE endpoint gate during module initialization.
+ */
+async function runIsolatedFullDocument(file,accessToken,ingestToken,state,scope){
+ const revision=fingerprint(file);
+ const qaFile=scope.files[file.id]||{};
+ const checkpoint=qaFile.stagedQaProgress;
+ // A continuation is valid ONLY while the server confirms the same lease
+ // owner and generation. Expired/taken-over leases cannot reuse staged IDs.
+ const checkpointValid=checkpoint?.revision===revision &&
+   checkpoint.lease?.jobKey===file.id &&
+   checkpoint.generation===checkpoint.lease.generation &&
+   Number.isInteger(checkpoint.nextRawChunk) &&
+   checkpoint.nextRawChunk>=0 &&
+   Array.isArray(checkpoint.rawIds) &&
+   checkpoint.rawIds.length===checkpoint.nextRawChunk &&
+   Array.isArray(checkpoint.evidenceIds);
+ let resumed=false;
+ if(checkpointValid){
+  try{
+   const renewed=await callJsonEndpoint(INGEST_ENDPOINT,{
+    action:"lease_renew",lease:checkpoint.lease,durationMs:180000
+   },ingestToken,"QA checkpoint lease renewal");
+   if(renewed?.renewed){
+    activeStagedLease=checkpoint.lease;
+    resumed=true;
+    console.log("QA resumed verified same-generation durable checkpoint");
+   }
+  }catch(error){
+   console.log("QA saved lease unavailable; replay requires fresh generation");
+  }
+ }
+ if(!resumed){
+  const claim=await callJsonEndpoint(INGEST_ENDPOINT,{
+   action:"lease_claim",documentId:file.id,
+   owner:"qa-"+process.pid+"-"+Date.now().toString(36),durationMs:180000
+  },ingestToken,"QA lease acquisition");
+  if(!claim?.lease)throw Error("STAGED_LEASE_CLAIM_FAILED");
+  activeStagedLease=claim.lease;
+ }
+ const qaProgress=resumed?{...checkpoint,rawIds:[...checkpoint.rawIds],
+   evidenceIds:[...checkpoint.evidenceIds]}:
+  {generation:activeStagedLease.generation,revision,lease:activeStagedLease,
+   evidenceIds:[],rawIds:[],nextRawChunk:0};
+ async function saveQaCheckpoint(){
+  scope.files[file.id]={...qaFile,stagedQaProgress:{...qaProgress}};
+  state.scopes[DRIVE_FOLDER_ID]=scope;
+  await saveState(state);
+ }
+ let evidenceIds=qaProgress.evidenceIds;
+ if(!evidenceIds.length){
+  evidenceIds=await processEvidenceIndex(file,accessToken,ingestToken);
+  if(!evidenceIds.length)throw Error("STAGED_EMPTY_EXACT_EVIDENCE");
+  qaProgress.evidenceIds=[...evidenceIds];
+  await saveQaCheckpoint();
+ }
+ const isText=file.mimeType==="text/plain"||
+   TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
+ async function saveQaRawReceipt({ids,nextChunk}){
+  qaProgress.rawIds=ids;
+  qaProgress.nextRawChunk=nextChunk;
+  await saveQaCheckpoint();
+  if(process.env.QA_INTERRUPT_AFTER_FIRST_RAW_BATCH==="true" &&
+     nextChunk>=BATCH_SIZE){
+    throw Error("QA_INJECTED_INTERRUPTION_AFTER_DURABLE_RAW_RECEIPT");
+  }
+ }
+ const rawOptions={rawStartChunk:qaProgress.nextRawChunk,
+  initialRawIds:qaProgress.rawIds,onRawProgress:saveQaRawReceipt};
+ const raw=isText?
+   await processText(file,accessToken,ingestToken,rawOptions):
+   await processPdf(file,accessToken,ingestToken,{
+    ingestRaw:true,ingestMap:false,...rawOptions
+   });
+ if(!raw.rawComplete||!Array.isArray(raw.ids)||!raw.ids.length)
+   throw Error("STAGED_RAW_INCOMPLETE_CHECKPOINT_REQUIRED");
+ let mapIds=[];
+ if(!isText){
+  const map=await processPdf(file,accessToken,ingestToken,{
+   ingestRaw:false,ingestMap:true
+  });
+  if(!map.mapComplete)throw Error("STAGED_MAP_INCOMPLETE_CHECKPOINT_REQUIRED");
+  const prefix="g"+activeStagedLease.generation+":";
+  mapIds=(map.mapIds||[]).map(id=>{
+    if(!id.startsWith(prefix))throw Error("STAGED_MAP_ID_GENERATION_MISMATCH");
+    return id.slice(prefix.length);
+  });
+ }
+ // A file modified during extraction cannot publish under the scanned revision.
+ const metadata=await driveJson("https://www.googleapis.com/drive/v3/files/"+
+  encodeURIComponent(file.id)+"?fields=id,modifiedTime,size,md5Checksum",accessToken);
+ if(fingerprint({...file,...metadata})!==revision)
+  throw Error("STAGED_SOURCE_REVISION_CHANGED");
+ const request={action:"publish_full",documentId:file.id,lease:activeStagedLease,
+  sourceFingerprint:revision,rawIds:raw.ids,evidenceIds,mapIds};
+ let published=false;
+ for(let attempt=0;attempt<36;attempt++){
+  try{
+   const result=await callIngest(request,ingestToken);
+   if(result?.published){published=true;break;}
+  }catch(error){
+   const message=String(error?.message||"");
+   if(!message.includes("STAGED_VECTOR_NOT_READY"))
+     throw error;
+  }
+  await new Promise(resolve=>setTimeout(resolve,5000));
+ }
+ if(!published)throw Error("STAGED_PUBLICATION_READINESS_TIMEOUT");
+ const {stagedQaProgress:completedQaProgress,...completedFile}=
+  scope.files[file.id]||{};
+ scope.files[file.id]={...completedFile,name:file.name,
+  sourcePath:file.sourcePath,modifiedTime:file.modifiedTime||null,
+  evidenceIds,ids:raw.ids,mapIds,evidenceFingerprint:revision,
+  rawFingerprint:revision,mapFingerprint:revision,fingerprint:revision,
+  archiveIndexVersion:ARCHIVE_INDEX_VERSION,rawEmbeddingVersion:RAW_EMBEDDING_VERSION,
+  mapVersion:DOCUMENT_MAP_VERSION,indexedAt:new Date().toISOString()};
+ state.scopes[DRIVE_FOLDER_ID]=scope;
+ await saveState(state);
+ console.log("PASS isolated Drive document complete: all layers published and checkpointed");
+}
+
 async function main() {
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
@@ -818,6 +993,12 @@ async function main() {
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
 
+  if(STAGED_AUTO_LEASE){
+    if(files.length!==1)throw Error("STAGING_REQUIRES_EXACT_ONE_DRIVE_DOCUMENT");
+    await runIsolatedFullDocument(files[0],accessToken,ingestToken,state,scope);
+    return;
+  }
+
   console.log(`Found ${files.length} supported documents in configured Drive scope`);
   console.log(
     `Gemini ingestion safety budget: at most ${ingestionBudget.snapshot().limit} calls in this process.`
@@ -832,15 +1013,7 @@ async function main() {
         console.log(`Missing Drive file (ID redacted); awaiting a second complete scan before deletion`);
         continue;
       }
-      const oldIds = Array.from(
-        new Set([
-          ...(Array.isArray(old.ids) ? old.ids : []),
-          ...(Array.isArray(old.evidenceIds) ? old.evidenceIds : []),
-          ...(Array.isArray(old.partialRawIds) ? old.partialRawIds : []),
-          ...(Array.isArray(old.mapIds) ? old.mapIds : []),
-          ...(Array.isArray(old.partialMapIds) ? old.partialMapIds : []),
-        ])
-      );
+      const oldIds = deletionReceiptIds(old);
       if (oldIds.length) {
         console.log(`Removing ${oldIds.length} vectors for deleted Drive file (ID redacted)`);
         await deleteIds(oldIds, ingestToken);
@@ -855,8 +1028,24 @@ async function main() {
   // Rotate priority every six hours so a live Evidence backlog cannot starve vectors/maps.
   // Dependency gates in createIngestionPlan ensure raw follows evidence and map follows raw per file.
   const phaseOrder = ["evidence", "raw", "map"];
-  const preferredPhase = phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
+  // Feature-gated planner: default remains the established production scheduler.
+  // Persist phase cursor alongside existing per-file checkpoints. No adaptive
+  // acceleration without separately verified fresh resource telemetry.
+  const controllerEnabled = process.env.INGESTION_CONTROLLER_ENABLED === "true";
+  const phaseCursor = Number.isSafeInteger(scope.nextPhaseCursor) && scope.nextPhaseCursor >= 0
+    ? scope.nextPhaseCursor % phaseOrder.length : 0;
+  const preferredPhase = controllerEnabled
+    ? phaseOrder[phaseCursor]
+    : phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
+  const capacity = controllerEnabled
+    ? planIngestion({
+        queues: plan.readyCounts,
+        cursor: phaseCursor,
+        // No trusted quota telemetry yet: always fail closed to existing MAX_FILES.
+        policy: { baselineFiles: MAX_FILES, maxFiles: MAX_FILES, adaptiveEnabled: false },
+      })
+    : null;
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
   console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);
@@ -867,13 +1056,14 @@ async function main() {
 
   scope.phaseCursors ||= {};
   const batch = selectFairIngestionBatch(
-    changed, MAX_FILES, scope.phaseCursors[plan.phase] ?? null
+    changed, controllerEnabled ? capacity.maxFiles : MAX_FILES, scope.phaseCursors[plan.phase] ?? null
   );
   const selected = batch.files;
   if (selected.length && !TARGET_FILE_ID) {
     // Advance and checkpoint before any network call. A failed file cannot
     // pin the entire archive to the same first batch on the next scheduled run.
     scope.phaseCursors[plan.phase] = batch.nextCursor;
+    if (controllerEnabled) scope.nextPhaseCursor = capacity.nextCursor;
     state.scopes[DRIVE_FOLDER_ID] = scope;
     await saveState(state);
   }
@@ -881,6 +1071,17 @@ async function main() {
   const fileErrors = [];
   for (const file of selected) {
     try {
+    if(STAGED_AUTO_LEASE) {
+      // The current staged pilot only supports RAW. Evidence/map require an
+      // independent generation-aware storage protocol before they can run.
+      if(plan.phase !== "raw")throw new Error("STAGED_EVIDENCE_MAP_NOT_READY");
+      const claim=await callJsonEndpoint(INGEST_ENDPOINT,{
+        action:"lease_claim",documentId:file.id,
+        owner:"qa-"+process.pid+"-"+Date.now().toString(36),durationMs:180000
+      },ingestToken,"Lease claim");
+      if(!claim?.lease)throw new Error("STAGED_LEASE_CLAIM_FAILED");
+      activeStagedLease=claim.lease;
+    }
     const previous = scope.files[file.id] || {};
     const currentFingerprint = fingerprint(file);
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
@@ -1004,11 +1205,27 @@ async function main() {
         continue;
       }
 
+      if (activeStagedLease) {
+        if (!newIds.length || new Set(newIds).size !== newIds.length)
+          throw new Error("STAGING_INVALID_CHUNK_MANIFEST");
+        // The source revision and exact list of chunk identifiers are checked
+        // against durable receipt rows in a single D1 publication UPDATE.
+        // A rejected publish MUST NOT mark raw indexing complete.
+        const publish = await callIngest({
+          action: "publish_staged",
+          lease: activeStagedLease,
+          documentId: file.id,
+          sourceFingerprint: currentFingerprint,
+          manifestIds: newIds,
+        }, ingestToken);
+        if (!publish?.published) throw new Error("STAGING_PUBLICATION_NOT_CONFIRMED");
+      }
+
       const newIdSet = new Set(newIds);
       const staleRawIds = (Array.isArray(previous.ids) ? previous.ids : []).filter(
         (id) => !newIdSet.has(id)
       );
-      if (staleRawIds.length) await deleteIds(staleRawIds, ingestToken);
+      if (staleRawIds.length && !activeStagedLease) await deleteIds(staleRawIds, ingestToken);
 
       next.ids = newIds;
       next.rawEmbeddingVersion = RAW_EMBEDDING_VERSION;
@@ -1167,6 +1384,7 @@ export {
   DOCUMENT_MAP_VERSION,
   RAW_EMBEDDING_VERSION,
   fingerprint,
+  deletionReceiptIds,
   needsMapBackfill,
   needsEvidenceBackfill,
   needsRawBackfill,

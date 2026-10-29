@@ -9,6 +9,7 @@ import {
   standardCodesMatch,
 } from "./standard-identifiers.ts";
 import { searchArchiveEvidenceIndex } from "./archive-evidence-index.ts";
+import { filterPublishedMatches } from "./ingestion-publication-visibility.ts";
 import { standardReferenceIdentifiers } from "./reference-identifiers.ts";
 
 type Evidence = {
@@ -27,6 +28,8 @@ export type VerifiedStandardClaim = {
   text: string;
   evidenceId: string;
   evidenceQuote: string;
+  /** Page from the retrieved source metadata, never from model output. */
+  page: number | null;
 };
 
 function parseModelJson(text: string) {
@@ -60,6 +63,15 @@ function sourceIdentity(metadata: any, text: string) {
     .join(" ");
 }
 
+function sourcePage(value: unknown): number | null {
+  // Preserve numeric metadata, including legacy decimal strings, without
+  // coercing booleans/arrays into apparently valid source pages.
+  if (typeof value !== "number" &&
+      !(typeof value === "string" && /^\d+$/.test(value.trim()))) return null;
+  const page = Number(value);
+  return Number.isSafeInteger(page) && page > 0 ? page : null;
+}
+
 function evidenceFromMatch(match: any): Evidence | null {
   const metadata = match?.metadata || {};
   if (metadata?.contentType === "document-map") return null;
@@ -76,7 +88,7 @@ function evidenceFromMatch(match: any): Evidence | null {
     sourceName: [metadata?.fileName, metadata?.sourcePath]
       .filter(Boolean)
       .join(" "),
-    page: Number.isFinite(Number(metadata?.page)) ? Number(metadata.page) : null,
+    page: sourcePage(metadata?.page),
     sourceFingerprint:
       typeof metadata?.sourceFingerprint === "string"
         ? metadata.sourceFingerprint
@@ -104,7 +116,7 @@ function evidenceFromArchiveRow(row: any): Evidence | null {
     score: 2,
     standardCodes,
     sourceName,
-    page: Number.isFinite(Number(row?.page)) ? Number(row.page) : null,
+    page: sourcePage(row?.page),
     sourceFingerprint:
       typeof row?.source_fingerprint === "string"
         ? row.source_fingerprint
@@ -181,12 +193,12 @@ async function searchEvidence(
     archiveDb,
   );
   const queries = buildQueries(question, route);
-  // Exact identifiers plus a clause form a deterministic archive address. The
-  // model never needs to know a file/folder address; the index resolves it. If
-  // that address produced evidence, avoid a noisy semantic search entirely.
-  const backends = exactEvidence.length
-    ? []
-    : await createQueryBackends(queries, ai, vectorize, multilingual);
+  // An exact standard identifier identifies the DOCUMENT, not necessarily
+  // the relevant topic or clause. A broad document-level identifier match
+  // must not suppress semantic retrieval of the actual safety requirement.
+  // Continue the semantic search and let source-bound claim verification
+  // determine whether any candidate answers the user's question.
+  const backends = await createQueryBackends(queries, ai, vectorize, multilingual);
   const matches: any[] = [];
   const seen = new Set<string>();
 
@@ -226,7 +238,11 @@ async function searchEvidence(
     }
   }
 
-  const evidence = [...exactEvidence, ...matches.map(evidenceFromMatch)]
+  // D1 publication is the authority: a semantic hit is not evidence until
+  // its document generation is currently published. In particular, rollback
+  // must not resurrect stale staged vectors in standards answers.
+  const publishedMatches = await filterPublishedMatches(archiveDb, matches);
+  const evidence = [...exactEvidence, ...publishedMatches.map(evidenceFromMatch)]
     .filter((item): item is Evidence => Boolean(item))
     .filter((item) => belongsToRequestedStandard(item, requested))
     .sort((a, b) => {
@@ -254,6 +270,41 @@ function numberTokens(value: string) {
   );
 }
 
+
+// Fail closed on cross-clause attribution inside a multi-clause source chunk.
+// A copied quote must occur after the claimed clause marker, and before the
+// next different clause marker. This is deliberately conservative: references
+// resembling clause headings can reduce verification, never grant authority.
+function quotedClauseSource(source: string, clause: string, quote: string): string | null {
+  // Use one boundary scan for both line-start and inline OCR headings.
+  // A partial line-start scan could incorrectly absorb a later inline heading.
+  // Flattened OCR often loses line breaks. Bound a quote by the next clause
+  // marker regardless of its root: a 6.x heading must terminate a 5.x claim.
+  const markers = [...source.matchAll(/(?:^|\s)(?:§\s*)?(\d+(?:\.\d+){1,6})(?=\s|[):]|$)/g)]
+    .map((match) => {
+      const after = source.slice((match.index ?? 0) + match[0].length);
+      return {
+        clause: match[1],
+        index: (match.index ?? 0) + match[0].length - match[1].length,
+        // Common decimal measurements (e.g. 0.70 m) are not headings.
+        measurement: /^\d+\.\d+$/.test(match[1]) &&
+          /^\s*(?:mm|cm|m|kg|kN|N|V|Hz|s)(?=\s|[;,.]|$)/i.test(after),
+      };
+    })
+    .filter((marker) => !marker.measurement);
+  if (!markers.length) return null;
+  for (let index = source.indexOf(quote); index >= 0; index = source.indexOf(quote, index + 1)) {
+    // A quote may include its own clause heading (e.g. "5.4.7: ...").
+    const preceding = markers.filter((marker) => marker.index <= index).at(-1);
+    const governing = preceding ?? markers.find((marker) =>
+      marker.index > index && marker.index < index + quote.length);
+    const next = governing && markers.find((marker) => marker.index > governing.index);
+    if (governing?.clause === clause && (!next || next.index >= index + quote.length))
+      return source.slice(governing.index, next?.index ?? source.length);
+  }
+  return null;
+}
+
 function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
   if (!Array.isArray(parsed?.claims)) return [] as VerifiedStandardClaim[];
   const verified: VerifiedStandardClaim[] = [];
@@ -271,8 +322,15 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
         : "";
     if (!selected || !standard || !clause || !text || quote.length < 12)
       continue;
+    // A verified normative citation must have a usable source page.
+    // Model output must never fill missing or invalid source metadata.
+    if (selected.page === null || !Number.isSafeInteger(selected.page) || selected.page <= 0)
+      continue;
     const source = selected.text.replace(/\s+/g, " ").trim();
-    if (!source.includes(quote) || !source.includes(clause)) continue;
+    // A clause prefix is not evidence for that clause (e.g. 4.2 vs 4.20).
+    if (!source.includes(quote) || !extractClauseNumbers(source).includes(clause)) continue;
+    const clauseSource = quotedClauseSource(source, clause, quote);
+    if (!clauseSource) continue;
     if (
       !selected.standardCodes.some((found) =>
         standardCodesMatch(found, standard),
@@ -280,7 +338,8 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
     )
       continue;
     if (clauses.length && !clauses.includes(clause)) continue;
-    if (numberTokens(text).some((token) => !numberTokens(source).includes(token)))
+    // A value occurring only in a neighboring clause cannot support this claim.
+    if (numberTokens(text).some((token) => !numberTokens(clauseSource).includes(token)))
       continue;
     const key = `${standard}:${clause}:${text.toLowerCase()}`;
     if (seen.has(key)) continue;
@@ -291,14 +350,22 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
       text,
       evidenceId: selected.id,
       evidenceQuote: quote,
+      page: typeof selected.page === "number" &&
+        Number.isSafeInteger(selected.page) && selected.page > 0
+        ? selected.page
+        : null,
     });
   }
   return verified.slice(0, 8);
 }
 
 function formatAnswer(claims: VerifiedStandardClaim[], language?: string | null) {
+  // Source metadata identifies physical PDF pages, never printed standard pages.
+  const pageLabel = language === "de" ? "PDF-Seite"
+    : language === "fa" ? "صفحهٔ PDF"
+    : language === "es" ? "página PDF" : "PDF page";
   const details = claims
-    .map((claim) => `• ${claim.standard}, ${claim.clause} — ${claim.text}`)
+    .map((claim) => `• ${claim.standard}, ${claim.clause}${claim.page ? `, ${pageLabel} ${claim.page}` : ""} — ${claim.text}`)
     .join("\n");
   if (language === "de") return `Kurz gesagt:\n${claims[0].text}\n\nNormnachweis:\n${details}`;
   if (language === "fa") return `خلاصه:\n${claims[0].text}\n\nمدرک استاندارد:\n${details}`;

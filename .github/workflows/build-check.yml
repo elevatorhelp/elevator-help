@@ -15,8 +15,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout exact PR head (not GitHub's synthetic merge ref)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact checked-out commit
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA" || { echo "::error::Build Check did not test the exact requested commit"; exit 1; }
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -39,8 +48,61 @@ jobs:
       - name: Test message editing
         run: npm run test:conversation-edit
 
+      - name: Rehearse offline staged publication snapshot and restore
+        run: node --experimental-sqlite scripts/test-ingestion-restore-roundtrip.mjs
+
+      - name: Guard isolated QA endpoint security boundary
+        run: node scripts/test-qa-ingestion-edge-guard.mjs
+
+      - name: Guard manual-only paid QA dispatch
+        run: |
+          node scripts/test-qa-pr61-multipage-dispatch-guard.mjs
+          node scripts/test-qa-cloudflare-dispatch-guard.mjs
+          node --test scripts/test-qa-pr61-d1-ownership.mjs
+
+      - name: Verify QA resource isolation and D1 schema preflight (offline)
+        run: |
+          node scripts/qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-ensure-lease-schema.mjs
+
+      - name: Guard isolated actual-app QA checkout, billing opt-in and D1 bindings
+        run: |
+          node --experimental-sqlite scripts/test-qa-pr61-bootstrap.mjs
+          node scripts/test-qa-pr61-actual-app-safety.mjs
+
+      - name: Test multilingual physical PDF page labels and source-bound clause verification
+        run: node --experimental-strip-types scripts/test-standards-source-page.ts
+
+      - name: Test Clerk verifier contract without live credentials
+        run: node --experimental-strip-types scripts/test-request-auth-contract.mjs
+
       - name: Test authenticated chat gate
         run: npm run test:request-auth
+
+      - name: Check signed-in customer citation QA harness and physical PDF page labels
+        run: |
+          node --check scripts/qa-authenticated-ask-citation.mjs
+          node scripts/test-qa-physical-pdf-page.mjs
+          node scripts/test-qa-authenticated-citation-contract.mjs
+
+      - name: Verify complete-publication QA fixture spans physical pages 1 and 2
+        run: node --test scripts/test-qa-pr61-full-app-fixture.mjs
+
+      - name: Reject reordered document-map physical page inputs
+        run: node --experimental-strip-types --test scripts/test-document-map-page-window.ts
+
+      - name: Reject forged HTTP status in Drive recovery QA
+        run: node --test scripts/test-qa-drive-recovery-response.mjs
+
+      - name: Regress numeric run ID validation for isolated Drive restart QA
+        run: node --experimental-strip-types scripts/test-qa-drive-recovery-run-id.mjs
+
+      - name: Reject unsafe QA Drive evidence bearer destinations and redirects
+        run: node scripts/test-qa-drive-evidence-origin.mjs
+
+      - name: Verify active Drive evidence identifier selection across pages
+        run: node --experimental-sqlite --test scripts/test-qa-drive-evidence-selector.mjs
 
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
@@ -67,9 +129,55 @@ jobs:
         run: |
           node --experimental-strip-types scripts/test-generic-clause-parser.ts
           node --experimental-strip-types scripts/test-clause-casing.ts
+          node --experimental-strip-types scripts/test-standards-clause-boundary.ts
+
+      - name: Test standards semantic retrieval and source-bound claim verification
+        run: npm run test:cortex-standards
+
+      - name: Test standards topic retrieval despite broad exact hits
+        run: node scripts/test-cortex-standards-topic-retrieval.mjs
 
       - name: Test compact and legacy exact-evidence index
         run: node --experimental-sqlite --experimental-strip-types scripts/test-compact-evidence.mjs
+
+      - name: Test D1 lease SQL contract (offline SQLite)
+        run: node --experimental-sqlite --disable-warning=ExperimentalWarning --test scripts/test-d1-lease-sql.mjs
+
+      - name: Test adaptive ingestion planner (Issue #60)
+        run: node --test scripts/adaptive-ingestion-controller.test.mjs
+
+      - name: Test automatic D1 lease acquisition and renewal
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-lease-operations.ts
+
+      - name: Test lease ownership loss during in-flight ingestion
+        run: node --experimental-strip-types scripts/test-ingestion-lease-boundaries.ts
+
+      - name: Test crash-safe generation publication protocol
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-generation-publication.ts
+
+      - name: Test staged Vectorize visibility against D1 publication
+        run: node --experimental-strip-types scripts/test-ingestion-publication-visibility.ts
+
+      - name: Fail closed on stale dual-Vectorize readback after D1 restore
+        run: node --experimental-strip-types scripts/test-ingestion-vector-readback.ts
+
+      - name: Verify exact retrieval honors published document generations
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-published-evidence-generation.ts
+
+      - name: Reject invalid ingestion physical-page and chunk identities
+        run: node --experimental-strip-types scripts/test-ingestion-chunk-validation.ts
+
+      - name: Reject malformed Workers AI embeddings before dual Vectorize writes
+        run: node --experimental-strip-types --test scripts/test-ingestion-legacy-embedding-validation.ts
+
+      - name: Test three-layer atomic RAW Evidence Map publication
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-full-publication.ts
+
+      - name: Test complete-document staged publication with crash recovery
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-complete-publication.ts
+
+      - name: Test multi-batch lease renewal and restart fencing
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-multibatch-recovery.ts
 
       - name: Build
         run: npm run build

@@ -1,0 +1,208 @@
+name: PR63 isolated multipage Drive interruption recovery
+on:
+  workflow_dispatch:
+    inputs:
+      allow_paid_qa:
+        description: Explicitly authorize isolated Cloudflare writes and bounded Gemini QA calls
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: qa-pr61-isolated-d1-mutating
+  cancel-in-progress: false
+jobs:
+  isolated-app:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_paid_qa == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact triggering integration commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Verify dispatched commit is current canonical PR63 HEAD before remote mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/integration/pr61-reconciled-20261024" || {
+            echo "::error::Select the canonical PR63 integration branch for QA"
+            exit 1
+          }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" || {
+            echo "::error::QA checkout differs from dispatched commit"
+            exit 1
+          }
+          current_sha=$(curl --fail --silent --show-error --max-time 20 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/63" \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s);if(p.state!=="open"||p.head?.ref!=="integration/pr61-reconciled-20261024")process.exit(1);process.stdout.write(p.head.sha)})')
+          test "$current_sha" = "$GITHUB_SHA" || {
+            echo "::error::Dispatched QA commit is not the current PR63 HEAD"
+            exit 1
+          }
+      - name: Fail closed on unreviewed Cloudflare QA resources before remote mutation
+        run: |
+          node scripts/qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-assert-isolated-config.mjs
+      - name: Preflight isolated QA credentials before consuming build quota
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::Missing Cloudflare QA credential"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::Missing Cloudflare QA account"; exit 1; }
+          test -n "$GOOGLE_SERVICE_ACCOUNT_JSON" || { echo "::error::Missing Drive QA credential"; exit 1; }
+      - name: Install
+        run: npm ci
+      - name: Enforce Next.js security floor and QA-only OpenNext compatibility
+        run: |
+          set -euo pipefail
+          node scripts/guard-next-security-baseline.mjs
+          # npm ci already installs the exact lockfile-pinned versions.
+          # A second npm install can re-resolve dependencies and undermine QA fidelity.
+          test "$(node -p 'require("next/package.json").version')" = "16.4.2"
+          test "$(node -p 'require("./node_modules/@opennextjs/cloudflare/package.json").version')" = "1.20.12"
+      - name: Validate isolated lease and three-layer publication contracts
+        run: |
+          node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-lease-operations.ts
+          node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-full-publication.ts
+      - name: Verify published evidence isolation
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-published-evidence-generation.ts
+      - name: Test QA Drive endpoint isolation
+        run: node scripts/test-staged-qa-endpoint-guard.mjs
+      - name: Build actual app
+        run: npm run cf:build
+      - name: Create QA-only D1 tables
+        if: ${{ inputs.allow_paid_qa == true }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app-deployed.json --file scripts/qa-pr61-bootstrap.sql
+          npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-app-deployed.json --file docs/ingestion-full-publication-schema.sql
+      - name: Deploy protected QA Worker and inject disposable auth token only
+        if: ${{ inputs.allow_paid_qa == true }}
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          QA_INGESTION_TOKEN=$(openssl rand -hex 32)
+          echo "::add-mask::$QA_INGESTION_TOKEN"
+          echo "QA_INGESTION_TOKEN=$QA_INGESTION_TOKEN" >> "$GITHUB_ENV"
+          # Never print Wrangler deployment diagnostics into persistent Actions logs.
+          npx wrangler deploy --config wrangler.qa-app-deployed.json > /tmp/qa61-deploy.log 2>&1
+          printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put QA_INGESTION_TOKEN --config wrangler.qa-app-deployed.json >/dev/null
+          printf '%s' "$QA_INGESTION_TOKEN" | npx wrangler secret put INGESTION_TOKEN --config wrangler.qa-app-deployed.json >/dev/null
+          QA_APP_BASE_URL=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' /tmp/qa61-deploy.log | head -n1 | sed 's/[[:space:]]*$//' || true)
+          if [ "$QA_APP_BASE_URL" != "https://elevator-help-pr61-app-qa.baharmand.workers.dev" ]; then
+            echo "::error::QA deploy URL is missing or differs from the isolated approved Worker origin"
+            exit 1
+          fi
+          echo "QA_APP_BASE_URL=$QA_APP_BASE_URL" >> "$GITHUB_ENV"
+      - name: Verify Cloudflare secret presence without reading values
+        if: ${{ inputs.allow_paid_qa == true }}
+        id: secret-check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if npx wrangler secret list --config wrangler.qa-app-deployed.json | grep -Eq '"name"[[:space:]]*:[[:space:]]*"GEMINI_API_KEY"'; then
+            echo "positive=true" >> "$GITHUB_OUTPUT"
+            echo "Gemini secret present in isolated Cloudflare Worker"
+          else
+            echo "positive=false" >> "$GITHUB_OUTPUT"
+            echo "::error::GEMINI_API_KEY absent from isolated Cloudflare QA Worker; real multipage Drive QA cannot be skipped as a successful run."
+            exit 1
+          fi
+      - name: Test real deployed application
+        if: ${{ inputs.allow_paid_qa == true }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          QA_NEGATIVE_ONLY: ${{ steps.secret-check.outputs.positive == 'true' && 'false' || 'true' }}
+        run: node scripts/qa-pr61-full-app-e2e.mjs
+      - name: Real multi-page Drive interruption and same-generation checkpoint resume (isolated only)
+        if: ${{ inputs.allow_paid_qa == true && steps.secret-check.outputs.positive == 'true' }}
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          TARGET_FILE_ID: 1OlUlR0NQNhOwHtUb-MHq0DPbGtzwhPZJ
+          DRIVE_FOLDER_ID: 1Epm79FVfcRhAb51WtKPxl_ZtHHNVDVN1
+          STAGED_AUTO_LEASE: "true"
+          ALLOW_EMPTY_INGESTION_STATE: "true"
+          STATE_PATH: .ingestion-state/qa-drive-multipage.json
+          MAX_FILES: "1"
+          MAX_GEMINI_CALLS: "24"
+        run: |
+          set -euo pipefail
+          test -n "$GOOGLE_SERVICE_ACCOUNT_JSON" || { echo "::error::Missing existing Drive QA secret"; exit 1; }
+          test -n "$QA_INGESTION_TOKEN" || exit 1
+          test "$QA_APP_BASE_URL" = "https://elevator-help-pr61-app-qa.baharmand.workers.dev" || {
+            echo "::error::Refusing Drive QA against a non-isolated or unverified Worker origin"
+            exit 1
+          }
+          export INGEST_ENDPOINT="$QA_APP_BASE_URL/api/drive-ingest-batch"
+          export DOCUMENT_MAP_ENDPOINT="$QA_APP_BASE_URL/api/document-map-ingest"
+          export ELEVATOR_INGESTION_TOKEN="$QA_INGESTION_TOKEN"
+          set +e
+          QA_INTERRUPT_AFTER_FIRST_RAW_BATCH=true node scripts/drive-ingest.mjs > /tmp/qa61-interruption.log 2>&1
+          exit_code=$?
+          set -e
+          test "$exit_code" -ne 0
+          grep -q QA_INJECTED_INTERRUPTION_AFTER_DURABLE_RAW_RECEIPT /tmp/qa61-interruption.log || {
+            echo "::error::Real multipage ingest did not reach controlled durable RAW interruption"
+            exit 1
+          }
+          node --input-type=module -e '
+            import fs from "node:fs"; import assert from "node:assert/strict";
+            const state=JSON.parse(fs.readFileSync(process.env.STATE_PATH,"utf8"));
+            const file=state.scopes[process.env.DRIVE_FOLDER_ID]?.files?.[process.env.TARGET_FILE_ID];
+            const p=file?.stagedQaProgress;
+            assert.ok(p && p.nextRawChunk>=8 && p.rawIds.length===p.nextRawChunk);
+            assert.ok(p.lease?.generation===p.generation && p.evidenceIds.length>0);
+            assert.equal(file?.fingerprint ?? null,null,"Partial generation became visible");
+            console.log("PASS: first real RAW batch receipt durably checkpointed without publication");
+          '
+          node scripts/drive-ingest.mjs
+          node --input-type=module -e '
+            import fs from "node:fs"; import assert from "node:assert/strict";
+            const state=JSON.parse(fs.readFileSync(process.env.STATE_PATH,"utf8"));
+            const file=state.scopes[process.env.DRIVE_FOLDER_ID]?.files?.[process.env.TARGET_FILE_ID];
+            assert.ok(file?.fingerprint);
+            assert.equal(file.fingerprint,file.rawFingerprint);
+            assert.equal(file.fingerprint,file.evidenceFingerprint);
+            assert.equal(file.fingerprint,file.mapFingerprint);
+            assert.ok(file.ids.length>=8 && file.evidenceIds.length>0 && file.mapIds.length>0);
+            assert.equal(file.stagedQaProgress,undefined);
+            console.log("PASS: real multi-page Drive RAW Evidence Map complete after durable checkpoint resume");
+          '
+
+      - name: Verify real Drive document exact retrieval and citation
+        if: ${{ inputs.allow_paid_qa == true && steps.secret-check.outputs.positive == 'true' }}
+        env:
+          TARGET_FILE_ID: 1OlUlR0NQNhOwHtUb-MHq0DPbGtzwhPZJ
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node --experimental-strip-types scripts/qa-drive-evidence-readback.mjs
+
+      - name: Verify interrupted publication and stale owner recovery
+        if: ${{ inputs.allow_paid_qa == true && steps.secret-check.outputs.positive == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/qa-drive-recovery-live.mjs

@@ -1,17 +1,24 @@
-name: Isolated Vectorize test index
+name: Isolated dual Vectorize test indices
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/isolated-vectorize-test.yml
+    inputs:
+      allow_isolated_vectorize_provision:
+        description: Explicitly authorize TWO isolated Vectorize QA indices and quota usage (never production)
+        type: boolean
+        required: true
+        default: false
 permissions:
   contents: read
+concurrency:
+  group: qa-pr61-vectorize-provision
+  cancel-in-progress: false
 jobs:
   provision:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_vectorize_provision == true }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Create isolated test index
+      - name: Provision only the two allowlisted isolated QA indices
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -19,9 +26,51 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-          if npx --yes wrangler@4.125.0 vectorize list --json | grep -q 'elevator-help-staging-test'; then
-            echo 'Test index already exists; no changes made.'
-          else
-            npx --yes wrangler@4.125.0 vectorize create elevator-help-staging-test --dimensions=768 --metric=cosine
-          fi
-          npx --yes wrangler@4.125.0 vectorize list --json | grep -q 'elevator-help-staging-test'
+          # These are persistent, isolated QA resources. No production index
+          # may be selected by an input or environment variable.
+          # Reserve space for both missing indices BEFORE any create call.
+          # A sequential count check could create the first index and then
+          # fail on the second, leaving an unnecessary quota-consuming orphan.
+          list=$(npx --yes wrangler@4.125.0 vectorize list --json)
+          preflight=$(printf '%s' "$list" | node -e '
+            let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+              const data=JSON.parse(s);
+              const rows=Array.isArray(data)?data:data.result;
+              if(!Array.isArray(rows))throw Error("UNEXPECTED_VECTORIZE_LIST");
+              if(rows.some(x=>!x||typeof x.name!=="string")||
+                 new Set(rows.map(x=>x.name)).size!==rows.length)
+                throw Error("AMBIGUOUS_VECTORIZE_LIST");
+              const wanted=["elevator-help-staging-test","elevator-help-staging-test-v2"];
+              for(const name of wanted){
+                const match=rows.find(x=>x.name===name);
+                if(match&&Number(match.dimensions)!==768)
+                  throw Error("QA_DIMENSION_MISMATCH:"+name);
+                if(match&&match.metric!=="cosine")
+                  throw Error("QA_METRIC_MISMATCH:"+name);
+              }
+              const missing=wanted.filter(name=>!rows.some(x=>x.name===name));
+              if(rows.length+missing.length>8)
+                throw Error("QA_QUOTA_PREFLIGHT_BLOCKED");
+              console.log(missing.join(" "));
+            })')
+          for index in $preflight; do
+            case "$index" in
+              elevator-help-staging-test|elevator-help-staging-test-v2) ;;
+              *) echo "::error::Unsafe QA index"; exit 1 ;;
+            esac
+            npx --yes wrangler@4.125.0 vectorize create "$index" --dimensions=768 --metric=cosine
+          done
+          # Independently read back both physical indices, including metadata.
+          for index in elevator-help-staging-test elevator-help-staging-test-v2; do
+            npx --yes wrangler@4.125.0 vectorize list --json | node -e '
+              let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+                const data=JSON.parse(s);
+                const rows=Array.isArray(data)?data:data.result;
+                if(!Array.isArray(rows))throw Error("UNEXPECTED_VECTORIZE_LIST");
+                const matches=rows.filter(x=>x&&x.name===process.argv[1]);
+                if(matches.length!==1)throw Error("QA_VECTORIZE_INDEX_MISSING_OR_AMBIGUOUS");
+                if(Number(matches[0].dimensions)!==768||matches[0].metric!=="cosine")
+                  throw Error("QA_VECTORIZE_INDEX_METADATA_MISMATCH");
+                console.log("PASS: isolated QA index present: "+process.argv[1]);
+              })' "$index"
+          done
