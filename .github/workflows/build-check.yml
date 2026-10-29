@@ -148,6 +148,9 @@ jobs:
       - name: Reject invalid ingestion physical-page and chunk identities
         run: node --experimental-strip-types scripts/test-ingestion-chunk-validation.ts
 
+      - name: Reject malformed Workers AI embeddings before dual Vectorize writes
+        run: node --experimental-strip-types --test scripts/test-ingestion-legacy-embedding-validation.ts
+
       - name: Test three-layer atomic RAW Evidence Map publication
         run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-full-publication.ts
 
