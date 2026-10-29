@@ -21,6 +21,25 @@ for (const key of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'GOOGLE_SERV
   assert.ok(preflight.includes('test -n "$' + key + '"'), 'missing fail-closed QA prerequisite: ' + key);
 }
 assert.match(secretCheck, /GEMINI_API_KEY absent[^\n]*\n\s*exit 1/, 'missing Gemini secret must fail the job, not silently skip positive Drive QA');
+
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
+const lockedRoot = lock.packages[''];
+assert.equal(pkg.dependencies.next, '16.4.2');
+assert.equal(lockedRoot.dependencies.next, '16.4.2');
+assert.equal(pkg.devDependencies['@opennextjs/cloudflare'], '1.20.12');
+assert.equal(lockedRoot.devDependencies['@opennextjs/cloudflare'], '1.20.12');
+assert.match(workflow, /^      - name: Install\r?\n        run: npm ci$/m,
+  'isolated multipage QA must install from the checked-in lockfile');
+assert.doesNotMatch(workflow, /^\s*npm\s+(?:install|update)\b/m,
+  'a second mutable npm resolution after npm ci would invalidate exact-head QA');
+assert.ok(workflow.includes('node scripts/guard-next-security-baseline.mjs'),
+  'Next.js security floor must be checked');
+assert.ok(workflow.includes('require("next/package.json").version'),
+  'installed Next.js version must be checked');
+assert.ok(workflow.includes('require("./node_modules/@opennextjs/cloudflare/package.json").version'),
+  'installed OpenNext version must be checked');
+console.log('PASS: multipage QA uses only lockfile-pinned npm ci and verifies both runtime versions');
 const remoteSteps = [
   'Create QA-only D1 tables',
   'Deploy protected QA Worker and inject disposable auth token only',
