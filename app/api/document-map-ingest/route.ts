@@ -1,5 +1,5 @@
 import {stagedVectorId} from "../../lib/ingestion-generation-publication";
-import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange } from "../../lib/document-map-page-window";
+import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity } from "../../lib/document-map-page-window";
 import {recordStagedMap} from "../../lib/ingestion-full-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
@@ -309,8 +309,8 @@ export async function POST(request: NextRequest) {
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
     const lease=staged?parseIngestionLease(body?.lease):null;
-    if(staged && (!lease||lease.jobKey!==document?.sourceFileId||
-      !document?.sourceFingerprint||runtimeValue("INGESTION_LEASE_PREFLIGHT")!=="true"))
+    if(staged && (runtimeValue("INGESTION_LEASE_PREFLIGHT")!=="true" ||
+      !hasValidStagedDocumentMapIdentity(document,lease)))
       return NextResponse.json({ok:false,error:"INVALID_STAGED_MAP_LEASE"},{status:409});
 
 
