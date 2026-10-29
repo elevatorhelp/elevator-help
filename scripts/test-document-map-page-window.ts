@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange } from "../app/lib/document-map-page-window.ts";
+import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity } from "../app/lib/document-map-page-window.ts";
 
 test("accepts ordered physical pages, including legitimate gaps after empty-page filtering", () => {
   assert.equal(isOrderedDocumentMapPageWindow([{ page: 1, text: "one" }, { page: 2, text: "two" }]), true);
@@ -43,4 +43,29 @@ test("document-map route applies the page-range validator to generated nodes", (
   assert.match(route, /validatedDocumentMapNodePageRange\(item\.pageStart,\s*item\.pageEnd,\s*pages\)/);
   assert.match(route, /if \(!range\) return null;/);
   assert.doesNotMatch(route, /clampPage\(/);
+});
+
+
+test("staged map rejects unreceiptable source revisions before embedding", () => {
+  const lease = { jobKey: "doc-1", generation: 2 };
+  const valid = { sourceFileId: "doc-1", sourceFingerprint: "revision-a" };
+  assert.equal(hasValidStagedDocumentMapIdentity(valid, lease), true);
+  for (const document of [
+    { ...valid, sourceFingerprint: " " },
+    { ...valid, sourceFingerprint: "x".repeat(513) },
+    { ...valid, sourceFingerprint: "" },
+    { ...valid, sourceFingerprint: null },
+    { ...valid, sourceFileId: "other-document" },
+    null,
+  ]) assert.equal(hasValidStagedDocumentMapIdentity(document, lease), false);
+  assert.equal(hasValidStagedDocumentMapIdentity(valid, null), false);
+  assert.equal(hasValidStagedDocumentMapIdentity(valid, { jobKey: "doc-1", generation: 0 }), false);
+});
+
+test("actual document-map HTTP path rejects bad revisions before paid calls", () => {
+  const route = readFileSync(new URL("../app/api/document-map-ingest/route.ts", import.meta.url), "utf8");
+  const guard = route.indexOf("hasValidStagedDocumentMapIdentity(document,lease)");
+  const paid = route.indexOf("const geminiBudget = createGeminiCallBudget(");
+  assert.ok(guard >= 0 && paid > guard, "staged revision guard must run before Gemini/embedding");
+  assert.match(route, /INVALID_STAGED_MAP_LEASE/);
 });
