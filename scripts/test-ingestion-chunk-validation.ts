@@ -18,7 +18,7 @@ for (const bad of [
   `invalid chunk must not enter the archive: ${JSON.stringify(bad)}`);
 
 const route=readFileSync(new URL("../app/api/drive-ingest-batch/route.ts",import.meta.url),"utf8");
-assert.match(route,/import \{ hasValidIngestionChunk \} from "\.\.\/\.\.\/lib\/ingestion-chunk-validation";/);
+assert.match(route,/import \{ hasValidIngestionChunk, hasValidStagedChunkBatch \} from "\.\.\/\.\.\/lib\/ingestion-chunk-validation";/);
 assert.match(route,/if \(!hasValidIngestionChunk\(chunk\)\)/);
 const lease={jobKey:"doc-1",generation:7};
 const validStaged={...valid,sourceFingerprint:"revision-1"};
