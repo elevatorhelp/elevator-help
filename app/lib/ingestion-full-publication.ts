@@ -1,4 +1,5 @@
 import {assertActiveIngestionLease,type IngestionLease} from "./ingestion-lease-guard.ts";
+import {hasValidIngestionChunk} from "./ingestion-chunk-validation.ts";
 import {hasBoundedFullPublicationManifest} from "./ingestion-vector-readback.ts";
 
 export type StagedExactEvidence={
@@ -12,7 +13,8 @@ export async function stageExactEvidence(
  if(lease.jobKey!==chunk.sourceFileId)
    throw Error("STAGED_EVIDENCE_IDENTITY_MISMATCH");
  // Reject invalid citation anchors and immutable receipt identities before D1 writes.
- if(typeof chunk.id!=="string"||!chunk.id.trim()||chunk.id.length>512||
+ if(!hasValidIngestionChunk(chunk)||
+    typeof chunk.id!=="string"||!chunk.id.trim()||chunk.id.length>512||
     typeof chunk.sourceFingerprint!=="string"||!chunk.sourceFingerprint.trim()||
     chunk.sourceFingerprint.length>512||
     !Number.isSafeInteger(chunk.page)||chunk.page<1||

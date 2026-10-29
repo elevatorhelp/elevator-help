@@ -21,6 +21,12 @@ await recordStagedBatch(db,a,"doc",["r1","r2"],"revision-one");
 for(const malformed of [
  {...evidence("e-bad"),id:" "},
  {...evidence("e-bad"),id:"x".repeat(513)},
+ {...evidence("e-bad"),text:""},
+ {...evidence("e-bad"),text:" \t "},
+ {...evidence("e-bad"),fileName:""},
+ {...evidence("e-bad"),fileName:" \t "},
+ {...evidence("e-bad"),sourcePath:""},
+ {...evidence("e-bad"),sourcePath:" \t "},
  {...evidence("e-bad"),sourceFingerprint:" "},
  {...evidence("e-bad"),sourceFingerprint:"x".repeat(513)},
  {...evidence("e-bad"),page:0},
