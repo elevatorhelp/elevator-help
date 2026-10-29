@@ -40,7 +40,8 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/guard-next-security-baseline.mjs
-          npm install --no-save --ignore-scripts @opennextjs/cloudflare@1.20.12
+          # npm ci already installs the exact lockfile-pinned versions.
+          # A second npm install can re-resolve dependencies and undermine QA fidelity.
           test "$(node -p 'require("next/package.json").version')" = "16.4.2"
           test "$(node -p 'require("./node_modules/@opennextjs/cloudflare/package.json").version')" = "1.20.12"
       - name: Validate isolated lease and three-layer publication contracts
