@@ -24,7 +24,7 @@ export async function filterPublishedMatches<T extends {id:string;metadata?:Reco
   // Reserve generation-looking IDs even when their numeric spelling is invalid.
   // A malformed g-1:, g+1:, g1.0: or g1e0: must not fall through to
   // legacy-only retrieval when D1 is deliberately absent.
-  if(!stage && /^g[+-]?\\d[^:]*:/.test(id))continue;
+  if(!stage && /^g[+-]?\d[^:]*:/.test(id))continue;
   const documentId=match.metadata?.sourceFileId;
   // A published generation alone does not make a later tombstone or a
   // partially restored vector a usable citation. Only staged records have
