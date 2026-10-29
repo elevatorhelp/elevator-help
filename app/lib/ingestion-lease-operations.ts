@@ -27,12 +27,14 @@ export async function claimIngestionLease(db:any,jobKey:string,owner:string,dura
  owner=excluded.owner,generation=ingestion_worker_leases.generation+1,
  lease_until_ms=excluded.lease_until_ms
  WHERE ingestion_worker_leases.lease_until_ms<=?`;
- const r=await db.prepare(insertSql)
+ // Return the exact row modified by the atomic claim. A separate SELECT can
+ // race with a later takeover by the same owner label and accidentally hand
+ // the older caller the newer owner's fencing generation.
+ const row=await db.prepare(insertSql+" RETURNING owner,generation,lease_until_ms")
  .bind(...(hasTimestamp?[jobKey,owner,now+durationMs,now,now]:
-   [jobKey,owner,now+durationMs,now])).run();
- if(Number(r?.meta?.changes)!==1)return null;
- const row=await db.prepare("SELECT owner,generation,lease_until_ms FROM ingestion_worker_leases WHERE job_key=?").bind(jobKey).first();
- if(row?.owner!==owner||Number(row.lease_until_ms)<=now)return null;
+   [jobKey,owner,now+durationMs,now])).first();
+ if(row?.owner!==owner||!Number.isSafeInteger(Number(row.generation))||
+    Number(row.lease_until_ms)<=now)return null;
  return {jobKey,owner,generation:Number(row.generation)};
 }
 export async function renewIngestionLease(db:any,lease:IngestionLease,durationMs=180000,now=Date.now()):Promise<boolean>{
