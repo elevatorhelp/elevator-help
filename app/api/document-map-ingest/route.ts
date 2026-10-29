@@ -1,6 +1,6 @@
 import {stagedVectorId} from "../../lib/ingestion-generation-publication";
 import { hasValidLegacyEmbeddingBatch } from "../../lib/ingestion-legacy-embedding-validation";
-import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity, documentMapNodeIdentityParts, dedupeDocumentMapNodes } from "../../lib/document-map-page-window";
+import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity, hasValidDocumentMapMetadata, documentMapNodeIdentityParts, dedupeDocumentMapNodes } from "../../lib/document-map-page-window";
 import {recordStagedMap} from "../../lib/ingestion-full-publication";
 import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
@@ -327,8 +327,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate optional metadata before any Gemini or embedding call. Invalid
+    // objects can otherwise reach Vectorize and fail after paid processing.
+    if (!hasValidDocumentMapMetadata(document)) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid document-map metadata" },
+        { status: 400 },
+      );
+    }
+
     const mapVersion =
-      Number.isInteger(document.mapVersion) && Number(document.mapVersion) > 0
+      Number.isSafeInteger(document.mapVersion) && Number(document.mapVersion) > 0
         ? Number(document.mapVersion)
         : 1;
 
