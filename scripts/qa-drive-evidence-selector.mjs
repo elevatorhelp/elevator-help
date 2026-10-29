@@ -12,6 +12,11 @@ export function activeEvidenceQuery(fileId) {
 
 export function selectQueryableEvidence(rows, extractReferenceIdentifiers) {
   for (const record of rows) {
+    // A matching identifier on PDF page 0, a negative page, or an imprecise
+    // numeric value is not a source-page citation. Fail the QA run closed.
+    if (!Number.isSafeInteger(record?.page) || record.page < 1) {
+      throw Error("QA_INVALID_EVIDENCE_PAGE");
+    }
     const identifiers = JSON.parse(record.identifiers_json);
     if (!Array.isArray(identifiers)) throw Error("QA_INVALID_EVIDENCE_IDENTIFIERS");
     const candidate = identifiers.find(identifier =>
