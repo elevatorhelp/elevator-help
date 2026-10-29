@@ -1,4 +1,4 @@
-import { hasValidIngestionChunk, hasValidStagedChunkBatch } from "../../lib/ingestion-chunk-validation";
+import { hasValidIngestionChunk, hasValidStagedChunkBatch, parseDriveIngestAction } from "../../lib/ingestion-chunk-validation";
 import { hasValidLegacyEmbeddingBatch } from "../../lib/ingestion-legacy-embedding-validation";
 import {stageExactEvidence,publishFullGeneration} from "../../lib/ingestion-full-publication";
 import {hasExactStagedVectorReadback,hasBoundedFullPublicationManifest,hasBoundedRawPublicationManifest,hasReadyRawStagedVectors} from "../../lib/ingestion-vector-readback";
@@ -388,6 +388,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body: any = await request.json();
+    // An unknown or malformed action must not silently fall through to upsert:
+    // that could trigger paid Gemini/Workers AI calls and index writes.
+    const action = parseDriveIngestAction(body?.action);
+    if (!action) {
+      return NextResponse.json({ok:false,error:"INVALID_INGEST_ACTION"},{status:400});
+    }
     // Standalone document-scoped lease actions run BEFORE the normal lease preflight.
     // They require the same private INGESTION_TOKEN; never enable public access.
     if (body?.action === "lease_claim" || body?.action === "lease_renew") {
@@ -513,7 +519,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ok:false,error:"PUBLICATION_FAILED"},{status:409});
       }
     }
-    const action = body?.action || "upsert";
     const { env } = getCloudflareContext();
     const vectorize = (env as any).VECTORIZE;
     const vectorizeV2 = (env as any).VECTORIZE_V2;
