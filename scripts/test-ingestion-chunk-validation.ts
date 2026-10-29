@@ -35,6 +35,8 @@ for(const bad of [
   {...validStaged,id:"x".repeat(510)}, // 3-byte g7: prefix exceeds Vectorize ID limit
 ]) assert.equal(hasValidStagedChunkBatch([bad],lease),false,
   `invalid staged RAW batch must fail before paid calls: ${JSON.stringify({idLength:bad.id.length,sourceFileId:bad.sourceFileId})}`);
+assert.equal(hasValidStagedChunkBatch([validStaged,validStaged],lease),false,
+  "duplicate staged IDs must be rejected before paid embeddings");
 assert.equal(hasValidStagedChunkBatch([],lease),false);
 assert.equal(hasValidStagedChunkBatch(Array(9).fill(validStaged),lease),false);
 // A source-level ordering regression protects the real HTTP route, not just
