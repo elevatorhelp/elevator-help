@@ -131,5 +131,5 @@ test("real map route validates optional metadata before Gemini and Vectorize", (
   const upsert = route.indexOf("await guardWrite(() => vectorize.upsert(");
   assert.ok(guard >= 0 && gemini > guard && embedding > guard && upsert > guard,
     "malformed optional metadata must be rejected before all paid work and writes");
-  assert.match(route, /Number\\.isSafeInteger\\(document\\.mapVersion\\)/);
+  assert.ok(route.includes("Number.isSafeInteger(document.mapVersion)"));
 });
