@@ -31,7 +31,7 @@ export function claimNewQaD1(before, after, name) {
   if (found.length !== 1) throw Error('QA_D1_CREATED_ID_UNVERIFIED');
   const id = found[0].uuid;
   requireUuid(id);
-  if (prior.some(row => row.uuid === id)) throw Error('QA_D1_UUID_NOT_NEW');
+  if (prior.some(row => row.uuid.toLowerCase() === id.toLowerCase())) throw Error('QA_D1_UUID_NOT_NEW');
   return id;
 }
 
