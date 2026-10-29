@@ -115,4 +115,20 @@ assert.ok(runner.includes('new Map([[expectedStagedIds[0],1],[expectedStagedIds[
   'actual-app E2E must map physical pages by the staged IDs returned by the route');
 assert.ok(runner.includes('hasExactQaVectorReadback(records,expectedIds,doc,fp,expectedPages)'),
   'actual-app E2E must verify both physical Vectorize indices against the page manifest');
+// Both manual QA workflows mutate the same isolated D1 and two Vectorize indices.
+const multipageWorkflow=readFileSync(new URL('../.github/workflows/qa-pr61-multipage.yml',import.meta.url),'utf8');
+for (const [name, yaml] of [['actual-app',workflow],['multipage',multipageWorkflow]]) {
+  assert.match(yaml,/^concurrency:\\n  group: qa-pr61-isolated-d1-mutating\\n  cancel-in-progress: false/m,
+    name+' must serialize shared QA resources without canceling an active run');
+  const guard=yaml.indexOf('node scripts/qa-pr61-assert-isolated-config.mjs');
+  const firstMutation=yaml.indexOf(name==='actual-app'
+    ? 'npx wrangler d1 execute elevator-help-lease-test-01'
+    : 'npx wrangler d1 execute elevator-help-lease-test-01');
+  assert.ok(guard>=0 && firstMutation>guard,
+    name+' must validate exact isolated resources before remote D1 mutation');
+}
+assert.match(multipageWorkflow,/ref: \\$\\{\\{ github\\.sha \\}\\}/,
+  'multipage QA must check out the exact triggering commit');
+assert.doesNotMatch(multipageWorkflow,/wrangler deploy[^\\n]*\\|\\s*tee/,
+  'multipage QA must not print raw Wrangler deploy logs to Actions');
 console.log('PASS: exact-head manual-only isolated actual-app QA checks active RAW source-page provenance in both indices; no cloud requests');
