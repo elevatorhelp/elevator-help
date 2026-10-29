@@ -33,6 +33,28 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
+      - name: Verify dispatched commit is current canonical PR63 HEAD before remote mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/integration/pr61-reconciled-20261024" || {
+            echo "::error::Select the canonical PR63 integration branch for QA"
+            exit 1
+          }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" || {
+            echo "::error::QA checkout differs from dispatched commit"
+            exit 1
+          }
+          current_sha=$(curl --fail --silent --show-error --max-time 20 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/63" \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s);if(p.state!=="open"||p.head?.ref!=="integration/pr61-reconciled-20261024")process.exit(1);process.stdout.write(p.head.sha)})')
+          test "$current_sha" = "$GITHUB_SHA" || {
+            echo "::error::Dispatched QA commit is not the current PR63 HEAD"
+            exit 1
+          }
       - name: Fail closed on unreviewed Cloudflare QA resources before remote mutation
         run: |
           node scripts/qa-pr61-assert-isolated-config.mjs
