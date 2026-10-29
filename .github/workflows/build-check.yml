@@ -51,6 +51,12 @@ jobs:
           node scripts/test-qa-cloudflare-dispatch-guard.mjs
           node --test scripts/test-qa-pr61-d1-ownership.mjs
 
+      - name: Verify QA resource isolation and D1 schema preflight (offline)
+        run: |
+          node scripts/qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-assert-isolated-config.mjs
+          node scripts/test-qa-pr61-ensure-lease-schema.mjs
+
       - name: Guard isolated actual-app QA checkout, billing opt-in and D1 bindings
         run: |
           node --experimental-sqlite scripts/test-qa-pr61-bootstrap.mjs
