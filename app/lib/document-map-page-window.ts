@@ -29,3 +29,22 @@ export function validatedDocumentMapNodePageRange(
     return null;
   return { pageStart: start as number, pageEnd: end as number };
 }
+
+/** Validate the staged document revision before any paid Gemini/embedding calls.
+ * The receipt writer rejects blank or oversized fingerprints after upsert;
+ * rejecting them here prevents unreceipted vectors and wasted API calls.
+ */
+export function hasValidStagedDocumentMapIdentity(
+  document: unknown,
+  lease: { jobKey: string; generation: number } | null,
+): boolean {
+  if (!document || typeof document !== "object" || Array.isArray(document) ||
+      !lease || typeof lease.jobKey !== "string" ||
+      !Number.isSafeInteger(lease.generation) || lease.generation < 1)
+    return false;
+  const value = document as Record<string, unknown>;
+  return typeof value.sourceFileId === "string" &&
+    value.sourceFileId === lease.jobKey &&
+    typeof value.sourceFingerprint === "string" &&
+    !!value.sourceFingerprint.trim() && value.sourceFingerprint.length <= 512;
+}
