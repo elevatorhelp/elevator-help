@@ -115,6 +115,9 @@ jobs:
           node --experimental-strip-types scripts/test-clause-casing.ts
           node --experimental-strip-types scripts/test-standards-clause-boundary.ts
 
+      - name: Test standards semantic retrieval and source-bound claim verification
+        run: npm run test:cortex-standards
+
       - name: Test standards topic retrieval despite broad exact hits
         run: node scripts/test-cortex-standards-topic-retrieval.mjs
 
