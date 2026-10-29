@@ -7,7 +7,8 @@ import {activeEvidenceQuery,selectQueryableEvidence} from "./qa-drive-evidence-s
 const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
 const qaToken=process.env.QA_INGESTION_TOKEN;
 if(typeof qaToken!=="string" || !qaToken)throw Error("QA_INGESTION_TOKEN_REQUIRED");
-const fileId=process.env.TARGET_FILE_ID || "1VRn4-2Pm_Pl_W5gU0OYmRl_Oh2xljMYf";
+// Never silently test a different Drive document when the workflow input is absent.
+const fileId=process.env.TARGET_FILE_ID;
 const sql=activeEvidenceQuery(fileId);
 const output=execFileSync("npx",["wrangler","d1","execute","elevator-help-lease-test-01",
  "--remote","--config","wrangler.qa-app-deployed.json","--command",sql,"--json"],{
@@ -18,6 +19,7 @@ assert.ok(rows.length>0,"pilot document active evidence missing from isolated D1
 const selected=selectQueryableEvidence(rows,extractReferenceIdentifiers);
 assert.ok(selected,"pilot document has no queryable deterministic identifier in active evidence");
 const {record,candidate}=selected;
+assert.ok(Number.isSafeInteger(record.page)&&record.page>=1,"invalid physical PDF citation page");
 const response=await fetch(new URL("/api/qa-evidence-lookup",qaOrigin),{
  method:"POST",headers:{"Authorization":"Bearer "+qaToken,
  "Content-Type":"application/json"},body:JSON.stringify({query:candidate.label}),
@@ -34,4 +36,4 @@ assert.ok(match,"published exact document not found from actual application look
 assert.equal(match.page,record.page,"incorrect citation page");
 assert.ok(typeof match.text==="string"&&match.text.length>=20,"missing source quotation");
 assert.ok(match.fileName&&match.chunkId,"incomplete source citation");
-console.log("PASS: customer-facing exact retrieval engine located the REAL Drive PDF, returned published raw evidence and source citation");
+console.log("PASS: QA-only exact evidence endpoint located published Drive evidence with a positive physical PDF page; NOT a Clerk /api/ask customer citation");
