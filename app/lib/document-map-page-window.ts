@@ -48,3 +48,40 @@ export function hasValidStagedDocumentMapIdentity(
     typeof value.sourceFingerprint === "string" &&
     !!value.sourceFingerprint.trim() && value.sourceFingerprint.length <= 512;
 }
+
+/** These are exactly the node fields included in document-map vector IDs.
+ * Two model-generated nodes with this identity would upsert the same vector,
+ * then fail the distinct-ID staged receipt contract after paid embedding.
+ */
+export type DocumentMapNodeIdentity = {
+  pageStart: number;
+  pageEnd: number;
+  nodeType: string;
+  sectionId: string | null;
+  title: string | null;
+  summary: string;
+};
+
+export function documentMapNodeIdentityParts(node: DocumentMapNodeIdentity): string[] {
+  return [
+    String(node.pageStart),
+    String(node.pageEnd),
+    node.nodeType,
+    node.sectionId || "",
+    node.title || "",
+    node.summary,
+  ];
+}
+
+/** Keep the first model node for each vector identity before paid embeddings. */
+export function dedupeDocumentMapNodes<T extends DocumentMapNodeIdentity>(
+  nodes: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  return nodes.filter((node) => {
+    const identity = JSON.stringify(documentMapNodeIdentityParts(node));
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
