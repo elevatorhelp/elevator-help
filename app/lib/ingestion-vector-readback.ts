@@ -30,7 +30,14 @@ export function hasExactStagedVectorReadback(
     // kind is invalid; citations require an actual positive PDF page anchor.
     if (kind) {
       const meta = vector.metadata;
-      if (!Number.isSafeInteger(meta.page) || meta.page < 1 ||
+      // A matching ID and page number are not sufficient for source-page
+      // provenance: an inactive vector or one lacking its source text/path
+      // cannot safely back a citation after a restore or partial write.
+      if (meta.status !== "active" ||
+          typeof meta.text !== "string" || !meta.text.trim() ||
+          typeof meta.fileName !== "string" || !meta.fileName.trim() ||
+          typeof meta.sourcePath !== "string" || !meta.sourcePath.trim() ||
+          !Number.isSafeInteger(meta.page) || meta.page < 1 ||
           (kind === "raw"
             ? meta.contentType === "document-map" ||
               !Number.isSafeInteger(meta.chunkIndex) || meta.chunkIndex < 0
