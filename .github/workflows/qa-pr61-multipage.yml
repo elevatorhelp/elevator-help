@@ -81,6 +81,22 @@ jobs:
         run: node --experimental-sqlite --experimental-strip-types scripts/test-published-evidence-generation.ts
       - name: Test QA Drive endpoint isolation
         run: node scripts/test-staged-qa-endpoint-guard.mjs
+      - name: Verify Cloudflare secret presence without reading values
+        if: ${{ inputs.allow_paid_qa == true }}
+        id: secret-check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if npx wrangler secret list --config wrangler.qa-app-deployed.json | grep -Eq '"name"[[:space:]]*:[[:space:]]*"GEMINI_API_KEY"'; then
+            echo "positive=true" >> "$GITHUB_OUTPUT"
+            echo "Gemini secret present in isolated Cloudflare Worker"
+          else
+            echo "positive=false" >> "$GITHUB_OUTPUT"
+            echo "::error::GEMINI_API_KEY absent from isolated Cloudflare QA Worker; real multipage Drive QA cannot be skipped as a successful run."
+            exit 1
+          fi
       - name: Build actual app
         run: npm run cf:build
       - name: Create QA-only D1 tables
@@ -114,22 +130,6 @@ jobs:
             exit 1
           fi
           echo "QA_APP_BASE_URL=$QA_APP_BASE_URL" >> "$GITHUB_ENV"
-      - name: Verify Cloudflare secret presence without reading values
-        if: ${{ inputs.allow_paid_qa == true }}
-        id: secret-check
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          if npx wrangler secret list --config wrangler.qa-app-deployed.json | grep -Eq '"name"[[:space:]]*:[[:space:]]*"GEMINI_API_KEY"'; then
-            echo "positive=true" >> "$GITHUB_OUTPUT"
-            echo "Gemini secret present in isolated Cloudflare Worker"
-          else
-            echo "positive=false" >> "$GITHUB_OUTPUT"
-            echo "::error::GEMINI_API_KEY absent from isolated Cloudflare QA Worker; real multipage Drive QA cannot be skipped as a successful run."
-            exit 1
-          fi
       - name: Test real deployed application
         if: ${{ inputs.allow_paid_qa == true }}
         env:
