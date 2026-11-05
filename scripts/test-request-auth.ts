@@ -33,6 +33,42 @@ try {
   if (!unavailable.ok) assert.equal(unavailable.status, 503);
 
   process.env.CLERK_SECRET_KEY = "test_only_not_a_real_secret";
+  const bearerRequest = new Request("https://elevator.help/api/ask", {
+    method: "POST",
+    headers: { authorization: "Bearer header.payload.signature" },
+  });
+  let verificationCalls = 0;
+  const goodVerifier = (async (token: string, options: { secretKey?: string; authorizedParties?: string[] }) => {
+    verificationCalls++;
+    assert.equal(token, "header.payload.signature");
+    assert.equal(options.secretKey, "test_only_not_a_real_secret");
+    assert.deepEqual(options.authorizedParties, ["https://elevator.help"]);
+    // Clerk verifyToken succeeds with a direct JwtPayload, not {data, errors}.
+    return { sub: "user_ABC12345678", sid: "sess_ABC12345678" };
+  }) as unknown as typeof import("@clerk/backend").verifyToken;
+  assert.deepEqual(await authorizeChatRequest(bearerRequest, goodVerifier), {
+    ok: true,
+    userId: "user_ABC12345678",
+  });
+  assert.equal(verificationCalls, 1);
+  for (const invalidClaims of [
+    { data: { sub: "user_ABC12345678", sid: "sess_ABC12345678" } },
+    { sub: "user_ABC12345678" },
+    { sid: "sess_ABC12345678" },
+    { sub: "not_a_user", sid: "sess_ABC12345678" },
+    { sub: "user_ABC12345678", sid: "not_a_session" },
+    null,
+  ]) {
+    const fake = (async () => invalidClaims) as unknown as typeof import("@clerk/backend").verifyToken;
+    const denied = await authorizeChatRequest(bearerRequest, fake);
+    assert.equal(denied.ok, false, "invalid or unverified claims must fail closed");
+    if (!denied.ok) assert.equal(denied.status, 401);
+  }
+  const rejectingVerifier = (async () => { throw Error("invalid_signature"); }) as unknown as typeof import("@clerk/backend").verifyToken;
+  const badSignature = await authorizeChatRequest(bearerRequest, rejectingVerifier);
+  assert.equal(badSignature.ok, false);
+  if (!badSignature.ok) assert.equal(badSignature.status, 401);
+
   const unsigned = await authorizeChatRequest(request);
   assert.equal(unsigned.ok, false);
   if (!unsigned.ok) assert.equal(unsigned.status, 401);
