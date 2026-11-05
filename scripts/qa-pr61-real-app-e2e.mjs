@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {publishAfterVectorsAreReady} from "./qa-pr61-wait-for-staged-vectors.mjs";
 import {verifyParallelLeaseClaims} from "./qa-pr61-parallel-lease-race.mjs";
+import {verifyIndependentProcessCheckpoint} from "./qa-pr63-two-process-checkpoint.mjs";
 import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {hasExactQaVectorReadback} from "./qa-pr61-vector-readback.mjs";
 import {execFileSync} from "node:child_process";
@@ -44,6 +45,10 @@ console.log("PASS: unfinished staged evidence and deletion fail closed");
 // remote D1, without embeddings. The winner's lease must fence the loser.
 await verifyParallelLeaseClaims(post,run);
 console.log("PASS: real QA two-client simultaneous D1 lease claims and loser fencing");
+// Separate OS processes (not just concurrent Promise requests) each maintain
+// an independent checkpoint. A new process must safely resume winning lease.
+await verifyIndependentProcessCheckpoint(run);
+console.log("PASS: two independent QA claimant processes and durable checkpoint resume");
 if (process.env.QA_NEGATIVE_ONLY === "true") {
   const wrong=await post({action:"publish_staged",
     lease:{...lease,owner:"qa-invalid-owner"},documentId:doc,
