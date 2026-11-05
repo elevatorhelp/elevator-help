@@ -72,7 +72,14 @@ export async function runFreshQaClerkSession({
      current?.status!=="active")
     throw Error("QA_CLERK_ACTIVE_SESSION_MISMATCH");
   try{result=await probe({origin,token});}
-  catch(error){throw safeQaClerkStageError("AUTH_PROBE",error);}
+  catch(error){
+   const msg=error instanceof Error?error.message:"";
+   // Only allow known fixed probe-stage labels plus numeric HTTP status.
+   // Other SDK/HTTP/library error contents remain fully suppressed.
+   if(/^QA_CLERK_AUTH_(?:MISSING_SESSION|INVALID_SESSION|VALID_SESSION|NONEMPTY_BLOCK)_HTTP_(?:[1-5][0-9]{2}|INVALID)$/.test(msg))
+    throw error;
+   throw safeQaClerkStageError("AUTH_PROBE",error);
+  }
  }catch(error){
   operationError=error;
  }finally{
