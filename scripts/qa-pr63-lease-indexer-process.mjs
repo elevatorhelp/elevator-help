@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {resolve,basename,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {readFileSync,writeFileSync,renameSync} from 'node:fs';
-import {requirePr61LoopbackQaOrigin} from './qa-pr61-isolated-origin.mjs';
+import {PR61_LOOPBACK_QA_ORIGIN,requirePr61LoopbackQaOrigin} from './qa-pr61-isolated-origin.mjs';
 import {parseQaDriveRecoveryResponse} from './qa-drive-recovery-response.mjs';
 
 export function validateProcessArgs(mode,documentId,owner,root){
@@ -24,11 +24,20 @@ export function checkpointFromReply(documentId,owner,response){
    throw Error('QA_PROCESS_CHECKPOINT_INVALID');
  return {documentId,owner,lease};
 }
+export function resolveQaProcessOrigin(value){
+ // Only a truly missing value may default; an explicit invalid origin
+ // must still be rejected before any Authorization header is sent.
+ return requirePr61LoopbackQaOrigin(
+   value===undefined?PR61_LOOPBACK_QA_ORIGIN:value);
+}
 export async function processLease(mode,documentId,owner,root,{
  fetchImpl=fetch,origin,token,
 }={}){
  const path=validateProcessArgs(mode,documentId,owner,root);
- const base=requirePr61LoopbackQaOrigin(origin);
+ // The parent actual-app runner defaults to the verified loopback origin,
+ // but QA_APP_BASE_URL is intentionally not exported by the GitHub workflow.
+ // Child OS processes must use the SAME fail-closed loopback default.
+ const base=resolveQaProcessOrigin(origin);
  if(typeof token!=='string'||token.length<16)throw Error('QA_PROCESS_TOKEN_REQUIRED');
  const post=async body=>{
    const response=await fetchImpl(new URL('/api/drive-ingest-batch',base),{
@@ -62,8 +71,12 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
      token:process.env.QA_INGESTION_TOKEN,
    });
    console.log(JSON.stringify(result));
- }catch{
-   console.error('::error::QA_PROCESS_CHECKPOINT_OR_LEASE_FAILED');
+ }catch(error){
+   // Show only a fixed QA error code, never a URL, response body or bearer.
+   const raw=error instanceof Error?error.message:'';
+   const safe=/^QA_(?:PROCESS|LOOPBACK|DRIVE)_[A-Z0-9_]+$/.test(raw)
+     ?raw:'QA_PROCESS_UNEXPECTED_FAILURE';
+   console.error('::error::'+safe);
    process.exitCode=1;
  }
 }
