@@ -7,7 +7,9 @@ export async function clerkQaFetch(request,env,ctx,handler=app){
   if(url.pathname!=="/api/ask"||request.method!=="POST")
     return new Response("Not Found",{status:404});
   if(env.AUTH_REQUIRED!=="true"||env.QA_CLERK_AUTH_ONLY!=="true"||
-     !env.CLERK_SECRET_KEY||env.GEMINI_API_KEY||env.AI||
+     typeof env.CLERK_SECRET_KEY!=="string"||
+     !env.CLERK_SECRET_KEY.startsWith("sk_test_")||
+     env.GEMINI_API_KEY||env.AI||
      env.CORTEX_DB||env.VECTORIZE||env.VECTORIZE_V2)
     return new Response("QA configuration unavailable",{status:503});
   // Even if a real Clerk JWT is presented, this deployment has no paid/DB
