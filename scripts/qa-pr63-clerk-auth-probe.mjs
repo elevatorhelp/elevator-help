@@ -27,14 +27,20 @@ export async function verifyRealQaClerkAuth({
   }catch{throw Error("QA_CLERK_AUTH_NETWORK_OR_REDIRECT_ERROR");}
   return response.status;
  };
- assert.equal(await post(null),401,"QA_CLERK_MISSING_SESSION_NOT_REJECTED");
- assert.equal(await post("invalid.qa.session"),401,"QA_CLERK_INVALID_SESSION_NOT_REJECTED");
+ // Each status is an integer only; no Clerk response body, user identity,
+ // token, request URL or other untrusted data is printed in diagnostics.
+ const requireStatus=(got,expected,label)=>{
+  if(got===expected)return;
+  const numeric=Number.isInteger(got)&&got>=100&&got<=599?String(got):"INVALID";
+  throw Error("QA_CLERK_AUTH_"+label+"_HTTP_"+numeric);
+ };
+ requireStatus(await post(null),401,"MISSING_SESSION");
+ requireStatus(await post("invalid.qa.session"),401,"INVALID_SESSION");
  // Auth is checked before question parsing. A VALID signed session reaches
  // the empty-question 400, which happens before D1 / Gemini / quota usage.
- assert.equal(await post(token),400,"QA_CLERK_VALID_SESSION_NOT_ACCEPTED");
+ requireStatus(await post(token),400,"VALID_SESSION");
  // The QA-only entrypoint blocks nonempty questions even with valid JWT.
- assert.equal(await post(token,"Do not answer this QA question."),403,
-   "QA_CLERK_NONEMPTY_QUESTION_NOT_BLOCKED");
+ requireStatus(await post(token,"Do not answer this QA question."),403,"NONEMPTY_BLOCK");
  return "QA_CLERK_REAL_AUTH_ONLY_VERIFIED";
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
