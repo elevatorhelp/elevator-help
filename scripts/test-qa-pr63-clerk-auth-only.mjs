@@ -165,7 +165,7 @@ const testSecret="sk_test_synthetic";
 assert.deepEqual(validateQaClerkIdentity(testSecret,userId),{secretKey:testSecret,userId});
 assert.throws(()=>validateQaClerkIdentity("sk_live_forbidden",userId),/QA_CLERK_TEST_INSTANCE_SECRET_REQUIRED/);
 assert.throws(()=>validateQaClerkIdentity(testSecret,"production-user"),/QA_CLERK_TEST_USER_REQUIRED/);
-async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,failCreate=false,failMint=false,failRead=false,inactive=false,failLocalVerify=false}={}){
+async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,failCreate=false,failMint=false,failRead=false,inactive=false,failLocalVerify=false,badAzp=false}={}){
  const events=[];
  const client={sessions:{
    async createSession({userId:actual}){assert.equal(actual,userId);events.push("create");
@@ -186,7 +186,12 @@ async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,f
  const call=runFreshQaClerkSession({
    secretKey:testSecret,userId,createClient:({secretKey})=>{
      assert.equal(secretKey,testSecret);return client;},
-   verifyJwt:async(actual,{secretKey,authorizedParties})=>{if(failLocalVerify)throw Object.assign(new Error('secret-token-must-not-log'),{reason:'token-invalid-authorized-parties'});assert.equal(actual,jwt);assert.equal(secretKey,testSecret);assert.deepEqual(authorizedParties,[QA_CLERK_ORIGIN]);return {data:{sub:userId,sid:"sess_ABC12345678"}};},
+   verifyJwt:async(actual,{secretKey,authorizedParties})=>{
+     if(failLocalVerify)throw Object.assign(new Error("secret-token-must-not-log"),{reason:"token-invalid-signature"});
+     assert.equal(actual,jwt);assert.equal(secretKey,testSecret);
+     if(authorizedParties!==undefined)assert.deepEqual(authorizedParties,[QA_CLERK_ORIGIN]);
+     return {data:{sub:userId,sid:"sess_ABC12345678",azp:badAzp?"https://different-origin.example":QA_CLERK_ORIGIN}};
+   },
    probe:async({origin,token})=>{
      assert.equal(origin,QA_CLERK_ORIGIN);assert.equal(token,jwt);events.push("probe");
      if(failProbe)throw Error("sensitive actual Clerk response");
@@ -201,7 +206,8 @@ async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,f
  assert.deepEqual(events,["create","mint","read","probe","revoke"]);
 }
 for(const setting of [
- {failLocalVerify:true,expected:"QA_CLERK_LOCAL_TOKEN_VERIFY_TOKEN_INVALID_AUTHORIZED_PARTIES"},
+ {failLocalVerify:true,expected:"QA_CLERK_LOCAL_TOKEN_VERIFY_TOKEN_INVALID_SIGNATURE"},
+ {badAzp:true,expected:"QA_CLERK_BACKEND_MINTED_AZP_NOT_QA_ORIGIN"},
  {failProbe:true,expected:"QA_CLERK_AUTH_PROBE_FAILED"},
  {wrongClaims:true,expected:"QA_CLERK_ACTIVE_SESSION_MISMATCH"},
  {inactive:true,expected:"QA_CLERK_ACTIVE_SESSION_MISMATCH"},
