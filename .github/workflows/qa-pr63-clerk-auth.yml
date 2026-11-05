@@ -71,6 +71,11 @@ jobs:
           '
       - name: Install exact locked dependencies
         run: npm ci
+      - name: Confirm Clerk test user belongs to selected test instance (read-only)
+        env:
+          CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}
+          CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}
+        run: node scripts/qa-pr63-clerk-user-preflight.mjs
       - name: Test no-paid Clerk boundary offline
         run: node scripts/test-qa-pr63-clerk-auth-only.mjs
       - name: Build actual OpenNext Worker
