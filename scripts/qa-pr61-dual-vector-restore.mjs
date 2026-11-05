@@ -33,8 +33,15 @@ export function fixtureForRun(runId,attempt='1'){
 }
 
 function classifyResponse(response,body,action){
- if(response.status!==200||body?.success!==true)
-   throw Error('QA_DUAL_VECTOR_'+action+'_HTTP_'+String(response.status));
+ if(response.status!==200||body?.success!==true){
+   // Preserve only Cloudflare's numeric error code for safe diagnosis.
+   // Do not emit its untrusted message, request body, token, or response JSON.
+   const code=Array.isArray(body?.errors)
+     ?body.errors.find(e=>Number.isSafeInteger(e?.code)&&e.code>=1000&&e.code<=999999)?.code
+     :undefined;
+   throw Error('QA_DUAL_VECTOR_'+action+'_HTTP_'+String(response.status)
+     +(code===undefined?'':'_CF_'+code));
+ }
  return body;
 }
 export function qaIndexApi({accountId,token,fetchImpl=fetch}){
