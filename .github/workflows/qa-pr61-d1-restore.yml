@@ -1,5 +1,12 @@
 name: PR61 disposable D1 publication restore drill
 on:
+  # Invokable from the already registered manual QA launcher on the same PR63 SHA.
+  workflow_call:
+    inputs:
+      allow_remote_d1_qa:
+        description: 'Explicit one-time allowance for QA-only disposable D1 restore'
+        type: boolean
+        required: true
   workflow_dispatch:
     inputs:
       allow_remote_d1_qa:
