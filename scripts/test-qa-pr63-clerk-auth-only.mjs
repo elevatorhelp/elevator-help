@@ -6,6 +6,7 @@ import {
  validateRepositoryQaClerkConfig
 } from "./qa-pr63-clerk-config-guard.mjs";
 import {validateQaSessionJwt,verifyRealQaClerkAuth} from "./qa-pr63-clerk-auth-probe.mjs";
+import {runFreshQaClerkSession,validateQaClerkIdentity} from "./qa-pr63-clerk-fresh-session.mjs";
 
 // Stub only the compiled OpenNext import, not the QA fetch wrapper.
 const hooks=registerHooks({
@@ -98,7 +99,56 @@ for(const forbidden of [
 ])assert.ok(!wf.includes(forbidden),"Clerk Worker cannot invoke paid QA/D1/Drive");
 assert.ok(wf.includes("sk_test_"),"only Clerk test-instance credentials");
 assert.ok(wf.includes("--secrets-file"),"secure Clerk secret injection");
-assert.ok(wf.includes("QA_CLERK_SESSION_JWT: ${{ secrets.QA_CLERK_SESSION_JWT }}"));
+assert.ok(wf.includes("CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}"));
+assert.ok(wf.includes("scripts/qa-pr63-clerk-fresh-session.mjs"));
+assert.ok(!wf.includes("QA_CLERK_SESSION_JWT"),"short-lived Clerk JWT must never be a stored GitHub secret");
 assert.ok(wf.includes("npx wrangler deploy --config wrangler.qa-clerk.json"));
 assert.ok(!wf.includes("https://elevator.help/api/ask"));
+
+const userId="user_ABC12345678";
+const testSecret="sk_test_synthetic";
+assert.deepEqual(validateQaClerkIdentity(testSecret,userId),{secretKey:testSecret,userId});
+assert.throws(()=>validateQaClerkIdentity("sk_live_forbidden",userId),/QA_CLERK_TEST_INSTANCE_SECRET_REQUIRED/);
+assert.throws(()=>validateQaClerkIdentity(testSecret,"production-user"),/QA_CLERK_TEST_USER_REQUIRED/);
+async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false}={}){
+ const events=[];
+ const client={sessions:{
+   async createSession({userId:actual}){assert.equal(actual,userId);events.push("create");return {id:"sess_ABC12345678",userId};},
+   async getToken(session){assert.equal(session,"sess_ABC12345678");events.push("mint");return {jwt};},
+   async revokeSession(session){assert.equal(session,"sess_ABC12345678");events.push("revoke");
+     if(failRevoke)throw Error("sensitive revoke failure");return {id:session};},
+ }};
+ const call=runFreshQaClerkSession({
+   secretKey:testSecret,userId,createClient:({secretKey})=>{
+     assert.equal(secretKey,testSecret);return client;},
+   verify:async(token,opts)=>{
+     assert.equal(token,jwt);assert.deepEqual(opts,{secretKey:testSecret,authorizedParties:[QA_CLERK_ORIGIN]});
+     events.push("verify");return {sub:userId,sid:wrongClaims?"sess_other":"sess_ABC12345678"};},
+   probe:async({origin,token})=>{
+     assert.equal(origin,QA_CLERK_ORIGIN);assert.equal(token,jwt);events.push("probe");
+     if(failProbe)throw Error("sensitive actual Clerk response");
+     return "QA_CLERK_REAL_AUTH_ONLY_VERIFIED";
+   },
+ });
+ return {call,events};
+}
+{
+ const {call,events}=await mockSession();
+ assert.equal(await call,"QA_CLERK_FRESH_TEST_SESSION_VERIFIED_AND_REVOKED");
+ assert.deepEqual(events,["create","mint","verify","probe","revoke"]);
+}
+for(const setting of [
+ {failProbe:true,expected:"sensitive actual Clerk response"},
+ {wrongClaims:true,expected:"QA_CLERK_SESSION_CLAIMS_MISMATCH"},
+ {failRevoke:true,expected:"QA_CLERK_OWNED_SESSION_REVOKE_FAILED"}
+]){
+ const {call,events}=await mockSession(setting);
+ await assert.rejects(call,new RegExp(setting.expected));
+ assert.ok(events.includes("revoke"),"owned Clerk session must be revoked after EVERY outcome");
+}
+await assert.rejects(runFreshQaClerkSession({
+ secretKey:testSecret,userId,origin:"https://elevator.help",
+ createClient:()=>{throw Error("must reject before client instantiated");},
+}),/QA_CLERK_ORIGIN_NOT_APPROVED/);
+
 console.log("PASS: isolated Clerk Worker denies full questions, wrong env, prod-origin token and paid archive bindings");
