@@ -4,6 +4,7 @@
 // replay it to test durable resume against the remote QA D1.
 import assert from 'node:assert/strict';
 import {resolve,basename,join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {readFileSync,writeFileSync,renameSync} from 'node:fs';
 import {requirePr61LoopbackQaOrigin} from './qa-pr61-isolated-origin.mjs';
 import {parseQaDriveRecoveryResponse} from './qa-drive-recovery-response.mjs';
@@ -53,7 +54,7 @@ export async function processLease(mode,documentId,owner,root,{
  if(renew.status!==200)throw Error('QA_PROCESS_RESUME_RENEW_DENIED');
  return {status:200,owner,generation:checkpoint.lease.generation,resumed:true};
 }
-if(process.argv[1]&&resolve(process.argv[1])===resolve(new URL(import.meta.url).pathname)){
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  try{
    const [mode,documentId,owner,root]=process.argv.slice(2);
    const result=await processLease(mode,documentId,owner,root,{
