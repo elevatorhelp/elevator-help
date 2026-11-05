@@ -127,7 +127,8 @@ for(const forbidden of [
 assert.ok(wf.includes("sk_test_"),"only Clerk test-instance credentials");
 assert.ok(wf.includes("--secrets-file"),"secure Clerk secret injection");
 assert.ok(wf.includes("CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}"));
-assert.ok(wf.includes("scripts/qa-pr63-clerk-fresh-session.mjs"));
+assert.ok(!wf.includes("run: node scripts/qa-pr63-clerk-fresh-session.mjs"),
+ "browser mode must not mint incompatible backend session tokens");
 const realSessionScript=readFileSync(new URL("./qa-pr63-clerk-fresh-session.mjs",import.meta.url),"utf8");
 assert.ok(realSessionScript.includes("client.sessions.getSession(sessionId)"),
  "one read-only active test session check expected");
