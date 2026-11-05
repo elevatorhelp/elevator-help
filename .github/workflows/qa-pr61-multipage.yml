@@ -7,10 +7,19 @@ on:
         type: boolean
         required: true
         default: false
+  workflow_call:
+    inputs:
+      allow_paid_qa:
+        description: Explicitly authorize one isolated multipage Drive QA through the registered manual launcher
+        type: boolean
+        required: true
 permissions:
   contents: read
 concurrency:
-  group: qa-pr61-isolated-d1-mutating
+  # The caller is already serialized under qa-pr61-isolated-d1-mutating.
+  # Reusing that SAME group in a called workflow can block its own parent.
+  # A directly dispatched standalone workflow retains the shared QA lock.
+  group: ${{ github.workflow == 'PR61 actual application isolated E2E' && format('qa-pr61-multipage-nested-{0}', github.run_id) || 'qa-pr61-isolated-d1-mutating' }}
   cancel-in-progress: false
 jobs:
   isolated-app:
