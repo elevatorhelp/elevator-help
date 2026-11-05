@@ -104,6 +104,9 @@ jobs:
           trap - EXIT
       - name: Mint and revoke one fresh Clerk TEST session then verify real auth
         env:
+          # GitHub step-scoped env does NOT inherit the key from the earlier
+          # secret preflight/deploy steps. Run #40 failed here for this reason.
+          CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}
           CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}
           QA_CLERK_ORIGIN: https://elevator-help-pr63-clerk-qa.baharmand.workers.dev
         run: node scripts/qa-pr63-clerk-fresh-session.mjs
