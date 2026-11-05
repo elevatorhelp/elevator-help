@@ -20,7 +20,7 @@ export function validateQaClerkIdentity(secretKey,userId){
 // SDK may include IDs, emails, headers or response contents in Error.message.
 // Unknown failures are not rendered, uploaded or printed.
 export function safeQaClerkStageError(stage,error){
- const allowed=new Set(["CREATE_SESSION","GET_TOKEN","VERIFY_SESSION","AUTH_PROBE"]);
+ const allowed=new Set(["CREATE_SESSION","GET_TOKEN","READ_SESSION","AUTH_PROBE"]);
  if(!allowed.has(stage))throw Error("QA_CLERK_INVALID_STAGE");
  const status=error?.status??error?.statusCode;
  const code=Number.isInteger(status)&&status>=400&&status<=599
@@ -39,7 +39,7 @@ export async function runFreshQaClerkSession({
  try{client=createClient({secretKey});}
  catch(error){throw safeQaClerkStageError("CREATE_SESSION",error);}
  if(!client?.sessions?.createSession||!client?.sessions?.getToken||
-    !client?.sessions?.verifySession||
+    !client?.sessions?.getSession||
     !client?.sessions?.revokeSession)
    throw Error("QA_CLERK_BACKEND_SESSION_API_REQUIRED");
  let sessionId;
@@ -59,16 +59,18 @@ export async function runFreshQaClerkSession({
   try{tokenData=await client.sessions.getToken(sessionId);}
   catch(error){throw safeQaClerkStageError("GET_TOKEN",error);}
   const token=validateQaSessionJwt(tokenData?.jwt);
-  // Authenticate the minted token at Clerk's authoritative backend, using
-  // the owned session ID and exact test-user identity. This avoids making the
-  // QA test dependent on a second JWKS endpoint/network fetch. The separate
-  // QA Worker must STILL verify the JWT against its own request origin.
-  let verification;
-  try{verification=await client.sessions.verifySession(sessionId,token);}
-  catch(error){throw safeQaClerkStageError("VERIFY_SESSION",error);}
-  if(verification?.id!==sessionId||verification?.userId!==userId||
-     verification?.status!=="active")
-    throw Error("QA_CLERK_VERIFIED_SESSION_MISMATCH");
+  // Clerk deprecated the verifySession(sessionId, token) backend endpoint;
+  // real isolated QA Run #43 returned HTTP 410. The read-only getSession()
+  // API confirms this owned test session is currently active and matches the
+  // test user. It DOES NOT validate JWT signature; the separate auth-only QA
+  // Worker must independently verify that token cryptographically, reject
+  // missing/forged bearer tokens and return 400 only for a signed-in user.
+  let current;
+  try{current=await client.sessions.getSession(sessionId);}
+  catch(error){throw safeQaClerkStageError("READ_SESSION",error);}
+  if(current?.id!==sessionId||current?.userId!==userId||
+     current?.status!=="active")
+    throw Error("QA_CLERK_ACTIVE_SESSION_MISMATCH");
   try{result=await probe({origin,token});}
   catch(error){throw safeQaClerkStageError("AUTH_PROBE",error);}
  }catch(error){
