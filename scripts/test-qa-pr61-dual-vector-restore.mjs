@@ -35,17 +35,28 @@ data.get(QA_VECTOR_INDEXES[1]).set(fixture.newer.id,fixture.newer);
 assert.equal(await cleanupRunFixtures(api,fixture,opt),'QA_DUAL_VECTOR_FIXTURES_CLEANED');
 for(const index of QA_VECTOR_INDEXES)assert.equal(data.get(index).size,0);
 
-let observedForm=null;
+let observedNdjson=null;
 const cf=qaIndexApi({accountId:'a'.repeat(32),token:'fake-token',fetchImpl:async(url,opts)=>{
  assert.ok(String(url).startsWith('https://api.cloudflare.com/client/v4/accounts/'));
  assert.equal(opts.method,'POST');assert.equal(opts.redirect,'error');
  assert.equal(opts.headers.Authorization,'Bearer fake-token');
- if(String(url).endsWith('/insert'))observedForm=opts.body;
+ if(String(url).endsWith('/insert')){
+   assert.equal(opts.headers['Content-Type'],'application/x-ndjson');
+   assert.equal(typeof opts.body,'string','insert must use raw NDJSON, not multipart');
+   assert.equal(opts.body.endsWith('\\n'),false,'literal slash-n is not a valid NDJSON record delimiter');
+   assert.ok(opts.body.endsWith('\n'),'raw NDJSON must end with newline');
+   observedNdjson=opts.body;
+ }else assert.equal(opts.headers['Content-Type'],'application/json');
  return {status:200,async json(){return {success:true,result:{mutationId:'qa'}}}};
 }});
 await cf(QA_VECTOR_INDEXES[0],'insert',{vector:fixture.old});
-assert.equal(observedForm instanceof FormData,true);
-assert.deepEqual(JSON.parse(await observedForm.get('body').text()),fixture.old);
+assert.deepEqual(JSON.parse(observedNdjson),fixture.old);
+const failing=qaIndexApi({accountId:'a'.repeat(32),token:'fake-token',fetchImpl:async()=>({
+ status:400,async json(){return {success:false,errors:[{code:40023,message:'SECRET_STRING_MUST_NOT_APPEAR'}]};},
+})});
+const error=await failing(QA_VECTOR_INDEXES[0],'insert',{vector:fixture.old}).then(()=>null,e=>e.message);
+assert.equal(error,'QA_DUAL_VECTOR_INSERT_HTTP_400_CF_40023');
+assert.ok(!error.includes('SECRET_STRING_MUST_NOT_APPEAR'));
 await assert.rejects(cf('elevator-help-index','delete_by_ids',{ids:[fixture.old.id]}),/QA_DUAL_VECTOR_TARGET_DISALLOWED/);
 await assert.rejects(cf(QA_VECTOR_INDEXES[0],'upsert',{vector:fixture.old}),/QA_DUAL_VECTOR_TARGET_DISALLOWED/);
 assert.equal(calls.some(c=>c.index==='elevator-help-multilingual-v2'),false);
