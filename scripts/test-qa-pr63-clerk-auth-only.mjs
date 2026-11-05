@@ -123,6 +123,16 @@ assert.equal(safeQaClerkStageError("VERIFY_TOKEN",{status:200,message:"secret"})
  "QA_CLERK_VERIFY_TOKEN_FAILED");
 assert.throws(()=>safeQaClerkStageError("EVIL",{status:400}),/QA_CLERK_INVALID_STAGE/);
 
+const userLookupAt=wf.indexOf("run: node scripts/qa-pr63-clerk-user-preflight.mjs");
+const cloudflareBuildAt=wf.indexOf("run: npm run cf:build");
+const cloudflareDeployAt=wf.indexOf("npx wrangler deploy --config wrangler.qa-clerk.json");
+assert.ok(userLookupAt>0&&cloudflareBuildAt>userLookupAt&&cloudflareDeployAt>cloudflareBuildAt,
+ "read-only Clerk test-user preflight must precede every new Worker deployment");
+const userStep=wf.split("      - name: Confirm Clerk test user belongs to selected test instance (read-only)")[1]
+ ?.split("      - name: Test no-paid Clerk boundary offline")[0];
+assert.ok(userStep&&userStep.includes("CLERK_QA_SECRET_KEY:")&&userStep.includes("CLERK_QA_TEST_USER_ID:"),
+ "test-user preflight must explicitly receive both test-only secrets");
+
 const userId="user_ABC12345678";
 const testSecret="sk_test_synthetic";
 assert.deepEqual(validateQaClerkIdentity(testSecret,userId),{secretKey:testSecret,userId});
