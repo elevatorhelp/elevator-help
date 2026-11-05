@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {QA_VECTOR_INDEXES,fixtureForRun,qaIndexApi,seedOneGeneration,verifyRollbackPhysical,cleanupRunFixtures} from './qa-pr61-dual-vector-restore.mjs';
+import {QA_VECTOR_INDEXES,fixtureForRun,qaIndexApi,seedOneGeneration,verifyRollbackPhysical,cleanupRunFixtures,classifyQaSeedReadback} from './qa-pr61-dual-vector-restore.mjs';
 const fixture=fixtureForRun('42083644765');
 assert.equal(fixture.old.metadata.sourceFileId,'qa-document');
 assert.equal(fixture.newer.metadata.sourceFileId,'qa-document');
@@ -8,6 +8,58 @@ assert.equal(fixture.old.values.length,768);
 assert.ok(fixture.old.id.startsWith('g2:') && fixture.newer.id.startsWith('g3:'));
 assert.notEqual(fixture.old.id,fixture.newer.id);
 for(const invalid of ['','qa-123','1','42083644765/3'])assert.throws(()=>fixtureForRun(invalid),/QA_DUAL_VECTOR_RUN_ID_INVALID/);
+
+
+assert.equal(classifyQaSeedReadback([],fixture.old),'NOT_VISIBLE');
+assert.equal(classifyQaSeedReadback([fixture.old],fixture.old),'READY');
+const different={...fixture.old,metadata:{...fixture.old.metadata,sourceFingerprint:'wrong-qa-revision'}};
+assert.equal(classifyQaSeedReadback([different],fixture.old),'METADATA_FINGERPRINT');
+assert.equal(classifyQaSeedReadback([{id:fixture.old.id}],fixture.old),'METADATA_ABSENT');
+assert.equal(classifyQaSeedReadback([{...fixture.old,metadata:{...fixture.old.metadata,page:999}}],fixture.old),
+ 'METADATA_PAGE');
+assert.equal(classifyQaSeedReadback([{...fixture.old,id:'wrong-id'}],fixture.old),'WRONG_IDS');
+
+// Simulate an async mutation that was accepted but is still invisible.
+// No real Cloudflare read/write; status uses read-only /info when polls expire.
+for(const processed of ['0000aaaa-11bb-22cc-33dd-444444eeeeee','different']) {
+ const operations=[];
+ const waitApi=async(index,action)=>{
+   operations.push(action);
+   if(action==='get_by_ids')return [];
+   if(action==='insert')return {mutationId:'0000aaaa-11bb-22cc-33dd-444444eeeeee'};
+   if(action==='info')return {processedUpToMutation:processed};
+   throw Error('unexpected action');
+ };
+ const error=await seedOneGeneration(waitApi,fixture.old,{sleep:async()=>{},attempts:2})
+   .then(()=>null,e=>e.message);
+ assert.equal(error,processed==='different'
+   ?'QA_DUAL_VECTOR_INSERT_VISIBILITY_UNCONFIRMED'
+   :'QA_DUAL_VECTOR_INSERT_PROCESSED_BUT_ID_ABSENT');
+ assert.ok(operations.includes('info'),'must diagnose server-side async mutation status');
+ assert.equal(operations.filter(op=>op==='insert').length,2,
+   'never reinsert or duplicate paid/async mutations while polling');
+}
+{
+ const errorApi=async(index,action)=>{
+   if(action==='get_by_ids')return action&&index?[]:[];
+   if(action==='insert')return {mutationId:'fake'};
+   throw Error('unexpected');
+ };
+ // absent metadata fail closed immediately rather than waiting full timeout
+ let reads=0;
+ const fastFailApi=async(index,action,body)=>{
+   if(action==='get_by_ids'){
+     reads++;
+     if(reads<=2)return []; // pre-insert collision checks
+     return [{...fixture.old,metadata:{...fixture.old.metadata,status:'invalid'}}];
+   }
+   if(action==='insert')return {mutationId:'fake'};
+   throw Error('unexpected');
+ };
+ await assert.rejects(seedOneGeneration(fastFailApi,fixture.old,{sleep:async()=>{},attempts:2}),
+   /QA_DUAL_VECTOR_READBACK_METADATA_STATUS/);
+ assert.equal(reads,3,'invalid published metadata must fail on first visible read');
+}
 
 const data=new Map(QA_VECTOR_INDEXES.map(index=>[index,new Map()]));
 const calls=[];
