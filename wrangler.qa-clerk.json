@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "elevator-help-pr63-clerk-qa",
+  "main": "workers/qa-clerk-entry.mjs",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "AUTH_REQUIRED": "true",
+    "QA_CLERK_AUTH_ONLY": "true"
+  },
+  "workers_dev": true
+}
