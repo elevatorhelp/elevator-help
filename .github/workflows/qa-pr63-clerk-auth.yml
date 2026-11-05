@@ -1,0 +1,109 @@
+name: PR63 isolated Clerk auth-only QA
+on:
+  workflow_call:
+    inputs:
+      allow_clerk_auth_qa:
+        description: "Explicit one-time QA-only Cloudflare auth Worker deployment; no Gemini or D1"
+        type: boolean
+        required: true
+permissions:
+  contents: read
+# Caller holds the shared QA lock. Distinct nested lock avoids deadlock.
+concurrency:
+  group: qa-pr63-clerk-nested-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  clerk-auth-only:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_clerk_auth_qa == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Enforce canonical Draft PR63 exact head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/integration/pr61-reconciled-20261024" || {
+            echo "::error::QA_CLERK_BRANCH_NOT_APPROVED"; exit 1;
+          }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" || {
+            echo "::error::QA_CLERK_CHECKOUT_MISMATCH"; exit 1;
+          }
+          current_sha=$(curl --fail --silent --show-error --max-time 20 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/63" \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s);if(p.state!=="open"||p.head?.ref!=="integration/pr61-reconciled-20261024"||p.draft!==true)process.exit(1);process.stdout.write(p.head.sha)})')
+          test "$current_sha" = "$GITHUB_SHA" || {
+            echo "::error::QA_CLERK_STALE_PR63_HEAD"; exit 1;
+          }
+      - name: Enforce separate no-archive/no-paid QA config
+        run: node scripts/qa-pr63-clerk-config-guard.mjs
+      - name: Check ONLY QA Clerk and Cloudflare secrets before build or deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}
+          QA_CLERK_SESSION_JWT: ${{ secrets.QA_CLERK_SESSION_JWT }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::QA_CLERK_CLOUDFLARE_TOKEN_MISSING"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::QA_CLERK_CLOUDFLARE_ACCOUNT_MISSING"; exit 1; }
+          case "$CLERK_QA_SECRET_KEY" in
+            sk_test_*) ;;
+            *) echo "::error::QA_CLERK_TEST_INSTANCE_SECRET_REQUIRED"; exit 1 ;;
+          esac
+          node --input-type=module -e '
+            const t=process.env.QA_CLERK_SESSION_JWT||"";
+            if(t.length<40||t.length>8000||!/^[-_A-Za-z0-9]+\.[-_A-Za-z0-9]+\.[-_A-Za-z0-9]+$/.test(t)){
+              console.error("::error::QA_CLERK_SIGNED_TEST_SESSION_REQUIRED");
+              process.exit(1);
+            }
+          '
+      - name: Install exact locked dependencies
+        run: npm ci
+      - name: Test no-paid Clerk boundary offline
+        run: node scripts/test-qa-pr63-clerk-auth-only.mjs
+      - name: Build actual OpenNext Worker
+        run: npm run cf:build
+      - name: Deploy separate Clerk QA-only Worker with ONE test-instance secret
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          QA_SECRET_FILE="$RUNNER_TEMP/qa-pr63-clerk-$GITHUB_RUN_ID.json"
+          export QA_SECRET_FILE
+          trap 'rm -f "$QA_SECRET_FILE"' EXIT
+          node --input-type=module -e '
+            import {writeFileSync} from "node:fs";
+            const key=process.env.CLERK_QA_SECRET_KEY;
+            if(!key?.startsWith("sk_test_"))throw Error("QA_CLERK_TEST_INSTANCE_KEY_INVALID");
+            writeFileSync(process.env.QA_SECRET_FILE,JSON.stringify({CLERK_SECRET_KEY:key}),{
+              mode:0o600,flag:"wx"
+            });
+          '
+          # Never print Wrangler output: it can contain URLs/headers/secrets.
+          npx wrangler deploy --config wrangler.qa-clerk.json \
+            --secrets-file "$QA_SECRET_FILE" > /tmp/qa-pr63-clerk-deploy.log 2>&1 || {
+              echo "::error::QA_CLERK_ONLY_DEPLOY_FAILED_DIAGNOSTICS_WITHHELD"
+              exit 1
+            }
+          rm -f "$QA_SECRET_FILE"
+          trap - EXIT
+      - name: Verify real Clerk signed session without D1, Gemini or full question
+        env:
+          QA_CLERK_SESSION_JWT: ${{ secrets.QA_CLERK_SESSION_JWT }}
+          QA_CLERK_ORIGIN: https://elevator-help-pr63-clerk-qa.baharmand.workers.dev
+        run: node scripts/qa-pr63-clerk-auth-probe.mjs
