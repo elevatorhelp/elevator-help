@@ -17,7 +17,10 @@ for (const [file,job,input] of [
   assert.match(inputBlock,/type: boolean/);
   assert.match(inputBlock,/required: true/);
   assert.match(inputBlock,/default: false/);
-  const expected="  "+job+":\n    if: ${{ github.event_name == 'workflow_dispatch' && inputs."+input+" == true }}";
+  const guardedMode = file === 'qa-pr61-actual-app.yml'
+    ? ' && inputs.run_disposable_d1_restore == false'
+    : '';
+  const expected="  "+job+":\n    if: ${{ github.event_name == 'workflow_dispatch' && inputs."+input+" == true"+guardedMode+" }}";
   assert.ok(yaml.replaceAll('\r\n','\n').includes(expected),file+' must gate entire job');
   assert.match(yaml,/^concurrency:\s*\r?\n  group: qa-pr61-/m,file+' needs serialized QA concurrency');
 }
