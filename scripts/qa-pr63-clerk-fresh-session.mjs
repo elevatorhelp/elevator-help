@@ -31,6 +31,7 @@ export function safeQaClerkStageError(stage,error){
 export async function runFreshQaClerkSession({
  secretKey,userId,origin=QA_CLERK_ORIGIN,
  createClient=createClerkClient,
+ verifyJwt=verifyToken,
  probe=verifyRealQaClerkAuth,
 }={}){
  validateQaClerkIdentity(secretKey,userId);
@@ -64,7 +65,7 @@ export async function runFreshQaClerkSession({
   // error messages. This distinguishes a mint/origin problem from Worker auth.
   let locallyVerified;
   try{
-   locallyVerified=await verifyToken(token,{secretKey,authorizedParties:[origin]});
+   locallyVerified=await verifyJwt(token,{secretKey,authorizedParties:[origin]});
   }catch{throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_EXCEPTION");}
   if(locallyVerified?.errors?.length){
    const reasons=new Set(["token-expired","token-invalid","token-invalid-authorized-parties",
