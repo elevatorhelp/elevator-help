@@ -135,6 +135,14 @@ assert.ok(userStep&&userStep.includes("CLERK_QA_SECRET_KEY:")&&userStep.includes
 
 const userId="user_ABC12345678";
 const testSecret="sk_test_synthetic";
+{
+ const get=async(fn)=>validateClerkTestUser({secretKey:testSecret,userId,createClient:()=>({users:{getUser:fn}})});
+ assert.equal(await get(async id=>({id})), "QA_CLERK_TEST_USER_LOOKUP_VERIFIED");
+ await assert.rejects(get(async()=>{throw Object.assign(new Error("PRIVATE_EMAIL_OR_TOKEN"),{status:404})}),
+  /QA_CLERK_TEST_USER_HTTP_404/);
+ await assert.rejects(get(async()=>({id:"user_different"})),
+  /QA_CLERK_TEST_USER_IDENTITY_MISMATCH/);
+}
 assert.deepEqual(validateQaClerkIdentity(testSecret,userId),{secretKey:testSecret,userId});
 assert.throws(()=>validateQaClerkIdentity("sk_live_forbidden",userId),/QA_CLERK_TEST_INSTANCE_SECRET_REQUIRED/);
 assert.throws(()=>validateQaClerkIdentity(testSecret,"production-user"),/QA_CLERK_TEST_USER_REQUIRED/);
