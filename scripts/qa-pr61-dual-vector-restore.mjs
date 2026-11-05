@@ -9,8 +9,8 @@ import {filterPublishedMatches} from '../app/lib/ingestion-publication-visibilit
 import {hasExactQaVectorReadback} from './qa-pr61-vector-readback.mjs';
 
 export const QA_VECTOR_INDEXES=Object.freeze(['elevator-help-staging-test','elevator-help-staging-test-v2']);
-export const QA_VECTOR_ATTEMPTS=18;
-export const QA_VECTOR_DELAY_MS=3000;
+export const QA_VECTOR_ATTEMPTS=24;
+export const QA_VECTOR_DELAY_MS=5000;
 
 export function fixtureForRun(runId,attempt='1'){
   if(!/^[1-9]\d{5,19}$/.test(runId)||!/^[1-9]\d{0,4}$/.test(attempt))
@@ -49,19 +49,18 @@ export function qaIndexApi({accountId,token,fetchImpl=fetch}){
    throw Error('QA_DUAL_VECTOR_CREDENTIALS_REQUIRED');
  const root='https://api.cloudflare.com/client/v4/accounts/'+accountId+'/vectorize/v2/indexes/';
  return async(index,action,params)=>{
-   if(!QA_VECTOR_INDEXES.includes(index)||!['get_by_ids','insert','delete_by_ids'].includes(action))
+   if(!QA_VECTOR_INDEXES.includes(index)||!['get_by_ids','insert','delete_by_ids','info'].includes(action))
      throw Error('QA_DUAL_VECTOR_TARGET_DISALLOWED');
    const url=root+index+'/'+action;
    // Vectorize v2 accepts the NDJSON data stream directly with this
    // media type. A multipart FormData wrapper was rejected as HTTP 400 by
    // real isolated QA Run #33, before any staged Vector could be read back.
-   const body=action==='insert'
-     ? JSON.stringify(params.vector)+'\n'
-     : JSON.stringify({ids:params.ids});
+   const body=action==='info'?undefined:
+     action==='insert' ? JSON.stringify(params.vector)+'\n' : JSON.stringify({ids:params.ids});
    const response=await fetchImpl(url,{
-     method:'POST',
-     headers:{Authorization:'Bearer '+token,
-       'Content-Type':action==='insert'?'application/x-ndjson':'application/json'},
+     method:action==='info'?'GET':'POST',
+     headers:action==='info'?{Authorization:'Bearer '+token}:
+       {Authorization:'Bearer '+token,'Content-Type':action==='insert'?'application/x-ndjson':'application/json'},
      body,redirect:'error',signal:AbortSignal.timeout(30000),
    });
    let result;
@@ -74,13 +73,46 @@ export function qaIndexApi({accountId,token,fetchImpl=fetch}){
  };
 }
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
-async function pollPhysical(api,index,ids,desired,{sleep=pause,attempts=QA_VECTOR_ATTEMPTS}={}){
+
+// Names-only diagnostics for real Cloudflare get_by_ids responses. Never emit
+// metadata values, IDs, vector floats, cloud URLs, or API response bodies.
+export function classifyQaSeedReadback(records,fixture){
+ if(!Array.isArray(records))return 'INVALID_RESPONSE';
+ if(records.length===0)return 'NOT_VISIBLE';
+ if(records.length!==1||records[0]?.id!==fixture.id)return 'WRONG_IDS';
+ const m=records[0]?.metadata;
+ if(!m||typeof m!=='object')return 'METADATA_ABSENT';
+ for(const [field,label] of [
+   ['sourceFileId','SOURCE_FILE_ID'],
+   ['sourceFingerprint','FINGERPRINT'],
+   ['status','STATUS'],
+   ['fileName','FILE_NAME'],
+   ['sourcePath','SOURCE_PATH'],
+   ['text','TEXT'],
+   ['chunkIndex','CHUNK_INDEX'],
+   ['contentType','CONTENT_TYPE'],
+ ]){
+   if(m[field]!==fixture.metadata[field])return 'METADATA_'+label;
+ }
+ if(m.page!==fixture.metadata.page && m.page!==String(fixture.metadata.page))
+   return 'METADATA_PAGE';
+ return hasExactQaVectorReadback(records,[fixture.id],
+   fixture.metadata.sourceFileId,fixture.metadata.sourceFingerprint,
+   new Map([[fixture.id,fixture.metadata.page]]))?'READY':'METADATA_CONTRACT';
+}
+async function pollPhysical(api,index,ids,desired,{sleep=pause,attempts=QA_VECTOR_ATTEMPTS,diagnose=null}={}){
  for(let i=0;i<attempts;i++){
    const got=await api(index,'get_by_ids',{ids});
    if(desired(got))return got;
+   if(diagnose){
+     const category=diagnose(got);
+     if(category!=='NOT_VISIBLE' && category!=='READY')
+       throw Error('QA_DUAL_VECTOR_READBACK_'+category);
+   }
    if(i<attempts-1)await sleep(QA_VECTOR_DELAY_MS);
  }
- throw Error('QA_DUAL_VECTOR_PHYSICAL_READBACK_TIMEOUT');
+ throw Error(diagnose?'QA_DUAL_VECTOR_READBACK_NOT_VISIBLE_TIMEOUT':
+   'QA_DUAL_VECTOR_PHYSICAL_READBACK_TIMEOUT');
 }
 export async function seedOneGeneration(api,fixture,{sleep=pause,attempts=QA_VECTOR_ATTEMPTS}={}){
  // Fail closed on any collision before writing to either index.
@@ -88,12 +120,29 @@ export async function seedOneGeneration(api,fixture,{sleep=pause,attempts=QA_VEC
    const current=await api(index,'get_by_ids',{ids:[fixture.id]});
    if(current.length)throw Error('QA_DUAL_VECTOR_ID_ALREADY_EXISTS');
  }
- for(const index of QA_VECTOR_INDEXES)
-   await api(index,'insert',{vector:fixture});
- for(const index of QA_VECTOR_INDEXES)
-   await pollPhysical(api,index,[fixture.id],r=>
-     hasExactQaVectorReadback(r,[fixture.id],fixture.metadata.sourceFileId,
-       fixture.metadata.sourceFingerprint,new Map([[fixture.id,fixture.metadata.page]])),{sleep,attempts});
+ const mutations=new Map();
+ for(const index of QA_VECTOR_INDEXES){
+   const response=await api(index,'insert',{vector:fixture});
+   mutations.set(index,typeof response?.mutationId==='string'?response.mutationId:null);
+ }
+ for(const index of QA_VECTOR_INDEXES){
+   try{
+     await pollPhysical(api,index,[fixture.id],r=>
+       hasExactQaVectorReadback(r,[fixture.id],fixture.metadata.sourceFileId,
+         fixture.metadata.sourceFingerprint,new Map([[fixture.id,fixture.metadata.page]])),
+       {sleep,attempts,diagnose:r=>classifyQaSeedReadback(r,fixture)});
+   }catch(error){
+     if(error?.message!=='QA_DUAL_VECTOR_READBACK_NOT_VISIBLE_TIMEOUT')throw error;
+     // Cloudflare Vectorize insert returns a queued mutation ID; look up
+     // its processed status read-only to distinguish indexing delay from
+     // already processed-but-invisible data. No UUID or index info is logged.
+     const info=await api(index,'info',{});
+     const mutation=mutations.get(index);
+     if(mutation&&mutation===info?.processedUpToMutation)
+       throw Error('QA_DUAL_VECTOR_INSERT_PROCESSED_BUT_ID_ABSENT');
+     throw Error('QA_DUAL_VECTOR_INSERT_VISIBILITY_UNCONFIRMED');
+   }
+ }
  return 'QA_DUAL_VECTOR_SEEDED_GENERATION_'+fixture.metadata.page;
 }
 export async function verifyRollbackPhysical(api,old,next,activeGen,{sleep=pause,attempts=QA_VECTOR_ATTEMPTS}={}){
