@@ -86,6 +86,18 @@ assert.deepEqual(calls.map(x=>x.auth),[undefined,"Bearer invalid.qa.session","Be
 await assert.rejects(verifyRealQaClerkAuth({origin:"https://elevator.help",token:jwt,fetchImpl:fakeFetch}),
  /QA_CLERK_ORIGIN_NOT_APPROVED/);
 assert.equal(calls.length,4,"never leak bearer to Production");
+for(const [statuses,code] of [
+ [[401,401,401,403],"QA_CLERK_AUTH_VALID_SESSION_HTTP_401"],
+ [[401,401,503,403],"QA_CLERK_AUTH_VALID_SESSION_HTTP_503"],
+ [[401,401,400,500],"QA_CLERK_AUTH_NONEMPTY_BLOCK_HTTP_500"],
+ [[503,401,400,403],"QA_CLERK_AUTH_MISSING_SESSION_HTTP_503"],
+ [[401,403,400,403],"QA_CLERK_AUTH_INVALID_SESSION_HTTP_403"]
+]){
+ let i=0;
+ await assert.rejects(verifyRealQaClerkAuth({token:jwt,
+  fetchImpl:async()=>({status:statuses[i++]})}),new RegExp(code));
+}
+
 const wf=readFileSync(new URL("../.github/workflows/qa-pr63-clerk-auth.yml",import.meta.url),"utf8");
 const parent=readFileSync(new URL("../.github/workflows/qa-pr61-actual-app.yml",import.meta.url),"utf8");
 const header=wf.split(/^permissions:/m)[0];
