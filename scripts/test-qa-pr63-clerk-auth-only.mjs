@@ -102,6 +102,13 @@ assert.ok(wf.includes("sk_test_"),"only Clerk test-instance credentials");
 assert.ok(wf.includes("--secrets-file"),"secure Clerk secret injection");
 assert.ok(wf.includes("CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}"));
 assert.ok(wf.includes("scripts/qa-pr63-clerk-fresh-session.mjs"));
+const realSessionScript=readFileSync(new URL("./qa-pr63-clerk-fresh-session.mjs",import.meta.url),"utf8");
+assert.ok(realSessionScript.includes("client.sessions.getSession(sessionId)"),
+ "one read-only active test session check expected");
+assert.ok(!realSessionScript.includes("client.sessions.verifySession("),
+ "deprecated Clerk verifySession API must never be called (Run 43: HTTP 410)");
+assert.ok(realSessionScript.includes("result=await probe({origin,token})"),
+ "real Worker must verify the minted JWT after active test-user session check");
 const sessionStep=wf.split("      - name: Mint and revoke one fresh Clerk TEST session then verify real auth")[1];
 assert.ok(sessionStep,"must retain dedicated final short-lived Clerk session step");
 assert.match(sessionStep,/^        env:\s*$/m,"fresh session must receive explicitly scoped environment");
@@ -119,8 +126,8 @@ assert.equal(safeQaClerkStageError("CREATE_SESSION",{status:422,message:"sensiti
  "QA_CLERK_CREATE_SESSION_HTTP_422");
 assert.equal(safeQaClerkStageError("GET_TOKEN",{status:503,message:"bearer leak"}).message,
  "QA_CLERK_GET_TOKEN_HTTP_503");
-assert.equal(safeQaClerkStageError("VERIFY_SESSION",{status:200,message:"secret"}).message,
- "QA_CLERK_VERIFY_SESSION_FAILED");
+assert.equal(safeQaClerkStageError("READ_SESSION",{status:200,message:"secret"}).message,
+ "QA_CLERK_READ_SESSION_FAILED");
 assert.throws(()=>safeQaClerkStageError("EVIL",{status:400}),/QA_CLERK_INVALID_STAGE/);
 
 const userLookupAt=wf.indexOf("run: node scripts/qa-pr63-clerk-user-preflight.mjs");
@@ -146,7 +153,7 @@ const testSecret="sk_test_synthetic";
 assert.deepEqual(validateQaClerkIdentity(testSecret,userId),{secretKey:testSecret,userId});
 assert.throws(()=>validateQaClerkIdentity("sk_live_forbidden",userId),/QA_CLERK_TEST_INSTANCE_SECRET_REQUIRED/);
 assert.throws(()=>validateQaClerkIdentity(testSecret,"production-user"),/QA_CLERK_TEST_USER_REQUIRED/);
-async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,failCreate=false,failMint=false,failVerify=false,inactive=false}={}){
+async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,failCreate=false,failMint=false,failRead=false,inactive=false}={}){
  const events=[];
  const client={sessions:{
    async createSession({userId:actual}){assert.equal(actual,userId);events.push("create");
@@ -155,10 +162,10 @@ async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,f
    async getToken(session){assert.equal(session,"sess_ABC12345678");events.push("mint");
     if(failMint)throw Object.assign(new Error("token-and-user-private"),{status:503});
     return {jwt};},
-   async verifySession(sessionId,token){
-     assert.equal(sessionId,"sess_ABC12345678");assert.equal(token,jwt);
-     events.push("verify");
-     if(failVerify)throw Object.assign(new Error("PRIVATE_USER_SECRET"),{status:401});
+   async getSession(sessionId){
+     assert.equal(sessionId,"sess_ABC12345678");
+     events.push("read");
+     if(failRead)throw Object.assign(new Error("PRIVATE_USER_SECRET"),{status:404});
      return {id:wrongClaims?"sess_other":sessionId,userId,status:inactive?"expired":"active"};
    },
    async revokeSession(session){assert.equal(session,"sess_ABC12345678");events.push("revoke");
@@ -178,16 +185,16 @@ async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,f
 {
  const {call,events}=await mockSession();
  assert.equal(await call,"QA_CLERK_FRESH_TEST_SESSION_VERIFIED_AND_REVOKED");
- assert.deepEqual(events,["create","mint","verify","probe","revoke"]);
+ assert.deepEqual(events,["create","mint","read","probe","revoke"]);
 }
 for(const setting of [
  {failProbe:true,expected:"QA_CLERK_AUTH_PROBE_FAILED"},
- {wrongClaims:true,expected:"QA_CLERK_VERIFIED_SESSION_MISMATCH"},
- {inactive:true,expected:"QA_CLERK_VERIFIED_SESSION_MISMATCH"},
+ {wrongClaims:true,expected:"QA_CLERK_ACTIVE_SESSION_MISMATCH"},
+ {inactive:true,expected:"QA_CLERK_ACTIVE_SESSION_MISMATCH"},
  {failRevoke:true,expected:"QA_CLERK_OWNED_SESSION_REVOKE_FAILED"},
  {failCreate:true,expected:"QA_CLERK_CREATE_SESSION_HTTP_422"},
  {failMint:true,expected:"QA_CLERK_GET_TOKEN_HTTP_503"},
- {failVerify:true,expected:"QA_CLERK_VERIFY_SESSION_HTTP_401"}
+ {failRead:true,expected:"QA_CLERK_READ_SESSION_HTTP_404"}
 ]){
  const {call,events}=await mockSession(setting);
  await assert.rejects(call,new RegExp(setting.expected));
