@@ -90,8 +90,15 @@ for(const index of QA_VECTOR_INDEXES)assert.equal(data.get(index).size,0);
 let observedNdjson=null;
 const cf=qaIndexApi({accountId:'a'.repeat(32),token:'fake-token',fetchImpl:async(url,opts)=>{
  assert.ok(String(url).startsWith('https://api.cloudflare.com/client/v4/accounts/'));
- assert.equal(opts.method,'POST');assert.equal(opts.redirect,'error');
+ assert.equal(opts.redirect,'error');
  assert.equal(opts.headers.Authorization,'Bearer fake-token');
+ if(String(url).endsWith('/info')){
+   assert.equal(opts.method,'GET');
+   assert.equal(opts.body,undefined);
+   assert.equal(opts.headers['Content-Type'],undefined);
+   return {status:200,async json(){return {success:true,result:{processedUpToMutation:'qa'}}}};
+ }
+ assert.equal(opts.method,'POST');
  if(String(url).endsWith('/insert')){
    assert.equal(opts.headers['Content-Type'],'application/x-ndjson');
    assert.equal(typeof opts.body,'string','insert must use raw NDJSON, not multipart');
@@ -103,6 +110,7 @@ const cf=qaIndexApi({accountId:'a'.repeat(32),token:'fake-token',fetchImpl:async
 }});
 await cf(QA_VECTOR_INDEXES[0],'insert',{vector:fixture.old});
 assert.deepEqual(JSON.parse(observedNdjson),fixture.old);
+assert.deepEqual(await cf(QA_VECTOR_INDEXES[0],'info',{}),{processedUpToMutation:'qa'});
 const failing=qaIndexApi({accountId:'a'.repeat(32),token:'fake-token',fetchImpl:async()=>({
  status:400,async json(){return {success:false,errors:[{code:40023,message:'SECRET_STRING_MUST_NOT_APPEAR'}]};},
 })});
