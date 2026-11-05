@@ -1,4 +1,4 @@
-name: PR63 isolated Clerk auth-only QA
+name: PR63 isolated Clerk browser login QA readiness
 on:
   workflow_call:
     inputs:
@@ -107,11 +107,17 @@ jobs:
             }
           rm -f "$QA_SECRET_FILE"
           trap - EXIT
-      - name: Mint and revoke one fresh Clerk TEST session then verify real auth
-        env:
-          # GitHub step-scoped env does NOT inherit the key from the earlier
-          # secret preflight/deploy steps. Run #40 failed here for this reason.
-          CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}
-          CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}
-          QA_CLERK_ORIGIN: https://elevator-help-pr63-clerk-qa.baharmand.workers.dev
-        run: node scripts/qa-pr63-clerk-fresh-session.mjs
+      # This workflow proves only that the isolated browser QA surface is
+      # deployed and reachable. It does NOT assert a real user can sign in.
+      # Do not mint backend sessions: their azp differs from browser origins.
+      - name: Verify browser QA page readiness (NOT a login PASS)
+        run: |
+          set -euo pipefail
+          url="https://elevator-help-pr63-clerk-qa.baharmand.workers.dev/qa-clerk-test"
+          status=$(curl --fail --silent --show-error --max-time 20 \
+            -o /dev/null -w '%{http_code}' "$url") || {
+            echo "::error::QA_CLERK_BROWSER_PAGE_NOT_REACHABLE"; exit 1;
+          }
+          test "$status" = "200" || { echo "::error::QA_CLERK_BROWSER_PAGE_HTTP_NOT_200"; exit 1; }
+          echo "PASS: QA_CLERK_BROWSER_PAGE_READY_ONLY"
+          echo "::notice::Clerk authentication is NOT verified. Manually sign in on /qa-clerk-test using the test publishable key."
