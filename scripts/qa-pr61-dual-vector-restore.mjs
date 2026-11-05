@@ -16,7 +16,9 @@ export function fixtureForRun(runId,attempt='1'){
   if(!/^[1-9]\d{5,19}$/.test(runId)||!/^[1-9]\d{0,4}$/.test(attempt))
     throw Error('QA_DUAL_VECTOR_RUN_ID_INVALID');
   const suffix=runId+'-'+attempt;
-  const documentId='qa-restore-'+suffix;
+  // This exact document is the one in the disposable D1 Time Travel fixture.
+  // Unique physical Vector IDs still use the per-run suffix.
+  const documentId='qa-document';
   const make=(gen)=>({
     id:'g'+gen+':qavr-'+suffix+'-'+gen,
     values:[1,...Array(767).fill(0)],
@@ -44,7 +46,7 @@ export function qaIndexApi({accountId,token,fetchImpl=fetch}){
      throw Error('QA_DUAL_VECTOR_TARGET_DISALLOWED');
    const url=root+index+'/'+action;
    const body=action==='insert'
-     ? (()=>{const f=new FormData();f.append('vectors',new Blob([JSON.stringify(params.vector)+'\n'],{type:'application/x-ndjson'}),'fixture.ndjson');return f;})()
+     ? (()=>{const f=new FormData();f.append('body',new Blob([JSON.stringify(params.vector)+'\n'],{type:'application/x-ndjson'}),'fixture.ndjson');return f;})()
      : JSON.stringify({ids:params.ids});
    const response=await fetchImpl(url,{
      method:'POST',
@@ -118,7 +120,10 @@ export async function cleanupRunFixtures(api,fixtures,{sleep=pause,attempts=QA_V
        new Map([[expected.id,expected.metadata.page]])))
        throw Error('QA_DUAL_VECTOR_UNOWNED_DELETE_REFUSED');
    }
-   if(current.length)await api(index,'delete_by_ids',{ids:current.map(v=>v.id)});
+   // Delete BOTH deterministic per-run IDs even if an async insert has not
+   // become visible yet; we inspected every visible record before deletion.
+   // A later empty readback alone is not proof of full async cleanup.
+   await api(index,'delete_by_ids',{ids});
  }
  for(const index of QA_VECTOR_INDEXES)
    await pollPhysical(api,index,ids,r=>r.length===0,{sleep,attempts});
