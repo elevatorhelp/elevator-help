@@ -2,7 +2,7 @@
 // calling the separate QA-only Worker. Always revokes the owned test session.
 // Never creates users, accesses production, calls Gemini, or writes archive data.
 import assert from "node:assert/strict";
-import {createClerkClient,verifyToken} from "@clerk/backend";
+import {createClerkClient} from "@clerk/backend";
 import {resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {QA_CLERK_ORIGIN,requireQaClerkOrigin} from "./qa-pr63-clerk-config-guard.mjs";
@@ -20,7 +20,7 @@ export function validateQaClerkIdentity(secretKey,userId){
 // SDK may include IDs, emails, headers or response contents in Error.message.
 // Unknown failures are not rendered, uploaded or printed.
 export function safeQaClerkStageError(stage,error){
- const allowed=new Set(["CREATE_SESSION","GET_TOKEN","VERIFY_TOKEN","AUTH_PROBE"]);
+ const allowed=new Set(["CREATE_SESSION","GET_TOKEN","VERIFY_SESSION","AUTH_PROBE"]);
  if(!allowed.has(stage))throw Error("QA_CLERK_INVALID_STAGE");
  const status=error?.status??error?.statusCode;
  const code=Number.isInteger(status)&&status>=400&&status<=599
@@ -30,7 +30,7 @@ export function safeQaClerkStageError(stage,error){
 
 export async function runFreshQaClerkSession({
  secretKey,userId,origin=QA_CLERK_ORIGIN,
- createClient=createClerkClient,verify=verifyToken,
+ createClient=createClerkClient,
  probe=verifyRealQaClerkAuth,
 }={}){
  validateQaClerkIdentity(secretKey,userId);
@@ -39,6 +39,7 @@ export async function runFreshQaClerkSession({
  try{client=createClient({secretKey});}
  catch(error){throw safeQaClerkStageError("CREATE_SESSION",error);}
  if(!client?.sessions?.createSession||!client?.sessions?.getToken||
+    !client?.sessions?.verifySession||
     !client?.sessions?.revokeSession)
    throw Error("QA_CLERK_BACKEND_SESSION_API_REQUIRED");
  let sessionId;
@@ -58,16 +59,16 @@ export async function runFreshQaClerkSession({
   try{tokenData=await client.sessions.getToken(sessionId);}
   catch(error){throw safeQaClerkStageError("GET_TOKEN",error);}
   const token=validateQaSessionJwt(tokenData?.jwt);
-  // Clerk Backend verifyToken() returns {data, errors}; not a bare JWT payload.
-  // Reject real verification errors rather than relying on unchecked claims.
+  // Authenticate the minted token at Clerk's authoritative backend, using
+  // the owned session ID and exact test-user identity. This avoids making the
+  // QA test dependent on a second JWKS endpoint/network fetch. The separate
+  // QA Worker must STILL verify the JWT against its own request origin.
   let verification;
-  try{verification=await verify(token,{secretKey,authorizedParties:[origin]});}
-  catch(error){throw safeQaClerkStageError("VERIFY_TOKEN",error);}
-  if(!verification?.data||verification?.errors?.length)
-    throw Error("QA_CLERK_VERIFY_TOKEN_REJECTED");
-  const claims=verification.data;
-  if(claims.sub!==userId||claims.sid!==sessionId)
-    throw Error("QA_CLERK_SESSION_CLAIMS_MISMATCH");
+  try{verification=await client.sessions.verifySession(sessionId,token);}
+  catch(error){throw safeQaClerkStageError("VERIFY_SESSION",error);}
+  if(verification?.id!==sessionId||verification?.userId!==userId||
+     verification?.status!=="active")
+    throw Error("QA_CLERK_VERIFIED_SESSION_MISMATCH");
   try{result=await probe({origin,token});}
   catch(error){throw safeQaClerkStageError("AUTH_PROBE",error);}
  }catch(error){
