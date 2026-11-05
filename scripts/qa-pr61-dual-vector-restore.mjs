@@ -45,12 +45,16 @@ export function qaIndexApi({accountId,token,fetchImpl=fetch}){
    if(!QA_VECTOR_INDEXES.includes(index)||!['get_by_ids','insert','delete_by_ids'].includes(action))
      throw Error('QA_DUAL_VECTOR_TARGET_DISALLOWED');
    const url=root+index+'/'+action;
+   // Vectorize v2 accepts the NDJSON data stream directly with this
+   // media type. A multipart FormData wrapper was rejected as HTTP 400 by
+   // real isolated QA Run #33, before any staged Vector could be read back.
    const body=action==='insert'
-     ? (()=>{const f=new FormData();f.append('body',new Blob([JSON.stringify(params.vector)+'\n'],{type:'application/x-ndjson'}),'fixture.ndjson');return f;})()
+     ? JSON.stringify(params.vector)+'\n'
      : JSON.stringify({ids:params.ids});
    const response=await fetchImpl(url,{
      method:'POST',
-     headers:action==='insert'?{Authorization:'Bearer '+token}:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+     headers:{Authorization:'Bearer '+token,
+       'Content-Type':action==='insert'?'application/x-ndjson':'application/json'},
      body,redirect:'error',signal:AbortSignal.timeout(30000),
    });
    let result;
