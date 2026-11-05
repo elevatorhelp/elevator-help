@@ -103,7 +103,7 @@ assert.ok(wf.includes("CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID 
 assert.ok(wf.includes("scripts/qa-pr63-clerk-fresh-session.mjs"));
 const sessionStep=wf.split("      - name: Mint and revoke one fresh Clerk TEST session then verify real auth")[1];
 assert.ok(sessionStep,"must retain dedicated final short-lived Clerk session step");
-assert.match(sessionStep,/^        env:\\n/m,"fresh session must receive explicitly scoped environment");
+assert.match(sessionStep,/^        env:\s*$/m,"fresh session must receive explicitly scoped environment");
 assert.ok(sessionStep.includes("CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}"),
  "Run #40 regression: session step must explicitly receive test Clerk secret, not rely on previous step-scoped env");
 assert.ok(sessionStep.includes("CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}"));
