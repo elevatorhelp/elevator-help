@@ -62,6 +62,20 @@ for(const bad of [
  {...env,CORTEX_DB:{}},{...env,VECTORIZE:{}},{...env,VECTORIZE_V2:{}},{...env,AI:{}},
 ])assert.equal((await submit({question:""},bad)).status,503);
 assert.equal(called,1,"wrong env never reaches real app");
+const browserPage=await clerkQaFetch(new Request(QA_CLERK_ORIGIN+"/qa-clerk-test"),env,{},handler);
+assert.equal(browserPage.status,200,"QA-only browser sign-in page must be accessible");
+assert.match(browserPage.headers.get("content-type")||"",/text\/html/);
+assert.equal(browserPage.headers.get("cache-control"),"no-store");
+assert.equal(browserPage.headers.get("x-frame-options"),"DENY");
+const browserHtml=await browserPage.text();
+assert.match(browserHtml,/pk_test_/);
+assert.match(browserHtml,/clerk\.mountSignIn/);
+assert.match(browserHtml,/clerk\?\.session\?\.getToken/);
+assert.match(browserHtml,/fetch\("\/api\/ask"/);
+assert.doesNotMatch(browserHtml,/sk_test_[a-z0-9]{10,}/i,"never embed a QA secret");
+assert.doesNotMatch(browserHtml,/elevator\.help\/api\/ask/,"never call Production");
+assert.equal(called,1,"browser page must not invoke OpenNext app");
+assert.equal((await clerkQaFetch(new Request(QA_CLERK_ORIGIN+"/qa-clerk-test",{method:"POST"}),env,{},handler)).status,404);
 assert.equal((await clerkQaFetch(new Request(QA_CLERK_ORIGIN+"/api/health"),env,{},handler)).status,404);
 assert.equal((await clerkQaFetch(new Request(QA_CLERK_ORIGIN+"/api/ask"),env,{},handler)).status,404);
 assert.equal((await submit({question:"",junk:"x".repeat(300)})).status,413);
