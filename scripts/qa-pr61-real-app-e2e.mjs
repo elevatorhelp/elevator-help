@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {publishAfterVectorsAreReady} from "./qa-pr61-wait-for-staged-vectors.mjs";
 import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {hasExactQaVectorReadback} from "./qa-pr61-vector-readback.mjs";
 import {execFileSync} from "node:child_process";
@@ -60,7 +61,10 @@ assert.deepEqual(new Set(actualStagedIds),new Set(expectedStagedIds),"staged Vec
 console.log("PASS: real Next.js API staged 2 raw document chunks");
 r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":wrong"]});
 assert.equal(r.status,409,"wrong manifest erroneously published");
-r=await post({action:"publish_staged",lease,documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":2"]});
+// Vectorize upsert is asynchronous. Poll *only* the existing exact manifest;
+ // the real API still verifies both physical indexes and the D1 lease before CAS.
+r=await publishAfterVectorsAreReady(() => post({action:"publish_staged",lease,
+  documentId:doc,sourceFingerprint:fp,manifestIds:[doc+":1",doc+":2"]}));
 assert.equal(r.status,200,"real application publish failed: "+JSON.stringify(r));
 assert.equal(r.published,true);
 console.log("PASS: actual Next.js API exact-manifest atomic publication");
