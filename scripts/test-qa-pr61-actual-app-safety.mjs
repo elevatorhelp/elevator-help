@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {approvedQaVectorizeTargets,safeQaIndexLookupResult} from './qa-pr61-verify-vectorize-readonly.mjs';
 import {classifyQaWorkerStartup,safeQaWorkerStartupMessage} from './qa-pr61-classify-startup.mjs';
 import {hasExactQaVectorReadback} from './qa-pr61-vector-readback.mjs';
 import {readFileSync} from 'node:fs';
@@ -14,6 +15,30 @@ assert.match(workflow,/ref: \$\{\{ github\.sha \}\}/,'must check out the dispatc
 assert.match(workflow,/\$GITHUB_EVENT_NAME.*workflow_dispatch/,'paid path must require manual event');
 assert.match(workflow,/ALLOW_PAID_GEMINI:-false/,'paid path must fail closed');
 assert.match(workflow,/qa-pr61-ensure-lease-schema\.mjs/,'isolated D1 lease schema reconciliation required');
+// Metadata-only Cloudflare preflight must be part of a manual-only QA run, and
+// must finish BEFORE the first remote D1 write. No source/data readback here.
+const metadataGate=workflow.indexOf('node scripts/qa-pr61-verify-vectorize-readonly.mjs');
+const qaWrite=workflow.indexOf('npx wrangler d1 execute elevator-help-lease-test-01');
+const guard=workflow.indexOf('node scripts/qa-pr61-assert-isolated-config.mjs');
+assert.ok(guard>=0 && metadataGate>guard && qaWrite>metadataGate,
+  'safe metadata-only Vectorize index check must precede all remote QA writes');
+assert.ok(workflow.includes('allow_paid_gemini') && workflow.includes('default: false'),
+  'metadata preflight must not change paid opt-in');
+const approvedIndexes=approvedQaVectorizeTargets(config);
+assert.deepEqual(approvedIndexes.map(x=>x.tag),['LEGACY','MULTILINGUAL']);
+assert.deepEqual(approvedIndexes.map(x=>x.index_name),
+ ['elevator-help-staging-test','elevator-help-staging-test-v2']);
+for(const invalid of [
+  {...config,vectorize:[config.vectorize[0]]},
+  {...config,vectorize:[...config.vectorize].reverse()},
+  {...config,name:'unapproved-worker'},
+  {...config,vectorize:config.vectorize.map((x,i)=>i===1?{...x,index_name:'another-index'}:x)},
+]) assert.throws(()=>approvedQaVectorizeTargets(invalid),/QA_VECTORIZE_CONFIG_NOT_APPROVED/,
+ 'unreviewed QA resources must fail closed');
+assert.equal(safeQaIndexLookupResult('LEGACY',0),'QA_VECTORIZE_LEGACY_METADATA_OK');
+assert.equal(safeQaIndexLookupResult('MULTILINGUAL',1),'QA_VECTORIZE_MULTILINGUAL_LOOKUP_FAILED');
+assert.throws(()=>safeQaIndexLookupResult('SECRET',1),/QA_VECTORIZE_INVALID_TAG/);
+
 // Diagnostic categories must reveal only fixed labels, even when Wrangler logs
 // contain arbitrary URLs, bearer tokens, document text or credentials.
 assert.match(workflow,/node scripts\/qa-pr61-classify-startup\.mjs \/tmp\/qa-app-worker\.log/,
