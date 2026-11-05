@@ -60,6 +60,7 @@ jobs:
           node scripts/test-qa-cloudflare-dispatch-guard.mjs
           node --test scripts/test-qa-pr61-d1-ownership.mjs
           node scripts/test-qa-pr61-d1-restore-launcher.mjs
+          node --experimental-strip-types scripts/test-qa-pr61-dual-vector-restore.mjs
           node scripts/test-qa-pr63-multipage-launcher.mjs
           node scripts/test-qa-pr61-deployed-auth-preflight.mjs
           node scripts/test-qa-pr61-parallel-lease-race.mjs
