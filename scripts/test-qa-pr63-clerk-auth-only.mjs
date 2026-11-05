@@ -119,8 +119,8 @@ assert.equal(safeQaClerkStageError("CREATE_SESSION",{status:422,message:"sensiti
  "QA_CLERK_CREATE_SESSION_HTTP_422");
 assert.equal(safeQaClerkStageError("GET_TOKEN",{status:503,message:"bearer leak"}).message,
  "QA_CLERK_GET_TOKEN_HTTP_503");
-assert.equal(safeQaClerkStageError("VERIFY_TOKEN",{status:200,message:"secret"}).message,
- "QA_CLERK_VERIFY_TOKEN_FAILED");
+assert.equal(safeQaClerkStageError("VERIFY_SESSION",{status:200,message:"secret"}).message,
+ "QA_CLERK_VERIFY_SESSION_FAILED");
 assert.throws(()=>safeQaClerkStageError("EVIL",{status:400}),/QA_CLERK_INVALID_STAGE/);
 
 const userLookupAt=wf.indexOf("run: node scripts/qa-pr63-clerk-user-preflight.mjs");
@@ -146,7 +146,7 @@ const testSecret="sk_test_synthetic";
 assert.deepEqual(validateQaClerkIdentity(testSecret,userId),{secretKey:testSecret,userId});
 assert.throws(()=>validateQaClerkIdentity("sk_live_forbidden",userId),/QA_CLERK_TEST_INSTANCE_SECRET_REQUIRED/);
 assert.throws(()=>validateQaClerkIdentity(testSecret,"production-user"),/QA_CLERK_TEST_USER_REQUIRED/);
-async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,failCreate=false,failMint=false,failVerify=false}={}){
+async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,failCreate=false,failMint=false,failVerify=false,inactive=false}={}){
  const events=[];
  const client={sessions:{
    async createSession({userId:actual}){assert.equal(actual,userId);events.push("create");
@@ -155,17 +155,18 @@ async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,f
    async getToken(session){assert.equal(session,"sess_ABC12345678");events.push("mint");
     if(failMint)throw Object.assign(new Error("token-and-user-private"),{status:503});
     return {jwt};},
+   async verifySession(sessionId,token){
+     assert.equal(sessionId,"sess_ABC12345678");assert.equal(token,jwt);
+     events.push("verify");
+     if(failVerify)throw Object.assign(new Error("PRIVATE_USER_SECRET"),{status:401});
+     return {id:wrongClaims?"sess_other":sessionId,userId,status:inactive?"expired":"active"};
+   },
    async revokeSession(session){assert.equal(session,"sess_ABC12345678");events.push("revoke");
      if(failRevoke)throw Error("sensitive revoke failure");return {id:session};},
  }};
  const call=runFreshQaClerkSession({
    secretKey:testSecret,userId,createClient:({secretKey})=>{
      assert.equal(secretKey,testSecret);return client;},
-   verify:async(token,opts)=>{
-     assert.equal(token,jwt);assert.deepEqual(opts,{secretKey:testSecret,authorizedParties:[QA_CLERK_ORIGIN]});
-     events.push("verify");
-     return failVerify?{errors:[{message:"secret-verifier-internal"}]}:
-       {data:{sub:userId,sid:wrongClaims?"sess_other":"sess_ABC12345678"}};},
    probe:async({origin,token})=>{
      assert.equal(origin,QA_CLERK_ORIGIN);assert.equal(token,jwt);events.push("probe");
      if(failProbe)throw Error("sensitive actual Clerk response");
@@ -181,11 +182,12 @@ async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,f
 }
 for(const setting of [
  {failProbe:true,expected:"QA_CLERK_AUTH_PROBE_FAILED"},
- {wrongClaims:true,expected:"QA_CLERK_SESSION_CLAIMS_MISMATCH"},
+ {wrongClaims:true,expected:"QA_CLERK_VERIFIED_SESSION_MISMATCH"},
+ {inactive:true,expected:"QA_CLERK_VERIFIED_SESSION_MISMATCH"},
  {failRevoke:true,expected:"QA_CLERK_OWNED_SESSION_REVOKE_FAILED"},
  {failCreate:true,expected:"QA_CLERK_CREATE_SESSION_HTTP_422"},
  {failMint:true,expected:"QA_CLERK_GET_TOKEN_HTTP_503"},
- {failVerify:true,expected:"QA_CLERK_VERIFY_TOKEN_REJECTED"}
+ {failVerify:true,expected:"QA_CLERK_VERIFY_SESSION_HTTP_401"}
 ]){
  const {call,events}=await mockSession(setting);
  await assert.rejects(call,new RegExp(setting.expected));
