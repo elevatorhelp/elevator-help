@@ -55,7 +55,8 @@ for(const bad of [
 assert.equal(called,1);
 for(const bad of [
  {...env,AUTH_REQUIRED:"false"},{...env,QA_CLERK_AUTH_ONLY:"false"},
- {...env,CLERK_SECRET_KEY:""},{...env,GEMINI_API_KEY:"some-secret"},
+ {...env,CLERK_SECRET_KEY:""},{...env,CLERK_SECRET_KEY:"sk_live_NOT_FOR_QA"},
+ {...env,GEMINI_API_KEY:"some-secret"},
  {...env,CORTEX_DB:{}},{...env,VECTORIZE:{}},{...env,VECTORIZE_V2:{}},{...env,AI:{}},
 ])assert.equal((await submit({question:""},bad)).status,503);
 assert.equal(called,1,"wrong env never reaches real app");
