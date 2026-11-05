@@ -16,6 +16,11 @@ on:
         type: boolean
         required: true
         default: false
+      run_disposable_d1_restore:
+        description: "ONE QA-only disposable D1 Time Travel restore; no Gemini, no Production"
+        type: boolean
+        required: true
+        default: false
 permissions:
   contents: read
 # Both QA workflows mutate elevator-help-lease-test-01 and dual QA Vectorize indices.
@@ -25,7 +30,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   actual-app:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true && inputs.run_disposable_d1_restore == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
@@ -143,3 +148,12 @@ jobs:
             exit 1
           fi
           node scripts/qa-pr61-real-app-e2e.mjs
+
+  disposable-d1-restore:
+    # Explicitly isolated mode. Any other enabled mutation/billing input blocks
+    # dispatching this job, and it never runs the actual-app job concurrently.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_disposable_d1_restore == true && inputs.allow_isolated_d1_mutation == false && inputs.allow_paid_gemini == false && inputs.create_missing_qa_vectorize == false }}
+    uses: ./.github/workflows/qa-pr61-d1-restore.yml
+    with:
+      allow_remote_d1_qa: true
+    secrets: inherit
