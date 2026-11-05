@@ -120,8 +120,9 @@ jobs:
           done
           if [ "$ready" != "1" ]; then
             echo "::error::Actual OpenNext Worker not ready. Last HTTP status: $code"
-            # Wrangler diagnostics may include non-hex API credentials, headers or document text.
-            # Never print raw worker logs to durable GitHub Actions output.
+            # Read local Wrangler log only to classify startup failure by fixed code.
+            # Never echo, tail, upload or persist raw worker diagnostics in Actions.
+            node scripts/qa-pr61-classify-startup.mjs /tmp/qa-app-worker.log
             echo "::error::QA worker startup diagnostics withheld (may contain secrets)"
             exit 1
           fi
