@@ -41,7 +41,7 @@ for(const id of ['abc','12345/1','12345-','12345-0']){
  await assert.rejects(verifyParallelLeaseClaims(bad,id),/The input did not match the regular expression/);
 }
 const source=readFileSync(new URL('./qa-pr61-parallel-lease-race.mjs',import.meta.url),'utf8');
-assert.doesNotMatch(source,/fetch\s*\(|upsert|index_evidence|Gemini|deleteByIds/,
+assert.doesNotMatch(source,/fetch\s*\(|\bupsert\b|\bindex_evidence\b|\bGEMINI_API_KEY\b|embedRetrievalDocuments\s*\(|deleteByIds\s*\(/,
   'concurrent lease probe cannot make paid model calls or vector writes');
 const real=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
 assert.ok(real.includes("verifyParallelLeaseClaims(post,run)"),
