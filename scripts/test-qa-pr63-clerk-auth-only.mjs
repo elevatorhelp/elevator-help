@@ -186,6 +186,7 @@ async function mockSession({failProbe=false,failRevoke=false,wrongClaims=false,f
  const call=runFreshQaClerkSession({
    secretKey:testSecret,userId,createClient:({secretKey})=>{
      assert.equal(secretKey,testSecret);return client;},
+   verifyJwt:async(actual,{secretKey,authorizedParties})=>{assert.equal(actual,jwt);assert.equal(secretKey,testSecret);assert.deepEqual(authorizedParties,[QA_CLERK_ORIGIN]);return {data:{sub:userId,sid:"sess_ABC12345678"}};},
    probe:async({origin,token})=>{
      assert.equal(origin,QA_CLERK_ORIGIN);assert.equal(token,jwt);events.push("probe");
      if(failProbe)throw Error("sensitive actual Clerk response");
