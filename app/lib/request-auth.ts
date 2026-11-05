@@ -35,17 +35,12 @@ export async function authorizeChatRequest(
       secretKey,
       authorizedParties: [origin],
     });
-    // The SDK return is a discriminated {data, errors} object; the generic
-    // payload may be typed unknown in some pinned SDK versions. Validate the
-    // structure at runtime before reading any subject/session claims.
+    // verifyToken returns the signed JWT claims directly on success.
+    // Do not treat them as an authenticateRequest() { data, errors } result:
+    // doing so rejects even cryptographically verified sessions.
     if (!verifiedResult || typeof verifiedResult !== "object" || Array.isArray(verifiedResult))
       throw new Error("invalid_verification_result");
-    const result = verifiedResult as { data?: unknown; errors?: unknown };
-    if (result.errors !== undefined && result.errors !== null)
-      throw new Error("token_not_verified");
-    if (!result.data || typeof result.data !== "object" || Array.isArray(result.data))
-      throw new Error("invalid_verified_claims");
-    const claims = result.data as Record<string, unknown>;
+    const claims = verifiedResult as Record<string, unknown>;
     if (
       typeof claims.sub !== "string" ||
       !claims.sub.startsWith("user_") ||
