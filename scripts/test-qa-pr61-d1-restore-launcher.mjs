@@ -18,6 +18,7 @@ for(const required of [
  'inputs.allow_isolated_d1_mutation == false',
  'inputs.allow_paid_gemini == false',
  'inputs.create_missing_qa_vectorize == false',
+ 'inputs.run_multipage_drive_qa == false',
  'uses: ./.github/workflows/qa-pr61-d1-restore.yml',
  'allow_remote_d1_qa: true',
  'secrets: inherit',
