@@ -101,6 +101,15 @@ assert.ok(wf.includes("sk_test_"),"only Clerk test-instance credentials");
 assert.ok(wf.includes("--secrets-file"),"secure Clerk secret injection");
 assert.ok(wf.includes("CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}"));
 assert.ok(wf.includes("scripts/qa-pr63-clerk-fresh-session.mjs"));
+const sessionStep=wf.split("      - name: Mint and revoke one fresh Clerk TEST session then verify real auth")[1];
+assert.ok(sessionStep,"must retain dedicated final short-lived Clerk session step");
+assert.match(sessionStep,/^        env:\s*$/m,"fresh session must receive explicitly scoped environment");
+assert.ok(sessionStep.includes("CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}"),
+ "Run #40 regression: session step must explicitly receive test Clerk secret, not rely on previous step-scoped env");
+assert.ok(sessionStep.includes("CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}"));
+assert.ok(sessionStep.includes("run: node scripts/qa-pr63-clerk-fresh-session.mjs"));
+assert.ok(!sessionStep.includes("sk_live_"),"live Clerk key is never authorized for QA");
+
 assert.ok(!wf.includes("QA_CLERK_SESSION_JWT"),"short-lived Clerk JWT must never be a stored GitHub secret");
 assert.ok(wf.includes("npx wrangler deploy --config wrangler.qa-clerk.json"));
 assert.ok(!wf.includes("https://elevator.help/api/ask"));
