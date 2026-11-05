@@ -21,6 +21,11 @@ on:
         type: boolean
         required: true
         default: false
+      verify_dual_vector_restore:
+        description: "Extra isolated two-Vectorize fixture insert/read/delete after disposable D1 Time Travel restore"
+        type: boolean
+        required: true
+        default: false
       run_multipage_drive_qa:
         description: "ONE isolated paid multipage Drive checkpoint/resume, full three-layer publish; no Production"
         type: boolean
@@ -35,7 +40,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   actual-app:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true && inputs.run_disposable_d1_restore == false && inputs.run_multipage_drive_qa == false }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true && inputs.run_disposable_d1_restore == false && inputs.run_multipage_drive_qa == false && inputs.verify_dual_vector_restore == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
@@ -161,13 +166,14 @@ jobs:
     uses: ./.github/workflows/qa-pr61-d1-restore.yml
     with:
       allow_remote_d1_qa: true
+      verify_dual_vector_restore: ${{ inputs.verify_dual_vector_restore == true }}
     secrets: inherit
   
   multipage-drive-qa:
     # A separate manual authorization for a bounded positive Gemini/Drive QA run.
     # It must never coincide with the actual-app, temporary D1 restore, or
     # Vectorize index creation paths. Production resources are never touched.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_multipage_drive_qa == true && inputs.allow_isolated_d1_mutation == true && inputs.allow_paid_gemini == true && inputs.create_missing_qa_vectorize == false && inputs.run_disposable_d1_restore == false }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_multipage_drive_qa == true && inputs.allow_isolated_d1_mutation == true && inputs.allow_paid_gemini == true && inputs.create_missing_qa_vectorize == false && inputs.run_disposable_d1_restore == false && inputs.verify_dual_vector_restore == false }}
     uses: ./.github/workflows/qa-pr61-multipage.yml
     with:
       allow_paid_qa: true
