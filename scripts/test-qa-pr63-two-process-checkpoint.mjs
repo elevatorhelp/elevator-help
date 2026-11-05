@@ -27,7 +27,7 @@ try{
  assert.equal(existsSync(join(root,'worker-a.json')),true);
  assert.equal((await processLease('renew',doc,'worker-a',root,{fetchImpl,origin,token})).status,200);
  await assert.rejects(processLease('claim',doc,'worker-b',root,{fetchImpl,origin:'https://elevator.help',token}),
-   /QA_ISOLATED_ORIGIN_REQUIRED/);
+   /QA_LOOPBACK_ORIGIN_REQUIRED/);
  assert.deepEqual(inspectProcessClaimPair({status:200,owner:'worker-a',generation:1},{status:409,owner:'worker-b'}),
    {winner:'worker-a',loser:'worker-b'});
  assert.throws(()=>inspectProcessClaimPair({status:200,owner:'worker-a',generation:1},
