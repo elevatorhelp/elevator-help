@@ -43,8 +43,8 @@ try {
     assert.equal(token, "header.payload.signature");
     assert.equal(options.secretKey, "test_only_not_a_real_secret");
     assert.deepEqual(options.authorizedParties, ["https://elevator.help"]);
-    // Clerk verifyToken succeeds with a direct JwtPayload, not {data, errors}.
-    return { sub: "user_ABC12345678", sid: "sess_ABC12345678" };
+    // Pinned Clerk verifyToken returns verified claims inside JwtReturnType.data.
+    return { data: { sub: "user_ABC12345678", sid: "sess_ABC12345678" }, errors: undefined };
   }) as unknown as typeof import("@clerk/backend").verifyToken;
   assert.deepEqual(await authorizeChatRequest(bearerRequest, goodVerifier), {
     ok: true,
@@ -52,11 +52,12 @@ try {
   });
   assert.equal(verificationCalls, 1);
   for (const invalidClaims of [
-    { data: { sub: "user_ABC12345678", sid: "sess_ABC12345678" } },
-    { sub: "user_ABC12345678" },
-    { sid: "sess_ABC12345678" },
-    { sub: "not_a_user", sid: "sess_ABC12345678" },
-    { sub: "user_ABC12345678", sid: "not_a_session" },
+    { sub: "user_ABC12345678", sid: "sess_ABC12345678" },
+    { errors: [{ code: "token_invalid" }] },
+    { data: { sub: "user_ABC12345678" } },
+    { data: { sid: "sess_ABC12345678" } },
+    { data: { sub: "not_a_user", sid: "sess_ABC12345678" } },
+    { data: { sub: "user_ABC12345678", sid: "not_a_session" } },
     null,
   ]) {
     const fake = (async () => invalidClaims) as unknown as typeof import("@clerk/backend").verifyToken;
