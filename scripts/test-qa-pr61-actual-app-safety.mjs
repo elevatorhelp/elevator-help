@@ -9,7 +9,7 @@ const runner=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),
 assert.match(workflow,/^  workflow_dispatch:/m,'actual-app cloud QA must be manually dispatched');
 assert.doesNotMatch(workflow,/^  (push|pull_request|schedule|workflow_run):/m,'no automatic cloud QA triggers');
 assert.match(workflow,/allow_isolated_d1_mutation:[\s\S]*?required: true[\s\S]*?default: false/,'existing isolated D1 mutation must require explicit opt-in');
-assert.ok(workflow.includes("    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true && inputs.run_disposable_d1_restore == false && inputs.run_multipage_drive_qa == false && inputs.verify_dual_vector_restore == false }}"),'actual-app job must not run when disposable D1 restore is selected');
+assert.ok(workflow.includes("    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true && inputs.run_disposable_d1_restore == false && inputs.run_multipage_drive_qa == false && inputs.verify_dual_vector_restore == false && inputs.run_clerk_auth_qa == false }}"),'actual-app job must not run when disposable D1 restore is selected');
 assert.match(workflow,/allow_paid_gemini:[\s\S]*?default: false/,'Gemini spending must be explicitly opted into');
 assert.match(workflow,/ref: \$\{\{ github\.sha \}\}/,'must check out the dispatched exact SHA');
 assert.match(workflow,/\$GITHUB_EVENT_NAME.*workflow_dispatch/,'paid path must require manual event');
