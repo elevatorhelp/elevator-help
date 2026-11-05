@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {classifyQaWorkerStartup,safeQaWorkerStartupMessage} from './qa-pr61-classify-startup.mjs';
 import {hasExactQaVectorReadback} from './qa-pr61-vector-readback.mjs';
 import {readFileSync} from 'node:fs';
 const workflow=readFileSync(new URL('../.github/workflows/qa-pr61-actual-app.yml',import.meta.url),'utf8');
@@ -13,6 +14,22 @@ assert.match(workflow,/ref: \$\{\{ github\.sha \}\}/,'must check out the dispatc
 assert.match(workflow,/\$GITHUB_EVENT_NAME.*workflow_dispatch/,'paid path must require manual event');
 assert.match(workflow,/ALLOW_PAID_GEMINI:-false/,'paid path must fail closed');
 assert.match(workflow,/qa-pr61-ensure-lease-schema\.mjs/,'isolated D1 lease schema reconciliation required');
+// Diagnostic categories must reveal only fixed labels, even when Wrangler logs
+// contain arbitrary URLs, bearer tokens, document text or credentials.
+assert.match(workflow,/node scripts\/qa-pr61-classify-startup\.mjs \/tmp\/qa-app-worker\.log/,
+  'failed remote Worker startup must emit safe fixed-category diagnostics');
+assert.equal(classifyQaWorkerStartup('Error: invalid API token'), 'CLOUDFLARE_AUTH_OR_PERMISSION');
+assert.equal(classifyQaWorkerStartup('remote preview is not supported'), 'REMOTE_PREVIEW_UNAVAILABLE');
+assert.equal(classifyQaWorkerStartup('Error: Vectorize binding not found'), 'QA_RESOURCE_OR_BINDING');
+assert.equal(classifyQaWorkerStartup('connect ECONNREFUSED'), 'NETWORK_OR_PREVIEW_CONNECTION');
+assert.equal(classifyQaWorkerStartup('Error: EADDRINUSE'), 'LOCAL_PORT_CONFLICT');
+assert.equal(classifyQaWorkerStartup(''), 'LOG_EMPTY');
+const secretBearingLog='Error: request failed for https://private.example/?token=MY_SECRET and Authorization: Bearer MY_SECRET';
+const sanitizedDiagnostic=safeQaWorkerStartupMessage(secretBearingLog);
+assert.match(sanitizedDiagnostic,/^::error::QA_WORKER_STARTUP_[A-Z_]+ \(raw Wrangler diagnostics withheld/);
+for(const secret of ['MY_SECRET','private.example','Authorization','Bearer','https://'])
+  assert.ok(!sanitizedDiagnostic.includes(secret), 'startup diagnostic must never echo log text');
+
 // Worker logs may contain non-hex credentials, headers or source text.
 // Hex-only redaction does not make persistent Actions logs safe.
 assert.doesNotMatch(workflow,/^\s*(?:grep|cat|tail|head|sed|awk)\b[^\n]*qa-app-worker\.log/m,
