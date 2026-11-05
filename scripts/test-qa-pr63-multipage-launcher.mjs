@@ -55,6 +55,8 @@ assert.ok(child.includes('MAX_GEMINI_CALLS: "24"'),
  'real Drive QA must retain reviewed per-process call limit');
 assert.ok(child.includes('MAX_FILES: "1"')&&child.includes('TARGET_FILE_ID:'),
  'Drive ingestion must be scoped to one fixed QA document');
+assert.ok(child.includes('MAX_GEMINI_CALLS=2 QA_INTERRUPT_AFTER_FIRST_RAW_BATCH=true'),
+ 'first interrupted Drive process must be limited to exactly one two-call RAW batch');
 assert.ok(child.includes('QA_INTERRUPT_AFTER_FIRST_RAW_BATCH=true'),
  'must inject real durable checkpoint interruption');
 assert.ok(child.includes('QA resumed verified same-generation durable checkpoint')===false,
