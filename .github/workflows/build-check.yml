@@ -61,6 +61,7 @@ jobs:
           node --test scripts/test-qa-pr61-d1-ownership.mjs
           node scripts/test-qa-pr61-d1-restore-launcher.mjs
           node scripts/test-qa-pr63-multipage-launcher.mjs
+          node scripts/test-qa-pr61-deployed-auth-preflight.mjs
 
       - name: Verify QA resource isolation and D1 schema preflight (offline)
         run: |
