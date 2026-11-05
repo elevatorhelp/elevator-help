@@ -170,7 +170,11 @@ for(const setting of [
 ]){
  const {call,events}=await mockSession(setting);
  await assert.rejects(call,new RegExp(setting.expected));
- assert.ok(events.includes("revoke"),"owned Clerk session must be revoked after EVERY outcome");
+ if(setting.failCreate)
+   assert.equal(events.includes("revoke"),false,
+    "cannot revoke a session whose creation failed without yielding an ID");
+ else assert.ok(events.includes("revoke"),
+   "an owned Clerk session must be revoked after ANY subsequent failure");
 }
 await assert.rejects(runFreshQaClerkSession({
  secretKey:testSecret,userId,origin:"https://elevator.help",
