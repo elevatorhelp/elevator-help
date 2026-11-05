@@ -7,6 +7,7 @@ import {
 } from "./qa-pr63-clerk-config-guard.mjs";
 import {validateQaSessionJwt,verifyRealQaClerkAuth} from "./qa-pr63-clerk-auth-probe.mjs";
 import {runFreshQaClerkSession,validateQaClerkIdentity,safeQaClerkStageError} from "./qa-pr63-clerk-fresh-session.mjs";
+import {validateClerkTestUser} from "./qa-pr63-clerk-user-preflight.mjs";
 
 // Stub only the compiled OpenNext import, not the QA fetch wrapper.
 const hooks=registerHooks({
@@ -122,8 +123,26 @@ assert.equal(safeQaClerkStageError("VERIFY_TOKEN",{status:200,message:"secret"})
  "QA_CLERK_VERIFY_TOKEN_FAILED");
 assert.throws(()=>safeQaClerkStageError("EVIL",{status:400}),/QA_CLERK_INVALID_STAGE/);
 
+const userLookupAt=wf.indexOf("run: node scripts/qa-pr63-clerk-user-preflight.mjs");
+const cloudflareBuildAt=wf.indexOf("run: npm run cf:build");
+const cloudflareDeployAt=wf.indexOf("npx wrangler deploy --config wrangler.qa-clerk.json");
+assert.ok(userLookupAt>0&&cloudflareBuildAt>userLookupAt&&cloudflareDeployAt>cloudflareBuildAt,
+ "read-only Clerk test-user preflight must precede every new Worker deployment");
+const userStep=wf.split("      - name: Confirm Clerk test user belongs to selected test instance (read-only)")[1]
+ ?.split("      - name: Test no-paid Clerk boundary offline")[0];
+assert.ok(userStep&&userStep.includes("CLERK_QA_SECRET_KEY:")&&userStep.includes("CLERK_QA_TEST_USER_ID:"),
+ "test-user preflight must explicitly receive both test-only secrets");
+
 const userId="user_ABC12345678";
 const testSecret="sk_test_synthetic";
+{
+ const get=async(fn)=>validateClerkTestUser({secretKey:testSecret,userId,createClient:()=>({users:{getUser:fn}})});
+ assert.equal(await get(async id=>({id})), "QA_CLERK_TEST_USER_LOOKUP_VERIFIED");
+ await assert.rejects(get(async()=>{throw Object.assign(new Error("PRIVATE_EMAIL_OR_TOKEN"),{status:404})}),
+  /QA_CLERK_TEST_USER_HTTP_404/);
+ await assert.rejects(get(async()=>({id:"user_different"})),
+  /QA_CLERK_TEST_USER_IDENTITY_MISMATCH/);
+}
 assert.deepEqual(validateQaClerkIdentity(testSecret,userId),{secretKey:testSecret,userId});
 assert.throws(()=>validateQaClerkIdentity("sk_live_forbidden",userId),/QA_CLERK_TEST_INSTANCE_SECRET_REQUIRED/);
 assert.throws(()=>validateQaClerkIdentity(testSecret,"production-user"),/QA_CLERK_TEST_USER_REQUIRED/);
