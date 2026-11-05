@@ -18,7 +18,7 @@ for (const [file,job,input] of [
   assert.match(inputBlock,/required: true/);
   assert.match(inputBlock,/default: false/);
   const guardedMode = file === 'qa-pr61-actual-app.yml'
-    ? ' && inputs.run_disposable_d1_restore == false && inputs.run_multipage_drive_qa == false'
+    ? ' && inputs.run_disposable_d1_restore == false && inputs.run_multipage_drive_qa == false && inputs.verify_dual_vector_restore == false'
     : '';
   const expected="  "+job+":\n    if: ${{ github.event_name == 'workflow_dispatch' && inputs."+input+" == true"+guardedMode+" }}";
   assert.ok(yaml.replaceAll('\r\n','\n').includes(expected),file+' must gate entire job');
