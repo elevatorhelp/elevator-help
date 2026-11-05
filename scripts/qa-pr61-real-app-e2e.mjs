@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {publishAfterVectorsAreReady} from "./qa-pr61-wait-for-staged-vectors.mjs";
+import {verifyParallelLeaseClaims} from "./qa-pr61-parallel-lease-race.mjs";
 import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {hasExactQaVectorReadback} from "./qa-pr61-vector-readback.mjs";
 import {execFileSync} from "node:child_process";
@@ -39,6 +40,10 @@ assert.equal(evidence.error,"STAGED_EVIDENCE_PUBLICATION_NOT_IMPLEMENTED");
 const deletion=await post({action:"delete",lease,ids:[doc+":evidence"]});
 assert.equal(deletion.status,409,"staged deletion must be blocked");
 console.log("PASS: unfinished staged evidence and deletion fail closed");
+// Distinct concurrent clients contend for the same fresh document in isolated
+// remote D1, without embeddings. The winner's lease must fence the loser.
+await verifyParallelLeaseClaims(post,run);
+console.log("PASS: real QA two-client simultaneous D1 lease claims and loser fencing");
 if (process.env.QA_NEGATIVE_ONLY === "true") {
   const wrong=await post({action:"publish_staged",
     lease:{...lease,owner:"qa-invalid-owner"},documentId:doc,
