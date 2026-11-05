@@ -3,17 +3,23 @@ import {mkdtempSync,existsSync,readFileSync,writeFileSync,rmSync} from 'node:fs'
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {readFileSync as readSource} from 'node:fs';
-import {validateProcessArgs,checkpointFromReply,processLease} from './qa-pr63-lease-indexer-process.mjs';
+import {validateProcessArgs,checkpointFromReply,processLease,resolveQaProcessOrigin} from './qa-pr63-lease-indexer-process.mjs';
 import {inspectProcessClaimPair,verifyIndependentProcessCheckpoint} from './qa-pr63-two-process-checkpoint.mjs';
 const doc='qa61-proc-42083644765-1';
 const lease={jobKey:doc,owner:'worker-a',generation:1};
 const root=mkdtempSync(join(tmpdir(),'qa-pr63-process-'));
 try{
  assert.equal(validateProcessArgs('claim',doc,'worker-a',root),join(root,'worker-a.json'));
+ // The GitHub workflow doesn't export QA_APP_BASE_URL, while the parent
+ // defaults to loopback. Reproduce that omission for the child process.
+ assert.equal(resolveQaProcessOrigin(undefined).href,'http://127.0.0.1:8787/');
+ assert.throws(()=>resolveQaProcessOrigin(''),/QA_LOOPBACK_ORIGIN_REQUIRED/);
+ assert.throws(()=>resolveQaProcessOrigin('https://elevator.help'),/QA_LOOPBACK_ORIGIN_REQUIRED/);
  assert.throws(()=>validateProcessArgs('claim','production-doc','worker-a',root),/QA_PROCESS_ARGUMENTS_INVALID/);
  assert.throws(()=>validateProcessArgs('claim',doc,'evil',root),/QA_PROCESS_ARGUMENTS_INVALID/);
  assert.throws(()=>checkpointFromReply(doc,'worker-b',{status:200,lease}),/QA_PROCESS_CHECKPOINT_INVALID/);
  const fetchImpl=async(_url,opts)=>{
+   assert.equal(String(_url),'http://127.0.0.1:8787/api/drive-ingest-batch');
    assert.equal(opts.method,'POST');
    const body=JSON.parse(opts.body);
    if(body.action==='lease_claim')return {status:200,async json(){return {lease}}};
@@ -22,10 +28,10 @@ try{
  };
  const origin='http://127.0.0.1:8787';
  const token='FAKE_TEST_ONLY_BEARER';
- const claimed=await processLease('claim',doc,'worker-a',root,{fetchImpl,origin,token});
+ const claimed=await processLease('claim',doc,'worker-a',root,{fetchImpl,token});
  assert.equal(claimed.status,200);
  assert.equal(existsSync(join(root,'worker-a.json')),true);
- assert.equal((await processLease('renew',doc,'worker-a',root,{fetchImpl,origin,token})).status,200);
+ assert.equal((await processLease('renew',doc,'worker-a',root,{fetchImpl,token})).status,200);
  await assert.rejects(processLease('claim',doc,'worker-b',root,{fetchImpl,origin:'https://elevator.help',token}),
    /QA_LOOPBACK_ORIGIN_REQUIRED/);
  assert.deepEqual(inspectProcessClaimPair({status:200,owner:'worker-a',generation:1},{status:409,owner:'worker-b'}),
