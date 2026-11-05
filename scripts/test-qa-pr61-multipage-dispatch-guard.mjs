@@ -22,6 +22,22 @@ for (const key of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'GOOGLE_SERV
 }
 assert.match(secretCheck, /GEMINI_API_KEY absent[^\n]*\n\s*exit 1/, 'missing Gemini secret must fail the job, not silently skip positive Drive QA');
 
+// The existing QA Worker Gemini secret is a deployment prerequisite, not a
+// late-stage check after Cloudflare mutations or worker deployment.
+// A missing secret must fail before Build/OpenNext, remote D1 writes and deploy.
+const geminiPreflightPos=workflow.indexOf('      - name: Verify Cloudflare secret presence without reading values');
+const buildPos=workflow.indexOf('      - name: Build actual app');
+const d1WritePos=workflow.indexOf('      - name: Create QA-only D1 tables');
+const deployPos=workflow.indexOf('      - name: Deploy protected QA Worker and inject disposable auth token only');
+assert.ok(geminiPreflightPos>=0 && buildPos>geminiPreflightPos &&
+  d1WritePos>geminiPreflightPos && deployPos>geminiPreflightPos,
+ 'missing Cloudflare QA Gemini secret must block expensive build and all remote D1/Worker writes');
+assert.match(secretCheck,/wrangler secret list --config wrangler\.qa-app-deployed\.json/,
+ 'preflight checks the exact allowlisted QA Worker, not production');
+assert.doesNotMatch(secretCheck,/\bsecret put\b|wrangler deploy|d1 execute/,
+ 'preflight must not mutate QA or production resources');
+
+
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
 const lockedRoot = lock.packages[''];
