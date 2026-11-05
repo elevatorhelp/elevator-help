@@ -21,6 +21,11 @@ on:
         type: boolean
         required: true
         default: false
+      run_multipage_drive_qa:
+        description: "ONE isolated paid multipage Drive checkpoint/resume, full three-layer publish; no Production"
+        type: boolean
+        required: true
+        default: false
 permissions:
   contents: read
 # Both QA workflows mutate elevator-help-lease-test-01 and dual QA Vectorize indices.
@@ -30,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   actual-app:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true && inputs.run_disposable_d1_restore == false }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_isolated_d1_mutation == true && inputs.run_disposable_d1_restore == false && inputs.run_multipage_drive_qa == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
@@ -152,8 +157,18 @@ jobs:
   disposable-d1-restore:
     # Explicitly isolated mode. Any other enabled mutation/billing input blocks
     # dispatching this job, and it never runs the actual-app job concurrently.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_disposable_d1_restore == true && inputs.allow_isolated_d1_mutation == false && inputs.allow_paid_gemini == false && inputs.create_missing_qa_vectorize == false }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_disposable_d1_restore == true && inputs.allow_isolated_d1_mutation == false && inputs.allow_paid_gemini == false && inputs.create_missing_qa_vectorize == false && inputs.run_multipage_drive_qa == false }}
     uses: ./.github/workflows/qa-pr61-d1-restore.yml
     with:
       allow_remote_d1_qa: true
+    secrets: inherit
+  
+  multipage-drive-qa:
+    # A separate manual authorization for a bounded positive Gemini/Drive QA run.
+    # It must never coincide with the actual-app, temporary D1 restore, or
+    # Vectorize index creation paths. Production resources are never touched.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_multipage_drive_qa == true && inputs.allow_isolated_d1_mutation == true && inputs.allow_paid_gemini == true && inputs.create_missing_qa_vectorize == false && inputs.run_disposable_d1_restore == false }}
+    uses: ./.github/workflows/qa-pr61-multipage.yml
+    with:
+      allow_paid_qa: true
     secrets: inherit
