@@ -89,6 +89,11 @@ jobs:
           npx wrangler d1 list --json > "$RUNNER_TEMP/qa-pr61-d1-after.json"
           created_id=$(node scripts/qa-pr61-d1-ownership.mjs claim "$QA_DB" "$RUNNER_TEMP/qa-pr61-d1-before.json" "$RUNNER_TEMP/qa-pr61-d1-after.json")
           echo "QA_CREATED_DB_ID=$created_id" >> "$GITHUB_ENV"
+      - name: Verify both QA Vectorize index configurations before write
+        if: ${{ inputs.verify_dual_vector_restore == true }}
+        run: |
+          node scripts/qa-pr61-assert-isolated-config.mjs
+          node scripts/qa-pr61-verify-vectorize-readonly.mjs
       - name: Stage published three-layer fixture on disposable D1
         run: |
           set -euo pipefail
@@ -99,14 +104,30 @@ jobs:
           bookmark=$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);if(!/^[a-f0-9]{8}(-[a-f0-9]{8}){2}-[a-f0-9]{32}$/i.test(v.bookmark||""))process.exit(1);console.log(v.bookmark)})')
           echo "QA_BOOKMARK=$bookmark" >> "$GITHUB_ENV"
           echo "PASS: remote isolated three-layer publication checkpoint taken"
-      - name: Advance generation then perform actual Cloudflare Time Travel restore
+      - name: Seed old physical generation in both QA Vectorize indices
+        if: ${{ inputs.verify_dual_vector_restore == true }}
+        run: node --experimental-strip-types scripts/qa-pr61-dual-vector-restore.mjs seed-old
+      - name: Advance disposable D1 publication generation
         run: |
           set -euo pipefail
           test -n "$QA_BOOKMARK"
           npx wrangler d1 execute "$QA_DB" --remote --command "UPDATE ingestion_document_publications SET active_generation=3 WHERE document_id='qa-document'; INSERT INTO ingestion_staged_receipts VALUES ('qa-document',3,'raw-3',110,'fp-b'); INSERT INTO ingestion_staged_evidence VALUES ('qa-document',3,'evidence-3','fp-b','new source','qa.pdf','QA',4,0,'[]','[]',110); INSERT INTO ingestion_staged_map_receipts VALUES ('qa-document',3,'map-3','fp-b',110)" --yes
+      - name: Seed newer physical generation in both QA Vectorize indices
+        if: ${{ inputs.verify_dual_vector_restore == true }}
+        run: node --experimental-strip-types scripts/qa-pr61-dual-vector-restore.mjs seed-new
+      - name: Execute Cloudflare Time Travel restore and confirm three-layer D1
+        run: |
+          set -euo pipefail
+          test -n "$QA_BOOKMARK"
           printf 'y\n' | npx wrangler d1 time-travel restore "$QA_DB" --bookmark "$QA_BOOKMARK"
           verify=$(npx wrangler d1 execute "$QA_DB" --remote --command "SELECT active_generation AS generation,(SELECT count(*) FROM ingestion_staged_receipts) AS raw_count,(SELECT count(*) FROM ingestion_staged_evidence) AS evidence_count,(SELECT count(*) FROM ingestion_staged_map_receipts) AS map_count,(SELECT count(*) FROM ingestion_staged_receipts WHERE generation=3) AS superseded_count FROM ingestion_document_publications WHERE document_id='qa-document'" --json)
           printf '%s' "$verify" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);const r=v.flatMap(x=>x.results||[])[0];if(!r||r.generation!==2||r.raw_count!==1||r.evidence_count!==1||r.map_count!==1||r.superseded_count!==0)throw Error("D1_RESTORE_MANIFEST_MISMATCH "+JSON.stringify(r)); console.log("PASS: REAL disposable Cloudflare Time Travel restored active generation and all RAW/Evidence/Map receipts")})'
+      - name: Verify both physical Vectorize indices against D1 restored generation
+        if: ${{ inputs.verify_dual_vector_restore == true }}
+        run: node --experimental-strip-types scripts/qa-pr61-dual-vector-restore.mjs verify
+      - name: Clean up ONLY owned per-run Vectorize fixtures
+        if: ${{ always() && inputs.verify_dual_vector_restore == true }}
+        run: node --experimental-strip-types scripts/qa-pr61-dual-vector-restore.mjs cleanup
       - name: Delete ONLY the verified database UUID created by this run
         if: always()
         run: |
