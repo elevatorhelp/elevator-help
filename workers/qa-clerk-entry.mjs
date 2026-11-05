@@ -1,9 +1,19 @@
 // A separate auth-only QA Worker, never the existing ingestion QA Worker.
 // No D1, Vectorize, AI or Gemini bindings. No nonempty question is accepted.
 import app from "../.open-next/worker.js";
+import {QA_CLERK_BROWSER_HTML,QA_CLERK_BROWSER_PATH} from "./qa-clerk-browser-page.mjs";
 
 export async function clerkQaFetch(request,env,ctx,handler=app){
   const url=new URL(request.url);
+  if(url.pathname===QA_CLERK_BROWSER_PATH&&request.method==="GET")
+    return new Response(QA_CLERK_BROWSER_HTML,{status:200,headers:{
+      "content-type":"text/html; charset=utf-8",
+      "cache-control":"no-store",
+      "referrer-policy":"no-referrer",
+      "x-content-type-options":"nosniff",
+      "x-frame-options":"DENY",
+      "permissions-policy":"camera=(), microphone=(), geolocation=()",
+    }});
   if(url.pathname!=="/api/ask"||request.method!=="POST")
     return new Response("Not Found",{status:404});
   if(env.AUTH_REQUIRED!=="true"||env.QA_CLERK_AUTH_ONLY!=="true"||
