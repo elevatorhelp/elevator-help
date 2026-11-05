@@ -63,7 +63,7 @@ assert.ok(child.includes('QA resumed verified same-generation durable checkpoint
  'the test must invoke the actual ingestion script, not spoof a success log');
 assert.ok(child.includes('node scripts/drive-ingest.mjs'),
  'must actually resume Drive ingestion');
-assert.ok(child.includes('node scripts/qa-drive-evidence-readback.mjs'),
+assert.ok(child.includes('scripts/qa-drive-evidence-readback.mjs'),
  'must verify source evidence and citations after recovery');
 assert.ok(child.includes('node scripts/qa-drive-recovery-live.mjs'),
  'must independently prove stale-owner/failed-publication recovery');
