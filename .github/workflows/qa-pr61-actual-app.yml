@@ -74,13 +74,13 @@ jobs:
         run: |
           test "$(node -p 'require("next/package.json").version')" = "16.4.2"
           test "$(node -p 'require("./node_modules/@opennextjs/cloudflare/package.json").version')" = "1.20.12"
+      - name: Build actual OpenNext Worker
+        run: npm run cf:build
       - name: Preflight both remote QA Vectorize indices (read-only)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node scripts/qa-pr61-verify-vectorize-readonly.mjs
-      - name: Build actual OpenNext Worker
-        run: npm run cf:build
       - name: Bootstrap isolated D1 only
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
