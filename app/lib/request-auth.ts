@@ -31,12 +31,25 @@ export async function authorizeChatRequest(
 
   try {
     const origin = new URL(request.url).origin;
-    const payload = await verifyToken(token, {
+    const result = await verifyToken(token, {
       secretKey,
       authorizedParties: [origin],
     });
-    if (!payload.sub) throw new Error("missing_subject");
-    return { ok: true, userId: payload.sub };
+    // Clerk SDK returns { data, errors }, never a bare JWT payload.
+    // Only accept an authenticated HUMAN session, not a machine token or a
+    // decoded-but-unverified JWT. Missing/malformed results fail closed.
+    if (result.errors?.length) throw new Error("token_not_verified");
+    const claims = result.data;
+    if (
+      !claims ||
+      typeof claims.sub !== "string" ||
+      !claims.sub.startsWith("user_") ||
+      typeof claims.sid !== "string" ||
+      !claims.sid.startsWith("sess_")
+    ) {
+      throw new Error("invalid_session_claims");
+    }
+    return { ok: true, userId: claims.sub };
   } catch {
     return { ok: false, status: 401, error: "Your session is not valid." };
   }
