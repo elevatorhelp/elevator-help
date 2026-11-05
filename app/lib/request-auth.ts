@@ -31,17 +31,22 @@ export async function authorizeChatRequest(
 
   try {
     const origin = new URL(request.url).origin;
-    const result = await verifyToken(token, {
+    const verifiedResult: unknown = await verifyToken(token, {
       secretKey,
       authorizedParties: [origin],
     });
-    // Clerk SDK returns { data, errors }, never a bare JWT payload.
-    // Only accept an authenticated HUMAN session, not a machine token or a
-    // decoded-but-unverified JWT. Missing/malformed results fail closed.
-    if (result.errors?.length) throw new Error("token_not_verified");
-    const claims = result.data;
+    // The SDK return is a discriminated {data, errors} object; the generic
+    // payload may be typed unknown in some pinned SDK versions. Validate the
+    // structure at runtime before reading any subject/session claims.
+    if (!verifiedResult || typeof verifiedResult !== "object" || Array.isArray(verifiedResult))
+      throw new Error("invalid_verification_result");
+    const result = verifiedResult as { data?: unknown; errors?: unknown };
+    if (result.errors !== undefined && result.errors !== null)
+      throw new Error("token_not_verified");
+    if (!result.data || typeof result.data !== "object" || Array.isArray(result.data))
+      throw new Error("invalid_verified_claims");
+    const claims = result.data as Record<string, unknown>;
     if (
-      !claims ||
       typeof claims.sub !== "string" ||
       !claims.sub.startsWith("user_") ||
       typeof claims.sid !== "string" ||
