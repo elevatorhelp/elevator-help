@@ -36,12 +36,16 @@ export async function authorizeChatRequest(
       secretKey,
       authorizedParties: [origin],
     });
-    // verifyToken returns the signed JWT claims directly on success.
-    // Do not treat them as an authenticateRequest() { data, errors } result:
-    // doing so rejects even cryptographically verified sessions.
+    // Pinned Clerk SDK verifyToken returns JwtReturnType:
+    // only verifiedResult.data is trusted; errors must be absent.
     if (!verifiedResult || typeof verifiedResult !== "object" || Array.isArray(verifiedResult))
       throw new Error("invalid_verification_result");
-    const claims = verifiedResult as Record<string, unknown>;
+    const verification = verifiedResult as { data?: unknown; errors?: unknown };
+    if (verification.errors !== undefined && verification.errors !== null)
+      throw new Error("token_not_verified");
+    if (!verification.data || typeof verification.data !== "object" || Array.isArray(verification.data))
+      throw new Error("invalid_verified_claims");
+    const claims = verification.data as Record<string, unknown>;
     if (
       typeof claims.sub !== "string" ||
       !claims.sub.startsWith("user_") ||
