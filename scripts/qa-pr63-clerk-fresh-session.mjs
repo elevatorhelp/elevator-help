@@ -63,19 +63,30 @@ export async function runFreshQaClerkSession({
   // Diagnose only the freshly minted QA token, entirely inside the trusted
   // runner. Print fixed categories, never the JWT, claims, Clerk IDs or SDK
   // error messages. This distinguishes a mint/origin problem from Worker auth.
+  const classifyLocalVerifyError=(error)=>{
+   // Clerk may return a typed error OR throw one. Only fixed SDK reason codes
+   // are allowed into GitHub logs, never error.message or token claims.
+   const allowed=new Set([
+    "token-expired","token-invalid","token-invalid-algorithm",
+    "token-invalid-authorized-parties","token-invalid-signature",
+    "token-not-active-yet","token-iat-in-the-future",
+    "token-verification-failed","invalid-secret-key",
+    "local-jwk-missing","remote-jwk-failed-to-load",
+    "remote-jwk-invalid","remote-jwk-missing",
+    "jwk-failed-to-resolve","jwk-kid-mismatch",
+   ]);
+   const reason=error?.reason;
+   return typeof reason==="string"&&allowed.has(reason)
+    ?reason.toUpperCase().replaceAll("-","_"):"UNCLASSIFIED";
+  };
   let locallyVerified;
   try{
    locallyVerified=await verifyJwt(token,{secretKey,authorizedParties:[origin]});
-  }catch{throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_EXCEPTION");}
+  }catch(error){
+   throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_"+classifyLocalVerifyError(error));
+  }
   if(locallyVerified?.errors?.length){
-   const reasons=new Set(["token-expired","token-invalid","token-invalid-authorized-parties",
-    "token-invalid-signature","token-not-active-yet","remote-jwk-failed-to-load",
-    "remote-jwk-invalid","remote-jwk-missing","jwk-failed-to-resolve",
-    "jwk-kid-mismatch","invalid-secret-key"]);
-   const reason=locallyVerified.errors[0]?.reason;
-   const safe=typeof reason==="string"&&reasons.has(reason)
-    ?reason.toUpperCase().replaceAll("-","_"):"UNCLASSIFIED";
-   throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_"+safe);
+   throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_"+classifyLocalVerifyError(locallyVerified.errors[0]));
   }
   if(!locallyVerified?.data||locallyVerified.data.sub!==userId||
      locallyVerified.data.sid!==sessionId)
