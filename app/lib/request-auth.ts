@@ -6,6 +6,7 @@ type ChatAuthorization =
 
 export async function authorizeChatRequest(
   request: Request,
+  verifyImpl: typeof verifyToken = verifyToken,
 ): Promise<ChatAuthorization> {
   // Only an explicit opt-out is allowed; a missing or misspelled flag fails closed.
   if (process.env.AUTH_REQUIRED === "false") {
@@ -31,7 +32,7 @@ export async function authorizeChatRequest(
 
   try {
     const origin = new URL(request.url).origin;
-    const verifiedResult: unknown = await verifyToken(token, {
+    const verifiedResult: unknown = await verifyImpl(token, {
       secretKey,
       authorizedParties: [origin],
     });
