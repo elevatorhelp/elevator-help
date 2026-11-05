@@ -2,7 +2,7 @@
 // calling the separate QA-only Worker. Always revokes the owned test session.
 // Never creates users, accesses production, calls Gemini, or writes archive data.
 import assert from "node:assert/strict";
-import {createClerkClient} from "@clerk/backend";
+import {createClerkClient,verifyToken} from "@clerk/backend";
 import {resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {QA_CLERK_ORIGIN,requireQaClerkOrigin} from "./qa-pr63-clerk-config-guard.mjs";
@@ -59,6 +59,27 @@ export async function runFreshQaClerkSession({
   try{tokenData=await client.sessions.getToken(sessionId);}
   catch(error){throw safeQaClerkStageError("GET_TOKEN",error);}
   const token=validateQaSessionJwt(tokenData?.jwt);
+  // Diagnose only the freshly minted QA token, entirely inside the trusted
+  // runner. Print fixed categories, never the JWT, claims, Clerk IDs or SDK
+  // error messages. This distinguishes a mint/origin problem from Worker auth.
+  let locallyVerified;
+  try{
+   locallyVerified=await verifyToken(token,{secretKey,authorizedParties:[origin]});
+  }catch{throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_EXCEPTION");}
+  if(locallyVerified?.errors?.length){
+   const reasons=new Set(["token-expired","token-invalid","token-invalid-authorized-parties",
+    "token-invalid-signature","token-not-active-yet","remote-jwk-failed-to-load",
+    "remote-jwk-invalid","remote-jwk-missing","jwk-failed-to-resolve",
+    "jwk-kid-mismatch","invalid-secret-key"]);
+   const reason=locallyVerified.errors[0]?.reason;
+   const safe=typeof reason==="string"&&reasons.has(reason)
+    ?reason.toUpperCase().replaceAll("-","_"):"UNCLASSIFIED";
+   throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_"+safe);
+  }
+  if(!locallyVerified?.data||locallyVerified.data.sub!==userId||
+     locallyVerified.data.sid!==sessionId)
+   throw Error("QA_CLERK_LOCAL_TOKEN_CLAIMS_MISMATCH");
+  console.log("PASS: QA_CLERK_LOCAL_SIGNATURE_AND_SESSION_VERIFIED");
   // Clerk deprecated the verifySession(sessionId, token) backend endpoint;
   // real isolated QA Run #43 returned HTTP 410. The read-only getSession()
   // API confirms this owned test session is currently active and matches the
