@@ -1,7 +1,7 @@
 // Isolated, non-production browser sign-in probe. Never renders or logs JWTs.
 // No user account, credential, JWT or publishable key is persisted by this page.
 export const QA_CLERK_BROWSER_PATH = "/qa-clerk-test";
-export const QA_CLERK_BROWSER_HTML = `<!doctype html>
+export const QA_CLERK_BROWSER_HTML = String.raw`<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Clerk QA — browser session probe</title>
