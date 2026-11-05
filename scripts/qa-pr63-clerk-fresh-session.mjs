@@ -79,19 +79,37 @@ export async function runFreshQaClerkSession({
    return typeof reason==="string"&&allowed.has(reason)
     ?reason.toUpperCase().replaceAll("-","_"):"UNCLASSIFIED";
   };
+  // The Backend API creates a test session, but that does not guarantee its
+  // JWT has the frontend Origin claim required by the deployed Worker.
+  // First validate Clerk's signature, timing and issuer using its official SDK.
+  // Never use unverified JWT payload data for any authorization decision.
   let locallyVerified;
   try{
-   locallyVerified=await verifyJwt(token,{secretKey,authorizedParties:[origin]});
+   locallyVerified=await verifyJwt(token,{secretKey});
   }catch(error){
    throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_"+classifyLocalVerifyError(error));
   }
   if(locallyVerified?.errors?.length){
    throw Error("QA_CLERK_LOCAL_TOKEN_VERIFY_"+classifyLocalVerifyError(locallyVerified.errors[0]));
   }
-  if(!locallyVerified?.data||locallyVerified.data.sub!==userId||
-     locallyVerified.data.sid!==sessionId)
+  const claims=locallyVerified?.data;
+  if(!claims||claims.sub!==userId||claims.sid!==sessionId)
    throw Error("QA_CLERK_LOCAL_TOKEN_CLAIMS_MISMATCH");
   console.log("PASS: QA_CLERK_LOCAL_SIGNATURE_AND_SESSION_VERIFIED");
+  // A backend-minted token is not a substitute for a browser-origin session.
+  // Do not weaken authorizedParties or call a cross-origin token a passing QA.
+  // We inspect only the *cryptographically verified* azp and disclose no value.
+  if(claims.azp!==origin)
+   throw Error("QA_CLERK_BACKEND_MINTED_AZP_NOT_QA_ORIGIN");
+  let originVerified;
+  try{
+   originVerified=await verifyJwt(token,{secretKey,authorizedParties:[origin]});
+  }catch(error){
+   throw Error("QA_CLERK_LOCAL_ORIGIN_VERIFY_"+classifyLocalVerifyError(error));
+  }
+  if(originVerified?.errors?.length||originVerified?.data?.sub!==userId||
+     originVerified?.data?.sid!==sessionId)
+   throw Error("QA_CLERK_LOCAL_ORIGIN_VERIFY_FAILED");
   // Clerk deprecated the verifySession(sessionId, token) backend endpoint;
   // real isolated QA Run #43 returned HTTP 410. The read-only getSession()
   // API confirms this owned test session is currently active and matches the
