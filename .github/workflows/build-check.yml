@@ -64,6 +64,7 @@ jobs:
           node scripts/test-qa-pr63-multipage-launcher.mjs
           node scripts/test-qa-pr61-deployed-auth-preflight.mjs
           node scripts/test-qa-pr61-parallel-lease-race.mjs
+          node scripts/test-qa-pr63-two-process-checkpoint.mjs
 
       - name: Verify QA resource isolation and D1 schema preflight (offline)
         run: |
