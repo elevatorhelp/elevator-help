@@ -7,6 +7,7 @@ import {
 } from "./qa-pr63-clerk-config-guard.mjs";
 import {validateQaSessionJwt,verifyRealQaClerkAuth} from "./qa-pr63-clerk-auth-probe.mjs";
 import {runFreshQaClerkSession,validateQaClerkIdentity,safeQaClerkStageError} from "./qa-pr63-clerk-fresh-session.mjs";
+import {validateClerkTestUser} from "./qa-pr63-clerk-user-preflight.mjs";
 
 // Stub only the compiled OpenNext import, not the QA fetch wrapper.
 const hooks=registerHooks({
