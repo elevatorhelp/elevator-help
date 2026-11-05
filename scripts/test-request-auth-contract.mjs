@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 // Offline SDK boundary test: execute the real authorization function, replacing
 // only Clerk's network-capable verifier. This is NOT a real Clerk session test.
 let calls = [];
-let payload = {sub:"user_synthetic",sid:"sess_synthetic"};
+let payload = {data:{sub:"user_synthetic",sid:"sess_synthetic"},errors:undefined};
 let rejected = false;
 globalThis.__offlineClerkVerify = async (token, options) => {
   calls.push({ token, options });
@@ -40,14 +40,14 @@ try {
     assert.equal((await authorizeChatRequest(request(header))).status, 401);
   }
   assert.equal(calls.length, 0, "unsigned requests must not reach Clerk");
-  payload = {sub:"user_synthetic"};
+  payload = {data:{sub:"user_synthetic"},errors:undefined};
   assert.equal((await authorizeChatRequest(request("Bearer no-session"))).status, 401);
-  payload = {sub:"machine_token",sid:"sess_synthetic"};
+  payload = {data:{sub:"machine_token",sid:"sess_synthetic"},errors:undefined};
   assert.equal((await authorizeChatRequest(request("Bearer machine-subject"))).status, 401);
-  payload = {sub:"user_synthetic",sid:"not_a_session"};
+  payload = {data:{sub:"user_synthetic",sid:"not_a_session"},errors:undefined};
   assert.equal((await authorizeChatRequest(request("Bearer forged-session"))).status, 401);
-  payload = {data:{sub:"user_synthetic",sid:"sess_synthetic"},errors:undefined};
-  assert.equal((await authorizeChatRequest(request("Bearer legacy-wrapped-payload"))).status, 401);
+  payload = {sub:"user_synthetic",sid:"sess_synthetic"};
+  assert.equal((await authorizeChatRequest(request("Bearer unexpected-direct-claims"))).status, 401);
   payload = {errors:[{message:"sensitive internal invalid token"}]};
   assert.equal((await authorizeChatRequest(request("Bearer invalid-signature"))).status, 401);
   payload = {};
@@ -80,7 +80,7 @@ try {
   const client = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(client, /getAuthToken=\{getToken\}/);
   assert.match(client, /Authorization: `Bearer \$\{authToken\}`/);
-  console.log("PASS: real auth function accepts verified Clerk JWT claims, requires human session ID, rejects legacy-wrapped SDK data and missing/invalid sessions; Clerk SDK mocked");
+  console.log("PASS: real auth function unwraps pinned Clerk verified JWT data and rejects errors, direct-claims responses and missing/invalid sessions; Clerk SDK mocked");
 } finally {
   hooks.deregister();
   delete globalThis.__offlineClerkVerify;
