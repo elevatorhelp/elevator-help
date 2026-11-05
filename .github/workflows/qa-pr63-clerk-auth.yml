@@ -53,7 +53,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}
-          QA_CLERK_SESSION_JWT: ${{ secrets.QA_CLERK_SESSION_JWT }}
+          CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::QA_CLERK_CLOUDFLARE_TOKEN_MISSING"; exit 1; }
@@ -63,9 +63,9 @@ jobs:
             *) echo "::error::QA_CLERK_TEST_INSTANCE_SECRET_REQUIRED"; exit 1 ;;
           esac
           node --input-type=module -e '
-            const t=process.env.QA_CLERK_SESSION_JWT||"";
-            if(t.length<40||t.length>8000||!/^[-_A-Za-z0-9]+\.[-_A-Za-z0-9]+\.[-_A-Za-z0-9]+$/.test(t)){
-              console.error("::error::QA_CLERK_SIGNED_TEST_SESSION_REQUIRED");
+            const u=process.env.CLERK_QA_TEST_USER_ID||"";
+            if(!/^user_[A-Za-z0-9]{8,64}$/.test(u)){
+              console.error("::error::QA_CLERK_TEST_USER_REQUIRED");
               process.exit(1);
             }
           '
@@ -102,8 +102,8 @@ jobs:
             }
           rm -f "$QA_SECRET_FILE"
           trap - EXIT
-      - name: Verify real Clerk signed session without D1, Gemini or full question
+      - name: Mint and revoke one fresh Clerk TEST session then verify real auth
         env:
-          QA_CLERK_SESSION_JWT: ${{ secrets.QA_CLERK_SESSION_JWT }}
+          CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}
           QA_CLERK_ORIGIN: https://elevator-help-pr63-clerk-qa.baharmand.workers.dev
-        run: node scripts/qa-pr63-clerk-auth-probe.mjs
+        run: node scripts/qa-pr63-clerk-fresh-session.mjs
