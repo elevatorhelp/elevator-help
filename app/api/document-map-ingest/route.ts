@@ -1,3 +1,8 @@
+import {stagedVectorId} from "../../lib/ingestion-generation-publication";
+import { hasValidLegacyEmbeddingBatch } from "../../lib/ingestion-legacy-embedding-validation";
+import { isOrderedDocumentMapPageWindow, validatedDocumentMapNodePageRange, hasValidStagedDocumentMapIdentity, hasValidDocumentMapMetadata, documentMapNodeIdentityParts, dedupeDocumentMapNodes } from "../../lib/document-map-page-window";
+import {recordStagedMap} from "../../lib/ingestion-full-publication";
+import { assertActiveIngestionLease, guardedIngestionSideEffect, parseIngestionLease } from "../../lib/ingestion-lease-guard";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -88,12 +93,6 @@ function cleanTopics(value: unknown) {
         .map((item) => item.slice(0, 80)),
     ),
   ).slice(0, 10);
-}
-
-function clampPage(value: unknown, minPage: number, maxPage: number) {
-  const page = Number(value);
-  if (!Number.isInteger(page)) return minPage;
-  return Math.max(minPage, Math.min(maxPage, page));
 }
 
 async function stableId(parts: string[]) {
@@ -246,11 +245,9 @@ ${JSON.stringify(pages)}
       const summary =
         typeof item?.summary === "string" ? item.summary.trim() : "";
       if (!summary) return null;
-      const pageStart = clampPage(item.pageStart, firstPage, lastPage);
-      const pageEnd = Math.max(
-        pageStart,
-        clampPage(item.pageEnd, pageStart, lastPage),
-      );
+      const range = validatedDocumentMapNodePageRange(item.pageStart, item.pageEnd, pages);
+      if (!range) return null;
+      const { pageStart, pageEnd } = range;
       const nodeType =
         typeof item?.nodeType === "string" && item.nodeType.trim()
           ? item.nodeType.trim().toLowerCase().slice(0, 80)
@@ -273,14 +270,50 @@ ${JSON.stringify(pages)}
 
 export async function POST(request: NextRequest) {
   try {
-    const expectedToken = process.env.INGESTION_TOKEN;
+    const { env: runtimeEnv } = getCloudflareContext();
+    const runtimeValue=(name:string):string|undefined=>{
+      const value=(runtimeEnv as any)[name];
+      return typeof value==="string"?value:process.env[name];
+    };
+    const staged=runtimeValue("INGESTION_STAGED_PUBLICATION")==="true";
+    const complete=runtimeValue("INGESTION_COMPLETE_PUBLICATION")==="true";
+    if(staged && !complete)
+      return NextResponse.json({ok:false,
+        error:"STAGED_DOCUMENT_MAP_PUBLICATION_NOT_IMPLEMENTED"},{status:409});
+    const expectedToken = runtimeValue("INGESTION_TOKEN");
     const auth = request.headers.get("authorization") || "";
     if (!expectedToken || auth !== `Bearer ${expectedToken}`)
       return unauthorized();
 
     const body: any = await request.json();
+    const guardWrite = async <T,>(operation: () => Promise<T>): Promise<T> => {
+      if (runtimeValue("INGESTION_LEASE_PREFLIGHT") !== "true") return operation();
+      const lease = parseIngestionLease(body?.lease);
+      if (!lease) throw new Error("INGESTION_LEASE_REQUIRED");
+      const { env: leaseEnv } = getCloudflareContext();
+      return guardedIngestionSideEffect((leaseEnv as any).CORTEX_DB, lease, operation);
+    };
+
+    // Opt-in preflight only. Not sufficient for safe parallel Vectorize writes:
+    // a lease may expire after validation, before an external side effect.
+    if (runtimeValue("INGESTION_LEASE_PREFLIGHT") === "true") {
+      const lease = parseIngestionLease(body?.lease);
+      if (!lease) return NextResponse.json({ ok: false, error: "INGESTION_LEASE_REQUIRED" }, { status: 409 });
+      const { env: leaseEnv } = getCloudflareContext();
+      try {
+        await assertActiveIngestionLease((leaseEnv as any).CORTEX_DB, lease);
+      } catch {
+        return NextResponse.json({ ok: false, error: "INGESTION_LEASE_INVALID" }, { status: 409 });
+      }
+    }
+
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
+    const lease=staged?parseIngestionLease(body?.lease):null;
+    if(staged && (runtimeValue("INGESTION_LEASE_PREFLIGHT")!=="true" ||
+      !hasValidStagedDocumentMapIdentity(document,lease)))
+      return NextResponse.json({ok:false,error:"INVALID_STAGED_MAP_LEASE"},{status:409});
+
 
     if (
       !document ||
@@ -294,8 +327,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate optional metadata before any Gemini or embedding call. Invalid
+    // objects can otherwise reach Vectorize and fail after paid processing.
+    if (!hasValidDocumentMapMetadata(document)) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid document-map metadata" },
+        { status: 400 },
+      );
+    }
+
     const mapVersion =
-      Number.isInteger(document.mapVersion) && Number(document.mapVersion) > 0
+      Number.isSafeInteger(document.mapVersion) && Number(document.mapVersion) > 0
         ? Number(document.mapVersion)
         : 1;
 
@@ -306,16 +348,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let totalText = 0;
-    for (const page of pages) {
-      if (!Number.isInteger(page?.page) || typeof page?.text !== "string") {
-        return NextResponse.json(
-          { ok: false, error: "Invalid page payload" },
-          { status: 400 },
-        );
-      }
-      totalText += page.text.length;
+    // The map model uses pages[0] and pages[last] as physical bounds.
+    // Reject reordered/duplicate pages rather than silently attributing
+    // generated clauses to the wrong PDF page interval.
+    if (!isOrderedDocumentMapPageWindow(pages)) {
+      return NextResponse.json(
+        { ok: false, error: "Physical page numbers must be unique, positive and strictly ascending" },
+        { status: 400 },
+      );
     }
+    let totalText = 0;
+    for (const page of pages) totalText += page.text.length;
     if (totalText > MAX_TOTAL_TEXT) {
       return NextResponse.json(
         { ok: false, error: "Document window is too large" },
@@ -323,7 +366,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = runtimeValue("GEMINI_API_KEY");
     const { env } = getCloudflareContext();
     const ai = (env as any).AI;
     const vectorize = (env as any).VECTORIZE;
@@ -335,12 +378,14 @@ export async function POST(request: NextRequest) {
     const geminiBudget = createGeminiCallBudget(
       (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST ?? 3,
     );
-    const nodes = await analyzeDocumentWindow(
+    // Gemini can repeat identical nodes; their stable vector IDs would collide.
+    // Deduplicate before paid embeddings and before immutable staged receipts.
+    const nodes = dedupeDocumentMapNodes(await analyzeDocumentWindow(
       document,
       pages,
       apiKey,
       geminiBudget.fetch,
-    );
+    ));
     if (!nodes.length)
       return NextResponse.json({ ok: true, upserted: 0, ids: [], nodes: [] });
 
@@ -368,8 +413,8 @@ export async function POST(request: NextRequest) {
       apiKey,
       geminiBudget.fetch,
     );
-    if (!Array.isArray(embeddings) || embeddings.length !== nodes.length) {
-      throw new Error("Document-map embedding count mismatch");
+    if (!hasValidLegacyEmbeddingBatch(embeddings, nodes.length)) {
+      throw new Error("Invalid document-map legacy embedding batch");
     }
 
     const vectors = await Promise.all(
@@ -378,12 +423,7 @@ export async function POST(request: NextRequest) {
           document.sourceFileId,
           String(mapVersion),
           document.modifiedTime || "",
-          String(node.pageStart),
-          String(node.pageEnd),
-          node.nodeType,
-          node.sectionId || "",
-          node.title || "",
-          node.summary,
+          ...documentMapNodeIdentityParts(node),
         ]);
 
         const metadata: Record<string, string | number> = {
@@ -416,12 +456,12 @@ export async function POST(request: NextRequest) {
     );
 
     const legacyVectors = vectors.map(({ id, metadata, index }) => ({
-      id,
+      id:staged?stagedVectorId(id,lease!.generation):id,
       values: embeddings[index],
       metadata: { ...metadata, embeddingVersion: 2 },
     }));
     const multilingualVectors = vectors.map(({ id, metadata, index }) => ({
-      id,
+      id:staged?stagedVectorId(id,lease!.generation):id,
       values: multilingualEmbeddings[index],
       metadata: {
         ...metadata,
@@ -429,8 +469,15 @@ export async function POST(request: NextRequest) {
       },
     }));
 
-    await vectorize.upsert(legacyVectors);
-    await vectorizeV2.upsert(multilingualVectors);
+    await guardWrite(() => vectorize.upsert(legacyVectors));
+    await guardWrite(() => vectorizeV2.upsert(multilingualVectors));
+    if(staged && vectors.length){
+      for(let i=0;i<vectors.length;i+=20){
+        await recordStagedMap((env as any).CORTEX_DB,lease!,
+          document.sourceFileId,vectors.slice(i,i+20).map(v=>v.id),
+          document.sourceFingerprint!);
+      }
+    }
 
     return NextResponse.json({
       ok: true,
