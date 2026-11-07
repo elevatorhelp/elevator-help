@@ -8,6 +8,7 @@ type Status = {
   checkedAt: string;
   edgeTraffic: { windowStart: string; windowEnd: string; visits: number | null; countries: Array<{ country: string; visits: number }>; warning: string | null } | null;
   archiveInventory: { indexedEvidenceFiles: number; evidenceChunks: number; note: string } | null;
+  activeQuestionUsers: { dau: number; mau30d: number; questionsToday: number; observationDay: string; definition: string } | null;
   deploy: Run | null; build: Run | null; archive: Run | null;
   pr63: { draft: boolean; state: string; sha: string | null; url: string };
   recentRuns: Run[];
@@ -63,7 +64,9 @@ function AdminConsole() {
           <Stat label="Remaining work / ETA" value="Not available" note="Requires backlog and recent throughput"/>
           <Stat label="All-time site visits" value="Not available" note="Not reconstructable before measurement; never extrapolate"/>
           <Stat label="Visits · last 7 days" value={fmt(data.edgeTraffic?.visits)} note="Cloudflare edge visits, only if analytics connected; not unique people"/>
-          <Stat label="Active users · DAU / MAU" value={fmt(data.metrics.users)} note="Not yet measured; distinct from visits"/>
+          <Stat label="Active question users · DAU" value={fmt(data.activeQuestionUsers?.dau)} note="Signed-in users who asked today, Berlin calendar"/>
+          <Stat label="Active question users · 30-day" value={fmt(data.activeQuestionUsers?.mau30d)} note="Distinct users who asked in the trailing 30 days; not all visitors"/>
+          <Stat label="Questions today" value={fmt(data.activeQuestionUsers?.questionsToday)} note="Daily quota usage sum; may exclude failed/released questions"/>
           <Stat label="Visits by country" value={data.edgeTraffic?.countries?.length ? data.edgeTraffic.countries.slice(0, 5).map(c => `${c.country}: ${fmt(c.visits)}`).join(" · ") : "Not available"} note="Last 7 days; edge visits grouped by approximate IP country, not unique users"/>
           <Stat label="Questions / cost / latency" value="Not available" note="Requires real server-side telemetry"/>
         </div>
