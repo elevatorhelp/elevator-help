@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 type Run = { id: number; name: string; status: string; conclusion: string | null; createdAt: string | null; sha: string | null; url: string | null };
 type Status = {
   checkedAt: string;
+  edgeTraffic: { windowStart: string; windowEnd: string; visits: number | null; countries: Array<{ country: string; visits: number }>; warning: string | null } | null;
   deploy: Run | null; build: Run | null; archive: Run | null;
   pr63: { draft: boolean; state: string; sha: string | null; url: string };
   recentRuns: Run[];
@@ -58,9 +59,10 @@ function AdminConsole() {
           <Stat label="New or changed files" value="Not available" note="Requires checkpoint snapshot"/>
           <Stat label="Index progress" value={fmt(data.metrics.archiveProgress)} note="Evidence / RAW / Map must be measured separately"/>
           <Stat label="Remaining work / ETA" value="Not available" note="Requires backlog and recent throughput"/>
-          <Stat label="All-time site visits" value="Not available" note="Cloudflare analytics not connected; historical start date unknown"/>
+          <Stat label="All-time site visits" value="Not available" note="Not reconstructable before measurement; never extrapolate"/>
+          <Stat label="Visits · last 7 days" value={fmt(data.edgeTraffic?.visits)} note="Cloudflare edge visits, only if analytics connected; not unique people"/>
           <Stat label="Active users · DAU / MAU" value={fmt(data.metrics.users)} note="Not yet measured; distinct from visits"/>
-          <Stat label="Visitors by country" value="Not available" note="Privacy-safe aggregate of approximate IP country, no raw IP storage"/>
+          <Stat label="Visits by country" value={data.edgeTraffic?.countries?.length ? data.edgeTraffic.countries.slice(0, 5).map(c => `${c.country}: ${fmt(c.visits)}`).join(" · ") : "Not available"} note="Last 7 days; edge visits grouped by approximate IP country, not unique users"/>
           <Stat label="Questions / cost / latency" value="Not available" note="Requires real server-side telemetry"/>
         </div>
       </section>
