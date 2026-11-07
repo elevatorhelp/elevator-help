@@ -70,6 +70,10 @@ assert.equal(browserPage.headers.get("x-frame-options"),"DENY");
 const browserHtml=await browserPage.text();
 assert.match(browserHtml,/pk_test_/);
 assert.match(browserHtml,/clerk\.mountSignIn/);
+assert.match(browserHtml,/script\.dataset\.clerkPublishableKey=publishableKey/,
+ "ClerkJS script tag must carry the publishable key per official SDK docs");
+assert.match(browserHtml,/clerk\.browser\.js",pk\)/,
+ "CDN loader must pass the TEST publishable key only to ClerkJS");
 assert.match(browserHtml,/clerk\?\.session\?\.getToken/);
 assert.match(browserHtml,/fetch\("\/api\/ask"/);
 assert.doesNotMatch(browserHtml,/sk_test_[a-z0-9]{10,}/i,"never embed a QA secret");
