@@ -290,19 +290,6 @@ function SendBox({
           }
           rows={1}
           disabled={loading || disabled}
-          onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-
-              if (value.trim() && !loading && !disabled) {
-                onSubmit();
-              }
-            }
-          }}
         />
 
         <button
