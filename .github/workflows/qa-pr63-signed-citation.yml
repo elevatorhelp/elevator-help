@@ -105,11 +105,20 @@ jobs:
         run: |
           set -euo pipefail
           base="https://elevator-help-pr63-citation-qa.baharmand.workers.dev"
-          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/qa-citation-test")" = "200"
-          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/api/health/gemini")" = "200"
           question='{"question":"Was fordert DIN EN 81-20:2014 Abschnitt 5.4.7.4 zur Umwehrung auf dem Fahrkorbdach?"}'
-          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data "$question" "$base/api/ask")" = "401"
-          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer invalid.qa.session' --data "$question" "$base/api/ask")" = "401"
-          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/api/drive-ingest-batch")" = "404"
-          echo "PASS: QA_CITATION_WORKER_READY_NO_PRODUCTION_WRITES_NO_MODEL_CALLS"
-          echo "::notice::Browser signed-in positive answer is a SEPARATE gate and still requires the approved owner test account."
+          for attempt in $(seq 1 12); do
+            page=$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/qa-citation-test") || page=000
+            health=$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/api/health/gemini") || health=000
+            missing=$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data "$question" "$base/api/ask") || missing=000
+            invalid=$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer invalid.qa.session' --data "$question" "$base/api/ask") || invalid=000
+            ingest=$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/api/drive-ingest-batch") || ingest=000
+            echo "QA smoke attempt $attempt: page=$page health=$health missing=$missing invalid=$invalid ingest=$ingest"
+            if [[ "$page" == 200 && "$health" == 200 && "$missing" == 401 && "$invalid" == 401 && "$ingest" == 404 ]]; then
+              echo "PASS: QA_CITATION_WORKER_READY_NO_PRODUCTION_WRITES_NO_MODEL_CALLS"
+              echo "::notice::Signed-in browser answer still requires test-user action."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::QA_CITATION_POST_DEPLOY_SMOKE_FAILED"
+          exit 1
