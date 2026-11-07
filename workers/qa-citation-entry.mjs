@@ -2,6 +2,7 @@
 // No ingestion routes, public chat, or other application surfaces are reachable.
 import app from "../.open-next/worker.js";
 import {verifyToken} from "@clerk/backend";
+import {verifiedClerkClaims} from "./qa-clerk-verified-claims.mjs";
 import {QA_CITATION_HTML,QA_CITATION_PATH} from "./qa-citation-browser-page.mjs";
 
 const QUESTION="Was fordert DIN EN 81-20:2014 Abschnitt 5.4.7.4 zur Umwehrung auf dem Fahrkorbdach?";
@@ -49,8 +50,8 @@ export async function citationQaFetch(request,env,ctx,forward=app,verifyJwt=veri
     const verified=await verifyJwt(token,{
       secretKey:env.CLERK_SECRET_KEY,authorizedParties:[u.origin]
     });
-    if(verified?.errors!=null)return new Response("Invalid session",{status:401});
-    claims=verified?.data;
+    claims=verifiedClerkClaims(verified);
+    if(!claims)return new Response("Invalid verified session",{status:401,headers:{"x-qa-citation-gate":"NO_VERIFIED_CLAIMS"}});
   }catch{return new Response("Invalid session",{status:401});}
   // Keep identity/private JWT values undisclosed. A mismatch of subject and
   // missing session ID are different causes and must never be conflated.
