@@ -1,9 +1,33 @@
 // A separate auth-only QA Worker, never the existing ingestion QA Worker.
 // No D1, Vectorize, AI or Gemini bindings. No nonempty question is accepted.
 import app from "../.open-next/worker.js";
+import {verifyToken} from "@clerk/backend";
 import {QA_CLERK_BROWSER_HTML,QA_CLERK_BROWSER_PATH} from "./qa-clerk-browser-page.mjs";
 
-export async function clerkQaFetch(request,env,ctx,handler=app){
+// QA-only diagnostics: never reveal the token, user ID, azp, claims or SDK messages.
+const QA_ERROR_REASONS=new Set([
+ "token-invalid-authorized-parties","token-invalid-signature","token-invalid-issuer",
+ "token-expired","token-not-active-yet","token-iat-in-the-future",
+ "token-invalid","jwk-failed-to-load","jwk-failed-to-resolve",
+ "jwk-kid-mismatch","remote-jwk-failed-to-load"
+]);
+function safeReason(error){
+ const reason=error?.reason;
+ return typeof reason==="string"&&QA_ERROR_REASONS.has(reason)
+   ?reason.toUpperCase().replaceAll("-","_"):"UNCLASSIFIED";
+}
+async function qaVerifyClassification(token,origin,secretKey,verifyJwt){
+ let result;
+ try{result=await verifyJwt(token,{secretKey,authorizedParties:[origin]});}
+ catch(error){return "SDK_"+safeReason(error);}
+ if(result?.errors?.length)return "SDK_"+safeReason(result.errors[0]);
+ if(!result?.data||typeof result.data.sub!=="string"||
+    !result.data.sub.startsWith("user_")||
+    typeof result.data.sid!=="string"||!result.data.sid.startsWith("sess_"))
+   return "INVALID_VERIFIED_CLAIMS";
+ return "SDK_VERIFIED_APP_REJECTED";
+}
+export async function clerkQaFetch(request,env,ctx,handler=app,verifyJwt=verifyToken){
   const url=new URL(request.url);
   if(url.pathname===QA_CLERK_BROWSER_PATH&&request.method==="GET")
     return new Response(QA_CLERK_BROWSER_HTML,{status:200,headers:{
@@ -36,6 +60,21 @@ export async function clerkQaFetch(request,env,ctx,handler=app){
     Object.keys(body).some(k=>k!=="question")||
     body.question!=="")
     return new Response("Nonempty questions disabled for Clerk QA",{status:403});
-  return handler.fetch(request,env,ctx);
+  const response=await handler.fetch(request,env,ctx);
+  // Only classify the *failed* authenticated QA test, never an unsigned
+  // request. Do not alter the response status or any production source.
+  if(response.status!==401)return response;
+  const auth=request.headers.get("authorization")||"";
+  if(!auth.startsWith("Bearer "))return response;
+  const token=auth.slice(7).trim();
+  if(token.length<40||token.length>8000||
+     !/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(token))
+   return response;
+  const code=await qaVerifyClassification(token,url.origin,env.CLERK_SECRET_KEY,verifyJwt);
+  const headers=new Headers(response.headers);
+  headers.set("x-qa-clerk-verify",code);
+  headers.set("cache-control","no-store");
+  return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+
 }
 export default {fetch:clerkQaFetch};
