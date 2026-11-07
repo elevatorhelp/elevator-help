@@ -8,6 +8,7 @@ type Status = {
   checkedAt: string;
   edgeTraffic: { windowStart: string; windowEnd: string; visits: number | null; countries: Array<{ country: string; visits: number }>; warning: string | null } | null;
   archiveInventory: { indexedEvidenceFiles: number; evidenceChunks: number; note: string } | null;
+  archiveRunMetrics: { supportedFiles: number; pending: { evidence: number; raw: number; map: number }; processed: { evidence: number; raw: number; map: number }; selectedPhase: string; attempted: number | null; failed: number | null; pendingOperations: number; newFiles: null; estimatedRemainingDays: null; warning: string } | null;
   activeQuestionUsers: { dau: number; mau30d: number; questionsToday: number; observationDay: string; definition: string } | null;
   deploy: Run | null; build: Run | null; archive: Run | null;
   pr63: { draft: boolean; state: string; sha: string | null; url: string };
@@ -58,10 +59,14 @@ function AdminConsole() {
       <section aria-label="Archive and traffic"><h2>Archive and audience</h2>
         <div className="adminGrid">
           <Stat label="Files with indexed evidence" value={fmt(data.archiveInventory?.indexedEvidenceFiles)} note="D1 exact-evidence files only; total Drive files not yet connected"/>
-          <Stat label="New or changed files" value="Not available" note="Requires checkpoint snapshot"/>
+          <Stat label="New files since prior snapshot" value={fmt(data.archiveRunMetrics?.newFiles)} note="Needs verified historical Drive scan; phase backlog is not new-file count"/>
           <Stat label="Evidence chunks in D1" value={fmt(data.archiveInventory?.evidenceChunks)} note="Exact-evidence inventory; not equivalent to RAW/Map completion"/>
-          <Stat label="Index progress" value={fmt(data.metrics.archiveProgress)} note="Whole archive Evidence / RAW / Map percentages need Drive checkpoints"/>
-          <Stat label="Remaining work / ETA" value="Not available" note="Requires backlog and recent throughput"/>
+          <Stat label="Supported Drive files" value={fmt(data.archiveRunMetrics?.supportedFiles)} note="From latest completed Drive scan in GitHub Actions"/>
+          <Stat label="Evidence indexed in Drive scope" value={fmt(data.archiveRunMetrics?.processed.evidence)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.evidence)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
+          <Stat label="RAW vectors completed" value={fmt(data.archiveRunMetrics?.processed.raw)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.raw)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
+          <Stat label="Document maps completed" value={fmt(data.archiveRunMetrics?.processed.map)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.map)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
+          <Stat label="Pending phase operations" value={fmt(data.archiveRunMetrics?.pendingOperations)} note="Evidence + RAW + Map; not unique files; may be changed by run processing"/>
+          <Stat label="Remaining time / ETA" value="Not available" note="Needs observed completed phase operations over multiple runs, not file attempts"/>
           <Stat label="All-time site visits" value="Not available" note="Not reconstructable before measurement; never extrapolate"/>
           <Stat label="Visits · last 7 days" value={fmt(data.edgeTraffic?.visits)} note="Cloudflare edge visits, only if analytics connected; not unique people"/>
           <Stat label="Active question users · DAU" value={fmt(data.activeQuestionUsers?.dau)} note="Signed-in users who asked today, Berlin calendar"/>
