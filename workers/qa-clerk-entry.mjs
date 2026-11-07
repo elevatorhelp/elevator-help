@@ -20,11 +20,17 @@ async function qaVerifyClassification(token,origin,secretKey,verifyJwt){
  let result;
  try{result=await verifyJwt(token,{secretKey,authorizedParties:[origin]});}
  catch(error){return "SDK_"+safeReason(error);}
- if(result?.errors?.length)return "SDK_"+safeReason(result.errors[0]);
- if(!result?.data||typeof result.data.sub!=="string"||
-    !result.data.sub.startsWith("user_")||
-    typeof result.data.sid!=="string"||!result.data.sid.startsWith("sess_"))
-   return "INVALID_VERIFIED_CLAIMS";
+ if(result?.errors!=null)
+   return Array.isArray(result.errors)&&result.errors.length
+     ?"SDK_"+safeReason(result.errors[0]):"SDK_ERRORS_PRESENT";
+ const claims=result&&typeof result==="object"
+   ?("data" in result?result.data:result):null;
+ if(!claims||typeof claims!=="object"||Array.isArray(claims))
+   return "NO_VERIFIED_CLAIMS";
+ if(typeof claims.sub!=="string"||!claims.sub.startsWith("user_"))
+   return "INVALID_VERIFIED_SUB";
+ if(typeof claims.sid!=="string"||!claims.sid.startsWith("sess_"))
+   return "INVALID_VERIFIED_SID";
  return "SDK_VERIFIED_APP_REJECTED";
 }
 export async function clerkQaFetch(request,env,ctx,handler=app,verifyJwt=verifyToken){
