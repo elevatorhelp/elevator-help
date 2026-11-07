@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeAdminRequest } from "../../../lib/admin-authorization";
+import { readEdgeTraffic } from "../../../lib/admin-cloudflare-analytics";
 
 export const dynamic = "force-dynamic";
 
@@ -33,9 +34,13 @@ export async function GET(request: Request) {
   if (!auth.ok) return NextResponse.json({ error: auth.status === 503 ? "Admin access is not configured" : "Access denied" }, { status: auth.status, headers });
 
   try {
-    const [runsRaw, prRaw] = await Promise.all([
+    const [runsRaw, prRaw, edgeTraffic] = await Promise.all([
       readJson("https://api.github.com/repos/" + repo + "/actions/runs?per_page=40"),
       readJson("https://api.github.com/repos/" + repo + "/pulls/63"),
+      readEdgeTraffic({
+        zoneId: process.env.CLOUDFLARE_ZONE_ID,
+        token: process.env.CLOUDFLARE_ANALYTICS_TOKEN,
+      }),
     ]);
     const list = runsRaw && typeof runsRaw === "object" && Array.isArray((runsRaw as {workflow_runs?:unknown[]}).workflow_runs)
       ? (runsRaw as {workflow_runs:unknown[]}).workflow_runs : [];
@@ -52,6 +57,7 @@ export async function GET(request: Request) {
         sha: typeof head.sha === "string" ? head.sha.slice(0,12) : null,
         url: "https://github.com/elevatorhelp/elevator-help/pull/63" },
       recentRuns: runs.slice(0, 12),
+      edgeTraffic,
       agents: { worker: "not_connected", supervisor: "not_connected", manager: "not_connected" },
       metrics: { users: null, requests: null, latencyP95: null, geminiCost: null, archiveProgress: null },
       sources: { github: "GitHub Actions REST API", agents: "not connected", usage: "not instrumented" },
