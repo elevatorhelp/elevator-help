@@ -52,24 +52,33 @@ export async function GET(request: Request) {
       archiveInventory = null;
       activeQuestionUsers = null;
     }
-    const [runsRaw, prRaw, edgeTraffic] = await Promise.all([
+    const [runsRaw, prRaw, edgeTraffic, archiveRunsRaw] = await Promise.all([
       readJson("https://api.github.com/repos/" + repo + "/actions/runs?per_page=40"),
       readJson("https://api.github.com/repos/" + repo + "/pulls/63"),
       readEdgeTraffic({
         zoneId: process.env.CLOUDFLARE_ZONE_ID,
         token: process.env.CLOUDFLARE_ANALYTICS_TOKEN,
       }),
+      // Dedicated workflow endpoint: numerous unrelated CI runs must not hide archive sync.
+      readJson("https://api.github.com/repos/" + repo + "/actions/workflows/drive-ingestion.yml/runs?per_page=10").catch(() => null),
     ]);
     const list = runsRaw && typeof runsRaw === "object" && Array.isArray((runsRaw as {workflow_runs?:unknown[]}).workflow_runs)
       ? (runsRaw as {workflow_runs:unknown[]}).workflow_runs : [];
     const runs = list.map(safeRun).filter((r): r is NonNullable<typeof r> => r !== null);
     const pr = prRaw && typeof prRaw === "object" ? prRaw as Record<string, unknown> : {};
     const head = pr.head && typeof pr.head === "object" ? pr.head as Record<string, unknown> : {};
-    const archive = runs.find(r => r.name.startsWith("Live Archive sync")) || null;
-    // Read only public/authorized GitHub aggregated job logs, after server-side admin auth.
-    // This may be N/A if GitHub log retention or Actions API access is unavailable.
-    const archiveRunMetrics = archive && archive.conclusion === "success"
-      ? await readArchiveRunMetrics(archive.id, { token: process.env.GITHUB_ACTIONS_READ_TOKEN })
+    const archiveRuns = archiveRunsRaw && typeof archiveRunsRaw === "object" &&
+      Array.isArray((archiveRunsRaw as { workflow_runs?: unknown[] }).workflow_runs)
+        ? (archiveRunsRaw as { workflow_runs: unknown[] }).workflow_runs
+            .map(safeRun).filter((r): r is NonNullable<typeof r> => r !== null)
+        : [];
+    const archive = archiveRuns[0] || runs.find(r => r.name.startsWith("Live Archive sync")) || null;
+    // Show the last run status, but select the latest SUCCESSFUL run for snapshot metrics.
+    // A failed/new run must not erase the last verified published snapshot.
+    const lastSuccessfulArchive = archiveRuns.find(r => r.conclusion === "success") ||
+      runs.find(r => r.name.startsWith("Live Archive sync") && r.conclusion === "success") || null;
+    const archiveRunMetrics = lastSuccessfulArchive
+      ? await readArchiveRunMetrics(lastSuccessfulArchive.id, { token: process.env.GITHUB_ACTIONS_READ_TOKEN })
       : null;
     const deploy = runs.find(r => r.name === "Deploy production") || null;
     const build = runs.find(r => r.name === "Build Check") || null;
