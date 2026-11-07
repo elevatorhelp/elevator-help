@@ -100,6 +100,17 @@ const diagnosed=await clerkQaFetch(authRequest,env,{},failingApp,goodVerify);
 assert.equal(diagnosed.status,401);
 assert.equal(diagnosed.headers.get("x-qa-clerk-verify"),"SDK_VERIFIED_APP_REJECTED");
 assert.equal(diagCalls,1);
+const directSdkClaims=await clerkQaFetch(authRequest,env,{},failingApp,
+ async()=>({sub:"user_test123456789",sid:"sess_test123456789"}));
+assert.equal(directSdkClaims.status,401);
+assert.equal(directSdkClaims.headers.get("x-qa-clerk-verify"),"SDK_VERIFIED_APP_REJECTED");
+const badSid=await clerkQaFetch(authRequest,env,{},failingApp,
+ async()=>({sub:"user_test123456789"}));
+assert.equal(badSid.headers.get("x-qa-clerk-verify"),"INVALID_VERIFIED_SID");
+const sdkErrorsWithData=await clerkQaFetch(authRequest,env,{},failingApp,
+ async()=>({data:{sub:"user_test123456789",sid:"sess_test123456789"},errors:[{reason:"token-invalid"}]}));
+assert.equal(sdkErrorsWithData.headers.get("x-qa-clerk-verify"),"SDK_TOKEN_INVALID");
+
 const badOrigin=await clerkQaFetch(authRequest,env,{},failingApp,async()=>{throw Object.assign(new Error("private user and jwt"),{reason:"token-invalid-authorized-parties"});});
 assert.equal(badOrigin.status,401);
 assert.equal(badOrigin.headers.get("x-qa-clerk-verify"),"SDK_TOKEN_INVALID_AUTHORIZED_PARTIES");
