@@ -51,8 +51,15 @@ try {
     userId: "user_ABC12345678",
   });
   assert.equal(verificationCalls, 1);
+  const directVerifier = (async () => ({
+    sub: "user_ABC12345678", sid: "sess_ABC12345678",
+  })) as unknown as typeof import("@clerk/backend").verifyToken;
+  assert.deepEqual(await authorizeChatRequest(bearerRequest, directVerifier), {
+    ok: true, userId: "user_ABC12345678",
+  });
   for (const invalidClaims of [
-    { sub: "user_ABC12345678", sid: "sess_ABC12345678" },
+    { sub: "user_ABC12345678", sid: "sess_ABC12345678", errors: [{ reason: "token-invalid" }] },
+    { data: { sub: "user_ABC12345678", sid: "sess_ABC12345678" }, errors: [{ reason: "token-invalid" }] },
     { errors: [{ code: "token_invalid" }] },
     { data: { sub: "user_ABC12345678" } },
     { data: { sid: "sess_ABC12345678" } },
