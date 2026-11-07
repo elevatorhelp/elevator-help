@@ -54,6 +54,9 @@ jobs:
       - name: Test admin active question-users metrics
         run: node --experimental-strip-types scripts/test-admin-active-users.ts
 
+      - name: Test archive Drive scan metrics from Actions logs
+        run: node --experimental-strip-types scripts/test-admin-archive-run-metrics.ts
+
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
