@@ -45,7 +45,7 @@ export async function GET(request: Request) {
       const db = (env as unknown as { CORTEX_DB?: Parameters<typeof readPublishedEvidenceInventory>[0] }).CORTEX_DB;
       if (db) [archiveInventory, activeQuestionUsers] = await Promise.all([
         readPublishedEvidenceInventory(db),
-        readActiveQuestionUsers(db as Parameters<typeof readActiveQuestionUsers>[0]),
+        readActiveQuestionUsers(db as unknown as Parameters<typeof readActiveQuestionUsers>[0]),
       ]);
     } catch {
       archiveInventory = null;
