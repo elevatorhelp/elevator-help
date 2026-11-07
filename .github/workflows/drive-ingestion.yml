@@ -121,9 +121,8 @@ jobs:
           # Conservative one-document step-up: 2 -> 3 files/run, not parallel workers.
           # Fail closed for invalid manual limits; Gemini stays hard-capped at 60.
           MAX_FILES: ${{ inputs.max_files || '3' }}
-          # Raise only the bounded Gemini call budget (30 -> 60), not D1 file throughput.
-          # scripts/drive-ingest.mjs rejects any value above 60; raw/map resume via checkpoints.
-          # Rollback: set this back to 30. No additional subscription or API purchase.
+          # Existing Gemini ceiling stays 60; scripts/drive-ingest.mjs rejects higher values.
+          # Per-document raw/map checkpoints are preserved. Rollback throughput: MAX_FILES back to 2.
           MAX_GEMINI_CALLS: "60"
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
