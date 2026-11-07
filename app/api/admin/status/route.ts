@@ -3,6 +3,7 @@ import { authorizeAdminRequest } from "../../../lib/admin-authorization";
 import { readEdgeTraffic } from "../../../lib/admin-cloudflare-analytics";
 import { readPublishedEvidenceInventory } from "../../../lib/admin-archive-inventory";
 import { readActiveQuestionUsers } from "../../../lib/admin-active-question-users";
+import { readArchiveRunMetrics } from "../../../lib/admin-archive-run-metrics";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 export const dynamic = "force-dynamic";
@@ -65,6 +66,11 @@ export async function GET(request: Request) {
     const pr = prRaw && typeof prRaw === "object" ? prRaw as Record<string, unknown> : {};
     const head = pr.head && typeof pr.head === "object" ? pr.head as Record<string, unknown> : {};
     const archive = runs.find(r => r.name.startsWith("Live Archive sync")) || null;
+    // Read only public/authorized GitHub aggregated job logs, after server-side admin auth.
+    // This may be N/A if GitHub log retention or Actions API access is unavailable.
+    const archiveRunMetrics = archive && archive.conclusion === "success"
+      ? await readArchiveRunMetrics(archive.id, { token: process.env.GITHUB_ACTIONS_READ_TOKEN })
+      : null;
     const deploy = runs.find(r => r.name === "Deploy production") || null;
     const build = runs.find(r => r.name === "Build Check") || null;
     return NextResponse.json({
@@ -76,6 +82,7 @@ export async function GET(request: Request) {
       recentRuns: runs.slice(0, 12),
       edgeTraffic,
       archiveInventory,
+      archiveRunMetrics,
       activeQuestionUsers,
       agents: { worker: "not_connected", supervisor: "not_connected", manager: "not_connected" },
       metrics: { users: null, requests: null, latencyP95: null, geminiCost: null, archiveProgress: null },
