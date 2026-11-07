@@ -47,7 +47,12 @@ try {
   payload = {data:{sub:"user_synthetic",sid:"not_a_session"},errors:undefined};
   assert.equal((await authorizeChatRequest(request("Bearer forged-session"))).status, 401);
   payload = {sub:"user_synthetic",sid:"sess_synthetic"};
-  assert.equal((await authorizeChatRequest(request("Bearer unexpected-direct-claims"))).status, 401);
+  assert.deepEqual(await authorizeChatRequest(request("Bearer sdk-direct-verified-claims")),
+    {ok:true,userId:"user_synthetic"});
+  payload = {data:{sub:"user_synthetic",sid:"sess_synthetic"},errors:[{reason:"token-invalid"}]};
+  assert.equal((await authorizeChatRequest(request("Bearer wrapped-claims-with-errors"))).status,401);
+  payload = {sub:"user_synthetic",sid:"sess_synthetic",errors:[{reason:"token-invalid"}]};
+  assert.equal((await authorizeChatRequest(request("Bearer direct-claims-with-errors"))).status,401);
   payload = {errors:[{message:"sensitive internal invalid token"}]};
   assert.equal((await authorizeChatRequest(request("Bearer invalid-signature"))).status, 401);
   payload = {};
@@ -80,7 +85,7 @@ try {
   const client = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(client, /getAuthToken=\{getToken\}/);
   assert.match(client, /Authorization: `Bearer \$\{authToken\}`/);
-  console.log("PASS: real auth function unwraps pinned Clerk verified JWT data and rejects errors, direct-claims responses and missing/invalid sessions; Clerk SDK mocked");
+  console.log("PASS: real auth function accepts SDK-verified wrapped or direct claims and rejects error-bearing and malformed sessions; SDK mocked");
 } finally {
   hooks.deregister();
   delete globalThis.__offlineClerkVerify;
