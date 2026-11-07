@@ -68,7 +68,7 @@ export async function clerkQaFetch(request,env,ctx,handler=app,verifyJwt=verifyT
   if(!auth.startsWith("Bearer "))return response;
   const token=auth.slice(7).trim();
   if(token.length<40||token.length>8000||
-     !/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(token))
+     !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token))
    return response;
   const code=await qaVerifyClassification(token,url.origin,env.CLERK_SECRET_KEY,verifyJwt);
   const headers=new Headers(response.headers);
