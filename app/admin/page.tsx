@@ -18,6 +18,7 @@ type Status = {
   sources: { github: string; agents: string; usage: string };
 };
 const fmt = (n: number | null | undefined) => n == null ? "Not available" : new Intl.NumberFormat("en-US").format(n);
+const fraction = (done: number | undefined, total: number | undefined) => done == null || total == null || total < 1 || done < 0 || done > total ? "Not available" : `${fmt(done)} / ${fmt(total)} (${(100 * done / total).toFixed(1)}%)`;
 const runStatus = (r: Run | null) => !r ? "Not available" : (r.conclusion || r.status).toUpperCase();
 const githubUrl = (url: string | null) => url && /^https:\/\/github\.com\/elevatorhelp\/elevator-help\//.test(url) ? url : null;
 
@@ -62,9 +63,9 @@ function AdminConsole() {
           <Stat label="New files since prior snapshot" value={fmt(data.archiveRunMetrics?.newFiles)} note="Needs verified historical Drive scan; phase backlog is not new-file count"/>
           <Stat label="Evidence chunks in D1" value={fmt(data.archiveInventory?.evidenceChunks)} note="Exact-evidence inventory; not equivalent to RAW/Map completion"/>
           <Stat label="Supported Drive files" value={fmt(data.archiveRunMetrics?.supportedFiles)} note="From latest completed Drive scan in GitHub Actions"/>
-          <Stat label="Evidence indexed in Drive scope" value={fmt(data.archiveRunMetrics?.processed.evidence)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.evidence)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
-          <Stat label="RAW vectors completed" value={fmt(data.archiveRunMetrics?.processed.raw)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.raw)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
-          <Stat label="Document maps completed" value={fmt(data.archiveRunMetrics?.processed.map)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.map)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
+          <Stat label="Evidence indexed in Drive scope" value={fraction(data.archiveRunMetrics?.processed.evidence, data.archiveRunMetrics?.supportedFiles)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.evidence)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
+          <Stat label="RAW vectors completed" value={fraction(data.archiveRunMetrics?.processed.raw, data.archiveRunMetrics?.supportedFiles)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.raw)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
+          <Stat label="Document maps completed" value={fraction(data.archiveRunMetrics?.processed.map, data.archiveRunMetrics?.supportedFiles)} note={data.archiveRunMetrics ? `${fmt(data.archiveRunMetrics.pending.map)} still pending · start-of-run snapshot` : "Snapshot not available"}/>
           <Stat label="Pending phase operations" value={fmt(data.archiveRunMetrics?.pendingOperations)} note="Evidence + RAW + Map; not unique files; may be changed by run processing"/>
           <Stat label="Remaining time / ETA" value="Not available" note="Needs observed completed phase operations over multiple runs, not file attempts"/>
           <Stat label="All-time site visits" value="Not available" note="Not reconstructable before measurement; never extrapolate"/>
