@@ -118,15 +118,22 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
           DRIVE_FOLDER_ID: ${{ inputs.folder_id || '1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5' }}
-          # Free D1 tier: bound scheduled writes; manual runs can override.
-          MAX_FILES: ${{ inputs.max_files || '2' }}
-          # Raise only the bounded Gemini call budget (30 -> 60), not D1 file throughput.
-          # scripts/drive-ingest.mjs rejects any value above 60; raw/map resume via checkpoints.
-          # Rollback: set this back to 30. No additional subscription or API purchase.
+          # Conservative one-document step-up: 2 -> 3 files/run, not parallel workers.
+          # Fail closed for invalid manual limits; Gemini stays hard-capped at 60.
+          MAX_FILES: ${{ inputs.max_files || '3' }}
+          # Existing Gemini ceiling stays 60; scripts/drive-ingest.mjs rejects higher values.
+          # Per-document raw/map checkpoints are preserved. Rollback throughput: MAX_FILES back to 2.
           MAX_GEMINI_CALLS: "60"
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
-        run: node scripts/drive-ingest.mjs
+        run: |
+          set -euo pipefail
+          if ! [[ "$MAX_FILES" =~ ^[123]$ ]]; then
+            echo "::error::INGESTION_FILE_LIMIT_OUT_OF_BOUNDS (allowed 1..3)"
+            exit 1
+          fi
+          echo "Bounded archive sync: MAX_FILES=$MAX_FILES; MAX_GEMINI_CALLS=$MAX_GEMINI_CALLS"
+          node scripts/drive-ingest.mjs
 
       - name: Save ingestion state
         if: always()
