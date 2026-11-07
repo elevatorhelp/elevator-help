@@ -79,6 +79,42 @@ assert.match(browserHtml,/fetch\("\/api\/ask"/);
 assert.doesNotMatch(browserHtml,/sk_test_[a-z0-9]{10,}/i,"never embed a QA secret");
 assert.doesNotMatch(browserHtml,/elevator\.help\/api\/ask/,"never call Production");
 assert.equal(called,1,"browser page must not invoke OpenNext app");
+
+// The auth-only Worker must not treat a failed real-app 401 as authenticated.
+// It may add only a fixed QA diagnostic header, never token/claims/SDK text.
+const syntheticJwt="a".repeat(60)+"."+"b".repeat(60)+"."+"c".repeat(60);
+const authRequest=new Request(QA_CLERK_ORIGIN+"/api/ask",{
+ method:"POST",headers:{"content-type":"application/json",authorization:"Bearer "+syntheticJwt},
+ body:JSON.stringify({question:""})
+});
+let diagCalls=0;
+const failingApp={fetch:async()=>new Response(null,{status:401})};
+const goodVerify=async(token,options)=>{
+ diagCalls++;
+ assert.equal(token,syntheticJwt);
+ assert.deepEqual(options.authorizedParties,[QA_CLERK_ORIGIN]);
+ assert.equal(options.secretKey,env.CLERK_SECRET_KEY);
+ return {data:{sub:"user_test123456789",sid:"sess_test123456789"}};
+};
+const diagnosed=await clerkQaFetch(authRequest,env,{},failingApp,goodVerify);
+assert.equal(diagnosed.status,401);
+assert.equal(diagnosed.headers.get("x-qa-clerk-verify"),"SDK_VERIFIED_APP_REJECTED");
+assert.equal(diagCalls,1);
+const badOrigin=await clerkQaFetch(authRequest,env,{},failingApp,async()=>{throw Object.assign(new Error("private user and jwt"),{reason:"token-invalid-authorized-parties"});});
+assert.equal(badOrigin.status,401);
+assert.equal(badOrigin.headers.get("x-qa-clerk-verify"),"SDK_TOKEN_INVALID_AUTHORIZED_PARTIES");
+const unknownError=await clerkQaFetch(authRequest,env,{},failingApp,async()=>{throw new Error("private secret must not escape");});
+assert.equal(unknownError.headers.get("x-qa-clerk-verify"),"SDK_UNCLASSIFIED");
+const accepted=await clerkQaFetch(authRequest,env,{},{
+ fetch:async()=>new Response(null,{status:400})
+},async()=>{throw Error("must not diagnose accepted requests");});
+assert.equal(accepted.status,400);
+assert.equal(accepted.headers.get("x-qa-clerk-verify"),null);
+const unsigned401=await clerkQaFetch(request("/api/ask",{question:""}),env,{},failingApp,async()=>{throw Error("do not inspect missing bearer");});
+assert.equal(unsigned401.status,401);
+assert.equal(unsigned401.headers.get("x-qa-clerk-verify"),null);
+assert.equal(called,1,"diagnosis must not invoke the page mock");
+
 assert.equal((await clerkQaFetch(new Request(QA_CLERK_ORIGIN+"/qa-clerk-test",{method:"POST"}),env,{},handler)).status,404);
 assert.equal((await clerkQaFetch(new Request(QA_CLERK_ORIGIN+"/api/health"),env,{},handler)).status,404);
 assert.equal((await clerkQaFetch(new Request(QA_CLERK_ORIGIN+"/api/ask"),env,{},handler)).status,404);
