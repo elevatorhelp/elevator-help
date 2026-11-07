@@ -36,16 +36,19 @@ export async function authorizeChatRequest(
       secretKey,
       authorizedParties: [origin],
     });
-    // Pinned Clerk SDK verifyToken returns JwtReturnType:
-    // only verifiedResult.data is trusted; errors must be absent.
+    // Different Clerk SDK verification interfaces expose either a successful
+    // JwtReturnType {data, errors} or the verified JwtPayload directly.
+    // Both originate ONLY from verifyToken (signature, expiry, azp checked).
+    // Never trust a decoded/unverified payload or silently ignore errors.
     if (!verifiedResult || typeof verifiedResult !== "object" || Array.isArray(verifiedResult))
       throw new Error("invalid_verification_result");
-    const verification = verifiedResult as { data?: unknown; errors?: unknown };
-    if (verification.errors !== undefined && verification.errors !== null)
+    const result = verifiedResult as Record<string, unknown>;
+    if (result.errors !== undefined && result.errors !== null)
       throw new Error("token_not_verified");
-    if (!verification.data || typeof verification.data !== "object" || Array.isArray(verification.data))
+    const candidate = "data" in result ? result.data : result;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
       throw new Error("invalid_verified_claims");
-    const claims = verification.data as Record<string, unknown>;
+    const claims = candidate as Record<string, unknown>;
     if (
       typeof claims.sub !== "string" ||
       !claims.sub.startsWith("user_") ||
