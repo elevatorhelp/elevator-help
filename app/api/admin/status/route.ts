@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authorizeAdminRequest } from "../../../lib/admin-authorization";
 import { readEdgeTraffic } from "../../../lib/admin-cloudflare-analytics";
 import { readPublishedEvidenceInventory } from "../../../lib/admin-archive-inventory";
+import { readActiveQuestionUsers } from "../../../lib/admin-active-question-users";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 export const dynamic = "force-dynamic";
@@ -38,11 +39,17 @@ export async function GET(request: Request) {
   try {
     // Optional read-only D1 summary. If Worker context/binding is absent, report N/A.
     let archiveInventory = null;
+    let activeQuestionUsers = null;
     try {
       const { env } = getCloudflareContext();
-      archiveInventory = await readPublishedEvidenceInventory((env as unknown as { CORTEX_DB?: Parameters<typeof readPublishedEvidenceInventory>[0] }).CORTEX_DB);
+      const db = (env as unknown as { CORTEX_DB?: Parameters<typeof readPublishedEvidenceInventory>[0] }).CORTEX_DB;
+      if (db) [archiveInventory, activeQuestionUsers] = await Promise.all([
+        readPublishedEvidenceInventory(db),
+        readActiveQuestionUsers(db as Parameters<typeof readActiveQuestionUsers>[0]),
+      ]);
     } catch {
       archiveInventory = null;
+      activeQuestionUsers = null;
     }
     const [runsRaw, prRaw, edgeTraffic] = await Promise.all([
       readJson("https://api.github.com/repos/" + repo + "/actions/runs?per_page=40"),
@@ -69,6 +76,7 @@ export async function GET(request: Request) {
       recentRuns: runs.slice(0, 12),
       edgeTraffic,
       archiveInventory,
+      activeQuestionUsers,
       agents: { worker: "not_connected", supervisor: "not_connected", manager: "not_connected" },
       metrics: { users: null, requests: null, latencyP95: null, geminiCost: null, archiveProgress: null },
       sources: { github: "GitHub Actions REST API", agents: "not connected", usage: "not instrumented" },
