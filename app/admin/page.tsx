@@ -7,6 +7,7 @@ type Run = { id: number; name: string; status: string; conclusion: string | null
 type Status = {
   checkedAt: string;
   edgeTraffic: { windowStart: string; windowEnd: string; visits: number | null; countries: Array<{ country: string; visits: number }>; warning: string | null } | null;
+  archiveInventory: { indexedEvidenceFiles: number; evidenceChunks: number; note: string } | null;
   deploy: Run | null; build: Run | null; archive: Run | null;
   pr63: { draft: boolean; state: string; sha: string | null; url: string };
   recentRuns: Run[];
@@ -55,9 +56,10 @@ function AdminConsole() {
       <div className="adminMeta">Last checked: {new Date(data.checkedAt).toLocaleString("de-DE")} · Live GitHub data; usage analytics not yet connected</div>
       <section aria-label="Archive and traffic"><h2>Archive and audience</h2>
         <div className="adminGrid">
-          <Stat label="Files in archive" value="Not available" note="Drive discovery source required"/>
+          <Stat label="Files with indexed evidence" value={fmt(data.archiveInventory?.indexedEvidenceFiles)} note="D1 exact-evidence files only; total Drive files not yet connected"/>
           <Stat label="New or changed files" value="Not available" note="Requires checkpoint snapshot"/>
-          <Stat label="Index progress" value={fmt(data.metrics.archiveProgress)} note="Evidence / RAW / Map must be measured separately"/>
+          <Stat label="Evidence chunks in D1" value={fmt(data.archiveInventory?.evidenceChunks)} note="Exact-evidence inventory; not equivalent to RAW/Map completion"/>
+          <Stat label="Index progress" value={fmt(data.metrics.archiveProgress)} note="Whole archive Evidence / RAW / Map percentages need Drive checkpoints"/>
           <Stat label="Remaining work / ETA" value="Not available" note="Requires backlog and recent throughput"/>
           <Stat label="All-time site visits" value="Not available" note="Not reconstructable before measurement; never extrapolate"/>
           <Stat label="Visits · last 7 days" value={fmt(data.edgeTraffic?.visits)} note="Cloudflare edge visits, only if analytics connected; not unique people"/>
