@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { authorizeAdminRequest } from "../../../lib/admin-authorization";
 import { readEdgeTraffic } from "../../../lib/admin-cloudflare-analytics";
+import { readPublishedEvidenceInventory } from "../../../lib/admin-archive-inventory";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +36,14 @@ export async function GET(request: Request) {
   if (!auth.ok) return NextResponse.json({ error: auth.status === 503 ? "Admin access is not configured" : "Access denied" }, { status: auth.status, headers });
 
   try {
+    // Optional read-only D1 summary. If Worker context/binding is absent, report N/A.
+    let archiveInventory = null;
+    try {
+      const { env } = getCloudflareContext();
+      archiveInventory = await readPublishedEvidenceInventory((env as unknown as { CORTEX_DB?: Parameters<typeof readPublishedEvidenceInventory>[0] }).CORTEX_DB);
+    } catch {
+      archiveInventory = null;
+    }
     const [runsRaw, prRaw, edgeTraffic] = await Promise.all([
       readJson("https://api.github.com/repos/" + repo + "/actions/runs?per_page=40"),
       readJson("https://api.github.com/repos/" + repo + "/pulls/63"),
@@ -58,6 +68,7 @@ export async function GET(request: Request) {
         url: "https://github.com/elevatorhelp/elevator-help/pull/63" },
       recentRuns: runs.slice(0, 12),
       edgeTraffic,
+      archiveInventory,
       agents: { worker: "not_connected", supervisor: "not_connected", manager: "not_connected" },
       metrics: { users: null, requests: null, latencyP95: null, geminiCost: null, archiveProgress: null },
       sources: { github: "GitHub Actions REST API", agents: "not connected", usage: "not instrumented" },
