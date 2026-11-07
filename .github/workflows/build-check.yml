@@ -51,6 +51,9 @@ jobs:
       - name: Test read-only archive evidence inventory
         run: node --experimental-strip-types scripts/test-admin-archive-inventory.ts
 
+      - name: Test admin active question-users metrics
+        run: node --experimental-strip-types scripts/test-admin-active-users.ts
+
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
