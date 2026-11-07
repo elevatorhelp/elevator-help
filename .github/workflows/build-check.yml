@@ -42,6 +42,9 @@ jobs:
       - name: Test authenticated chat gate
         run: npm run test:request-auth
 
+      - name: Test admin-only monitoring access
+        run: node --experimental-strip-types scripts/test-admin-authorization.ts
+
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
