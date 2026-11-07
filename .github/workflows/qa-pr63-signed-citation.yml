@@ -27,6 +27,7 @@ jobs:
       - name: Require ancestor is approved current draft PR63 head
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_PR63_SHA: aea87c767156f976d071e90540c55e60ddf46068
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
@@ -36,7 +37,13 @@ jobs:
             "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/63" \
             | node -e 'let s="";process.stdin.on("data",x=>s+=x).on("end",()=>{const p=JSON.parse(s);if(p.state!=="open"||p.draft!==true||p.head?.ref!=="integration/pr61-reconciled-20261024")process.exit(1);process.stdout.write(p.head.sha)})')
           test "$current_sha" = "aea87c767156f976d071e90540c55e60ddf46068"
-          git merge-base --is-ancestor "$current_sha" HEAD
+          # actions/checkout is shallow; check ancestry using authenticated
+          # GitHub compare API rather than assuming parent commits are local.
+          curl --fail --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/compare/${current_sha}...${GITHUB_SHA}" \
+            | node -e 'let s="";process.stdin.on("data",x=>s+=x).on("end",()=>{const c=JSON.parse(s);if(!["ahead","identical"].includes(c.status)||c.behind_by!==0||c.merge_base_commit?.sha!==process.env.EXPECTED_PR63_SHA)process.exit(1);console.log("PASS: QA candidate descends from current PR63 HEAD")})'
       - name: Guard exact QA-only D1, Vectorize and cost constraints
         run: |
           node scripts/test-qa-citation-config.mjs
