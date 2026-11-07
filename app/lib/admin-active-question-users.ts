@@ -1,4 +1,4 @@
-import { berlinCalendarDay } from "./daily-question-quota";
+import { berlinCalendarDay } from "./daily-question-quota.ts";
 
 export type ActiveQuestionUsers = {
   dau: number;
