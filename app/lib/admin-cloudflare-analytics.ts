@@ -58,7 +58,7 @@ export function normalizeEdgeTraffic(raw: unknown, start: string, end: string): 
       if (typeof name !== "string" || !/^[A-Za-z][A-Za-z .'-]{1,55}$/.test(name) || visits === null) return null;
       return { country: name, visits };
     }).filter((x): x is { country: string; visits: number } => x !== null),
-    warning: "Visits are Cloudflare-defined; they are not unique visitors. Historical traffic outside the available window is excluded.",
+    warning: "Cloudflare-defined visits, not unique visitors. Only the 20 highest-ranked country groups are requested; country breakdown can omit other countries and must not be summed as a global total. History outside this 7-day window is excluded.",
   };
 }
 export async function readEdgeTraffic(options: {
