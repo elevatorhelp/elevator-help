@@ -38,7 +38,7 @@ export async function citationQaFetch(request,env,ctx,forward=app,verifyJwt=veri
   }catch{return new Response("Invalid QA request",{status:400});}
   if(!body||typeof body!=="object"||Array.isArray(body)||
      Object.keys(body).length!==1||body.question!==QUESTION)
-    return new Response("Only one approved QA question is allowed",{status:403});
+    return new Response("Only one approved QA question is allowed",{status:403,headers:{"x-qa-citation-gate":"QUESTION_NOT_APPROVED"}});
   // The real app re-verifies this JWT independently. The wrapper additionally
   // restricts access to ONE owner-approved Clerk test user.
   const header=request.headers.get("authorization")||"";
@@ -54,7 +54,13 @@ export async function citationQaFetch(request,env,ctx,forward=app,verifyJwt=veri
   }catch{return new Response("Invalid session",{status:401});}
   if(claims?.sub!==env.CLERK_QA_TEST_USER_ID||
      typeof claims.sid!=="string"||!claims.sid.startsWith("sess_"))
-    return new Response("Not authorized for QA",{status:403});
-  return forward.fetch(request,env,ctx);
+    return new Response("Not authorized for QA",{status:403,headers:{"x-qa-citation-gate":"TEST_USER_MISMATCH"}});
+  const answer=await forward.fetch(request,env,ctx);
+  if(answer.status!==403)return answer;
+  // Never leak response bodies, identity, or any token to a browser diagnostic.
+  const headers=new Headers(answer.headers);
+  headers.set("x-qa-citation-gate","APP_FORBIDDEN");
+  headers.set("cache-control","no-store");
+  return new Response(answer.body,{status:answer.status,statusText:answer.statusText,headers});
 }
 export default {fetch:citationQaFetch};
