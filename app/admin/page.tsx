@@ -27,7 +27,7 @@ function RunCard({ title, run }: { title: string; run: Run | null }) {
     {githubUrl(run?.url || null) && <a className="adminLink" href={run!.url!} rel="noreferrer" target="_blank">Open verified GitHub run ↗</a>}
   </article>;
 }
-export default function AdminPage() {
+function AdminConsole() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [data, setData] = useState<Status | null>(null);
   const [error, setError] = useState("");
@@ -99,4 +99,16 @@ export default function AdminPage() {
       @media(max-width:550px){.adminGrid,.adminGrid3{grid-template-columns:1fr}.adminHeader{align-items:start;flex-direction:column}.adminRuns li{align-items:start;flex-direction:column}}
     `}</style>
   </main>;
+}
+
+export default function AdminPage() {
+  // RootLayout only installs ClerkProvider if a publishable key exists.
+  // Never invoke useAuth during static prerender of an unconfigured environment.
+  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    return <main className="adminShell" style={{ padding: 40, maxWidth: 800, margin: "0 auto" }}>
+      <h1>Admin dashboard unavailable</h1>
+      <p>Administrator sign-in is not configured in this environment.</p>
+    </main>;
+  }
+  return <AdminConsole />;
 }
