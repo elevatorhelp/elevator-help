@@ -12,6 +12,9 @@ const result = normalizeEdgeTraffic(sample, start, end);
 assert.equal(result.visits, 120);
 assert.deepEqual(result.countries, [{ country: "Germany", visits: 62 }, { country: "France", visits: 32 }]);
 assert.equal(result.source, "cloudflare_http_requests_adaptive");
+assert.match(result.warning ?? "", /20 highest-ranked country groups/);
+assert.match(result.warning ?? "", /7-day window/);
+assert.match(result.warning ?? "", /not unique visitors/);
 let calls = 0;
 const fetchImpl = (async (_url: string, init: RequestInit) => {
   calls++;
