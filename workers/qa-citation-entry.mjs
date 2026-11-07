@@ -52,9 +52,16 @@ export async function citationQaFetch(request,env,ctx,forward=app,verifyJwt=veri
     if(verified?.errors!=null)return new Response("Invalid session",{status:401});
     claims=verified?.data;
   }catch{return new Response("Invalid session",{status:401});}
-  if(claims?.sub!==env.CLERK_QA_TEST_USER_ID||
-     typeof claims.sid!=="string"||!claims.sid.startsWith("sess_"))
+  // Keep identity/private JWT values undisclosed. A mismatch of subject and
+  // missing session ID are different causes and must never be conflated.
+  if(!claims||typeof claims!=="object"||Array.isArray(claims))
+    return new Response("Invalid verified session",{status:401,headers:{"x-qa-citation-gate":"NO_VERIFIED_CLAIMS"}});
+  if(typeof claims.sub!=="string"||!claims.sub.startsWith("user_"))
+    return new Response("Invalid verified subject",{status:401,headers:{"x-qa-citation-gate":"INVALID_VERIFIED_SUBJECT"}});
+  if(claims.sub!==env.CLERK_QA_TEST_USER_ID)
     return new Response("Not authorized for QA",{status:403,headers:{"x-qa-citation-gate":"TEST_USER_MISMATCH"}});
+  if(typeof claims.sid!=="string"||!claims.sid.startsWith("sess_"))
+    return new Response("Session identifier required",{status:401,headers:{"x-qa-citation-gate":"SESSION_ID_INVALID"}});
   const answer=await forward.fetch(request,env,ctx);
   if(answer.status!==403)return answer;
   // Never leak response bodies, identity, or any token to a browser diagnostic.
