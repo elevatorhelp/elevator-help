@@ -25,10 +25,11 @@ export const QA_CLERK_BROWSER_HTML = String.raw`<!doctype html>
   const input=document.getElementById("pk");
   const report=(s)=>{status.textContent=s;};
   let clerk=null;
-  async function externalScript(src){
+  async function externalScript(src,publishableKey){
     await new Promise((resolve,reject)=>{
       const script=document.createElement("script");
       script.src=src;script.crossOrigin="anonymous";
+      if(publishableKey)script.dataset.clerkPublishableKey=publishableKey;
       script.onload=resolve;script.onerror=()=>reject(Error("Clerk script loading failed"));
       document.head.appendChild(script);
     });
@@ -46,9 +47,11 @@ export const QA_CLERK_BROWSER_HTML = String.raw`<!doctype html>
       input.value=""; // Avoid retaining even the public key in the input.
       report("Loading Clerk TEST instance...");
       await externalScript("https://"+host+"/npm/@clerk/ui@1/dist/ui.browser.js");
-      await externalScript("https://"+host+"/npm/@clerk/clerk-js@6/dist/clerk.browser.js");
+      // ClerkJS script-tag mode REQUIRES data-clerk-publishable-key.
+      // Loading the JS without this attribute leaves window.Clerk uninitialized.
+      await externalScript("https://"+host+"/npm/@clerk/clerk-js@6/dist/clerk.browser.js",pk);
       clerk=window.Clerk;
-      if(!clerk)throw Error("Clerk SDK unavailable");
+      if(!clerk||typeof clerk.load!=="function")throw Error("Clerk SDK unavailable");
       await clerk.load({ui:{ClerkUI:window.__internal_ClerkUICtor}});
       check.disabled=false;
       if(clerk.isSignedIn){report("Clerk signed-in session detected. Press Check.");}
