@@ -31,7 +31,7 @@ const QUERY = `query AdminTraffic($zoneTag: string, $start: Time, $end: Time) {
       ) { sum { visits } }
       countries: httpRequestsAdaptiveGroups(
         limit: 20
-        orderBy: [sum_visits_DESC]
+        orderBy: [count_DESC]
         filter: { datetime_geq: $start, datetime_lt: $end, clientRequestHTTPHost: "elevator.help", requestSource: "eyeball" }
       ) { dimensions { clientCountryName } sum { visits } }
     }
