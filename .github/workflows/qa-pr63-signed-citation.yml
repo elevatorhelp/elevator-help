@@ -1,0 +1,108 @@
+name: PR63 signed customer citation QA staging
+on:
+  push:
+    branches: [release/pr63-signed-citation-qa-20261107]
+  workflow_dispatch:
+concurrency:
+  group: qa-pr61-isolated-d1-mutating
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  citation-qa:
+    if: github.ref == 'refs/heads/release/pr63-signed-citation-qa-20261107'
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - name: Checkout signed citation QA candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Require ancestor is approved current draft PR63 head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_sha=$(curl --fail --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/63" \
+            | node -e 'let s="";process.stdin.on("data",x=>s+=x).on("end",()=>{const p=JSON.parse(s);if(p.state!=="open"||p.draft!==true||p.head?.ref!=="integration/pr61-reconciled-20261024")process.exit(1);process.stdout.write(p.head.sha)})')
+          test "$current_sha" = "aea87c767156f976d071e90540c55e60ddf46068"
+          git merge-base --is-ancestor "$current_sha" HEAD
+      - name: Guard exact QA-only D1, Vectorize and cost constraints
+        run: |
+          node scripts/test-qa-citation-config.mjs
+          node --check workers/qa-citation-browser-page.mjs
+          node --check workers/qa-citation-entry.mjs
+      - name: Verify isolated secrets exist without printing them
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}
+          CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}
+          GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          [[ "$CLOUDFLARE_ACCOUNT_ID" =~ ^[a-fA-F0-9]{32}$ ]]
+          [[ "$CLERK_QA_SECRET_KEY" == sk_test_* ]]
+          [[ "$CLERK_QA_TEST_USER_ID" == user_* ]]
+          test -n "$GEMINI_BENCHMARK_API_KEY"
+          echo "PASS: isolated Cloudflare + TEST Clerk + bounded Gemini QA credentials present"
+      - name: Install exactly locked dependencies
+        run: npm ci
+      - name: Build real OpenNext application on PR63 candidate
+        run: |
+          node scripts/guard-next-security-baseline.mjs
+          npm run cf:build
+      - name: Deploy distinct QA Worker with TEST secrets only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLERK_QA_SECRET_KEY: ${{ secrets.CLERK_QA_SECRET_KEY }}
+          CLERK_QA_TEST_USER_ID: ${{ secrets.CLERK_QA_TEST_USER_ID }}
+          GEMINI_BENCHMARK_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          QA_SECRETS_FILE="$RUNNER_TEMP/qa-citation-$GITHUB_RUN_ID.json"
+          export QA_SECRETS_FILE
+          trap 'rm -f "$QA_SECRETS_FILE"' EXIT
+          node --input-type=module -e '
+            import {writeFileSync} from "node:fs";
+            const secret=process.env.CLERK_QA_SECRET_KEY;
+            const id=process.env.CLERK_QA_TEST_USER_ID;
+            const gemini=process.env.GEMINI_BENCHMARK_API_KEY;
+            if(!secret?.startsWith("sk_test_")||!/^user_[A-Za-z0-9]{8,64}$/.test(id||"")||!gemini)
+              throw Error("QA_CITATION_TEST_CREDS_INVALID");
+            writeFileSync(process.env.QA_SECRETS_FILE,JSON.stringify({
+              CLERK_SECRET_KEY:secret,CLERK_QA_TEST_USER_ID:id,GEMINI_API_KEY:gemini
+            }),{mode:0o600,flag:"wx"});
+          '
+          npx wrangler deploy --config wrangler.qa-citation.json --secrets-file "$QA_SECRETS_FILE" \
+            > "$RUNNER_TEMP/qa-citation-deploy.log" 2>&1 || {
+              echo "::error::QA_CITATION_DEPLOY_FAILED_LOG_REDACTED"
+              exit 1
+            }
+          rm -f "$QA_SECRETS_FILE"
+          trap - EXIT
+      - name: Verify real QA runtime, auth fail-closed, no paid calls
+        run: |
+          set -euo pipefail
+          base="https://elevator-help-pr63-citation-qa.baharmand.workers.dev"
+          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/qa-citation-test")" = "200"
+          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/api/health/gemini")" = "200"
+          question='{"question":"Was fordert DIN EN 81-20:2014 Abschnitt 5.4.7.4 zur Umwehrung auf dem Fahrkorbdach?"}'
+          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data "$question" "$base/api/ask")" = "401"
+          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer invalid.qa.session' --data "$question" "$base/api/ask")" = "401"
+          test "$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$base/api/drive-ingest-batch")" = "404"
+          echo "PASS: QA_CITATION_WORKER_READY_NO_PRODUCTION_WRITES_NO_MODEL_CALLS"
+          echo "::notice::Browser signed-in positive answer is a SEPARATE gate and still requires the approved owner test account."
