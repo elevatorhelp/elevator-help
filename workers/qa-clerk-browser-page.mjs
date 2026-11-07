@@ -70,15 +70,17 @@ export const QA_CLERK_BROWSER_HTML = String.raw`<!doctype html>
         const headers={"content-type":"application/json"};
         if(authorization)headers.authorization="Bearer "+authorization;
         const response=await fetch("/api/ask",{method:"POST",headers,body:JSON.stringify({question:""}),cache:"no-store",redirect:"error"});
-        return response.status;
+        return {status:response.status,code:response.headers.get("x-qa-clerk-verify")};
       };
       const invalid=await request("invalid.qa.session");
       const missing=await request(null);
       const valid=await request(token);
-      if(invalid===401&&missing===401&&valid===400){
+      if(invalid.status===401&&missing.status===401&&valid.status===400){
         report("PASS: signed-in browser JWT accepted (400); invalid and missing tokens rejected (401).");
       }else{
-        report("FAIL: expected missing=401, invalid=401, valid=400. Received missing="+missing+", invalid="+invalid+", valid="+valid+".");
+        const diagnostic=valid.code&&/^(?:SDK_[A-Z_]+|INVALID_VERIFIED_CLAIMS|SDK_VERIFIED_APP_REJECTED)$/.test(valid.code)
+          ?valid.code:"NOT_AVAILABLE";
+        report("FAIL: expected missing=401, invalid=401, valid=400. Received missing="+missing.status+", invalid="+invalid.status+", valid="+valid.status+". QA verifier="+diagnostic+". No JWT or claims are displayed.");
       }
     }catch{report("QA_NETWORK_ERROR: request failed. No JWT or private details logged.");}
     finally{check.disabled=false;}
