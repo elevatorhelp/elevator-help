@@ -47,6 +47,7 @@ jobs:
       - name: Guard exact QA-only D1, Vectorize and cost constraints
         run: |
           node scripts/test-qa-citation-config.mjs
+          node scripts/test-qa-clerk-verified-claims.mjs
           node --check workers/qa-citation-browser-page.mjs
           node --check workers/qa-citation-entry.mjs
       - name: Verify isolated secrets exist without printing them
