@@ -48,6 +48,9 @@ jobs:
       - name: Test Cloudflare admin metrics in isolated mock
         run: node --experimental-strip-types scripts/test-admin-cloudflare-analytics.ts
 
+      - name: Test read-only archive evidence inventory
+        run: node --experimental-strip-types scripts/test-admin-archive-inventory.ts
+
       - name: Test Gemini cost controls
         run: npm run test:gemini-cost-control
 
