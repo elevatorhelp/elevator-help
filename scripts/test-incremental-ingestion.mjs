@@ -8,6 +8,7 @@ import {
   fingerprint,
   createIngestionCallBudget,
   createIngestionPlan,
+  nextPreferredIngestionPhase,
   selectFairIngestionBatch,
   canResumeEvidence,
   canResumeRaw,
@@ -19,6 +20,28 @@ import {
   needsEvidenceBackfill,
   needsRawBackfill,
 } from "./drive-ingest.mjs";
+
+// Phase rotation must follow the last *persisted selection*, not a wall clock bucket.
+const phaseCycle = ["evidence", "raw", "map"];
+for (const seed of [undefined, null, "", "invalid", {}, 0]) {
+  if (nextPreferredIngestionPhase(seed) !== "evidence") {
+    throw new Error("Absent/corrupted phase checkpoint must restart from evidence");
+  }
+}
+let previousPhase;
+for (let iteration = 0; iteration < 15; iteration++) {
+  const selected = nextPreferredIngestionPhase(previousPhase);
+  if (selected !== phaseCycle[iteration % 3]) {
+    throw new Error("Persisted scheduler phase must rotate evidence -> raw -> map");
+  }
+  previousPhase = selected; // the actual runner checkpoints this before external calls
+}
+if (nextPreferredIngestionPhase("evidence") !== "raw" ||
+    nextPreferredIngestionPhase("raw") !== "map" ||
+    nextPreferredIngestionPhase("map") !== "evidence") {
+  throw new Error("Every phase must receive its turn even when workflows run late");
+}
+console.log("PASS: deterministic persisted phase rotation and invalid checkpoint fallback");
 
 if (estimateRawGeminiCalls(0) !== 0 || estimateRawGeminiCalls(9) !== 4) {
   throw new Error("Raw ingestion call estimate must reserve two calls per batch");
