@@ -188,12 +188,15 @@ for (const [name, src, remoteMarker] of [
   const imported = 'import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";';
   const guarded = 'assertBothQaConfigs();';
   assert.ok(src.includes(imported), name + ': QA isolation helper must be imported');
-  const guardPosition = src.indexOf(guarded);
-  const remotePosition = src.indexOf(remoteMarker);
-  assert.ok(guardPosition > 0 && remotePosition > guardPosition,
-    name + ': QA-only config must be validated before remote setup');
-  const simulatedUnsafe = src.replace(guarded, '/* deliberately removed */');
-  assert.equal(simulatedUnsafe.includes(guarded), false,
-    name + ': negative regression demonstrates an unguarded runner');
+  const hasEarlyGuard = (source) => {
+    const guardPosition = source.indexOf(guarded);
+    const remotePosition = source.indexOf(remoteMarker);
+    return guardPosition > 0 && remotePosition > guardPosition;
+  };
+  assert.ok(hasEarlyGuard(src), name + ': QA-only config must be validated before remote setup');
+  assert.equal(hasEarlyGuard(src.replace(guarded, '/* deliberately removed */')), false,
+    name + ': deleting the preflight must fail the QA regression');
+  assert.equal(hasEarlyGuard(src.replace(guarded, '').replace(remoteMarker, remoteMarker + '\\n' + guarded)), false,
+    name + ': moving the preflight after remote setup must fail');
 }
 console.log('PASS: standalone QA scripts guard resource isolation before remote setup');
