@@ -39,7 +39,9 @@ function AdminConsole() {
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     if (!isSignedIn) return;
-    setBusy(true); setError("");
+    // Clear the previous administrator's response before validating a fresh session.
+    // Never display cached private metrics while a different account/token is checked.
+    setData(null); setBusy(true); setError("");
     try {
       const token = await getToken();
       if (!token) throw new Error("Sign in to see this dashboard.");
