@@ -800,6 +800,13 @@ async function processText(
   };
 }
 
+// A pure scheduler helper so the persisted phase rotation can be tested offline.
+function nextPreferredIngestionPhase(lastSelectedPhase) {
+  const order = ["evidence", "raw", "map"];
+  const previous = order.indexOf(lastSelectedPhase);
+  return order[(previous + 1) % order.length];
+}
+
 async function main() {
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
@@ -855,10 +862,7 @@ async function main() {
   // Persist the phase rotation per Drive scope instead of deriving it from wall-clock
   // time: delayed GitHub schedules must not repeatedly skip an eligible phase.
   // createIngestionPlan still enforces evidence -> raw -> map dependencies per file.
-  const phaseOrder = ["evidence", "raw", "map"];
-  const lastPhase = scope.lastSelectedPhase;
-  const lastIndex = phaseOrder.indexOf(lastPhase);
-  const preferredPhase = phaseOrder[(lastIndex + 1) % phaseOrder.length];
+  const preferredPhase = nextPreferredIngestionPhase(scope.lastSelectedPhase);
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
@@ -1178,6 +1182,7 @@ export {
   needsRawBackfill,
   createIngestionCallBudget,
   createIngestionPlan,
+  nextPreferredIngestionPhase,
   selectFairIngestionBatch,
   canResumeEvidence,
   canResumeRaw,
