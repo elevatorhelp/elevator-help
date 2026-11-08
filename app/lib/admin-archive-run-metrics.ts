@@ -36,7 +36,7 @@ export function parseArchiveRunMetrics(log: string): ArchiveRunMetrics | null {
   const [evidence,raw,map] = numbers;
   const attempted = matchInt(log,/Done\. Attempted (\d+) file\(s\);/);
   const failed = matchInt(log,/Done\. Attempted \d+ file\(s\); (\d+) failed;/);
-  if (attempted!==null && (attempted>3 || failed!==null && failed>attempted)) return null;
+  if (attempted!==null && (attempted>supportedFiles || failed!==null && failed>attempted)) return null;
   return {
     supportedFiles,
     pending: { evidence,raw,map },
