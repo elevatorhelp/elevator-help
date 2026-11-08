@@ -20,7 +20,13 @@ assert.equal(result?.newFiles,null);
 assert.equal(result?.estimatedRemainingDays,null);
 assert.equal(parseArchiveRunMetrics("Found 241 supported documents"),null);
 assert.equal(parseArchiveRunMetrics(log.replace("evidence=104","evidence=999")),null);
-assert.equal(parseArchiveRunMetrics(log.replace("Attempted 2","Attempted 9")),null);
+const largerBatch = parseArchiveRunMetrics(log.replace("Attempted 2", "Attempted 9"));
+assert.equal(largerBatch?.supportedFiles,241);
+assert.equal(largerBatch?.attempted,9);
+assert.equal(largerBatch?.failed,0);
+assert.equal(largerBatch?.estimatedRemainingDays,null);
+assert.equal(parseArchiveRunMetrics(log.replace("Attempted 2", "Attempted 242")),null);
+assert.equal(parseArchiveRunMetrics(log.replace("0 failed", "3 failed")),null);
 let requests=0;
 const fetchImpl = (async (url:string)=>{
   requests++;
