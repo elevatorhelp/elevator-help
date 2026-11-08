@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";
 import {publishAfterVectorsAreReady} from "./qa-pr61-wait-for-staged-vectors.mjs";
 import {verifyParallelLeaseClaims} from "./qa-pr61-parallel-lease-race.mjs";
 import {verifyIndependentProcessCheckpoint} from "./qa-pr63-two-process-checkpoint.mjs";
@@ -6,6 +7,8 @@ import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {hasExactQaVectorReadback} from "./qa-pr61-vector-readback.mjs";
 import {execFileSync} from "node:child_process";
 import {PR61_LOOPBACK_QA_ORIGIN,requirePr61LoopbackQaOrigin} from "./qa-pr61-isolated-origin.mjs";
+// Fail closed even when invoked outside the protected GitHub Actions workflow.
+assertBothQaConfigs();
 const base=new URL("/api/drive-ingest-batch",requirePr61LoopbackQaOrigin(process.env.QA_APP_BASE_URL||PR61_LOOPBACK_QA_ORIGIN));
 const secret=process.env.QA_INGESTION_TOKEN;
 if(!secret)throw Error("QA_INGESTION_TOKEN_REQUIRED");
