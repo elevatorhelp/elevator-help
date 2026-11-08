@@ -1,0 +1,54 @@
+/** Atomic D1 ownership protocol for a single document; feature-gated at the route. */
+import {parseIngestionLease, type IngestionLease} from "./ingestion-lease-guard.ts";
+const DURATION_MIN_MS=30000;
+const DURATION_MAX_MS=300000;
+export function leaseDuration(value:unknown):number {
+ const v=Number(value ?? 180000);
+ if(!Number.isSafeInteger(v)||v<DURATION_MIN_MS||v>DURATION_MAX_MS)
+   throw Error("INVALID_LEASE_DURATION");
+ return v;
+}
+export async function claimIngestionLease(db:any,jobKey:string,owner:string,durationMs=180000,now=Date.now()):Promise<IngestionLease|null>{
+ const identity=parseIngestionLease({jobKey,owner,generation:1});
+ if(!identity||!db?.prepare)throw Error("INVALID_LEASE_REQUEST");
+ leaseDuration(durationMs);
+ const columns=await db.prepare("PRAGMA table_info(ingestion_worker_leases)").all();
+ const hasTimestamp=columns?.results?.some((row:any)=>row.name==="updated_at_ms");
+ const insertSql=hasTimestamp ? `INSERT INTO ingestion_worker_leases
+ (job_key,owner,generation,lease_until_ms,updated_at_ms)
+ VALUES(?,?,1,?,?)
+ ON CONFLICT(job_key) DO UPDATE SET
+ owner=excluded.owner,generation=ingestion_worker_leases.generation+1,
+ lease_until_ms=excluded.lease_until_ms,updated_at_ms=excluded.updated_at_ms
+ WHERE ingestion_worker_leases.lease_until_ms<=?` :
+ `INSERT INTO ingestion_worker_leases
+ (job_key,owner,generation,lease_until_ms) VALUES(?,?,1,?)
+ ON CONFLICT(job_key) DO UPDATE SET
+ owner=excluded.owner,generation=ingestion_worker_leases.generation+1,
+ lease_until_ms=excluded.lease_until_ms
+ WHERE ingestion_worker_leases.lease_until_ms<=?`;
+ // Return the exact row modified by the atomic claim. A separate SELECT can
+ // race with a later takeover by the same owner label and accidentally hand
+ // the older caller the newer owner's fencing generation.
+ const row=await db.prepare(insertSql+" RETURNING owner,generation,lease_until_ms")
+ .bind(...(hasTimestamp?[jobKey,owner,now+durationMs,now,now]:
+   [jobKey,owner,now+durationMs,now])).first();
+ if(row?.owner!==owner||!Number.isSafeInteger(Number(row.generation))||
+    Number(row.lease_until_ms)<=now)return null;
+ return {jobKey,owner,generation:Number(row.generation)};
+}
+export async function renewIngestionLease(db:any,lease:IngestionLease,durationMs=180000,now=Date.now()):Promise<boolean>{
+ if(!parseIngestionLease(lease))throw Error("INVALID_LEASE_REQUEST");
+ leaseDuration(durationMs);
+ const columns=await db.prepare("PRAGMA table_info(ingestion_worker_leases)").all();
+ const hasTimestamp=columns?.results?.some((row:any)=>row.name==="updated_at_ms");
+ // Renewal may extend but must never shorten an unexpired lease: a shorter
+ // request must not allow a second worker to steal ownership prematurely.
+ const sql=hasTimestamp?
+   "UPDATE ingestion_worker_leases SET lease_until_ms=MAX(lease_until_ms,?),updated_at_ms=? WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?":
+   "UPDATE ingestion_worker_leases SET lease_until_ms=MAX(lease_until_ms,?) WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?";
+ const r=await db.prepare(sql)
+ .bind(...(hasTimestamp?[now+durationMs,now,lease.jobKey,lease.owner,lease.generation,now]:
+  [now+durationMs,lease.jobKey,lease.owner,lease.generation,now])).run();
+ return Number(r?.meta?.changes)===1;
+}

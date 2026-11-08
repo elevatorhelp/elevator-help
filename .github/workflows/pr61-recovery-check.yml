@@ -1,0 +1,39 @@
+name: PR61 Recovery Contract Gate
+
+on:
+  push:
+    branches:
+      - feat/issue-60-adaptive-controller
+    paths:
+      - 'app/lib/ingestion-*.ts'
+      - 'app/api/drive-ingest-batch/route.ts'
+      - 'app/api/document-map-ingest/route.ts'
+      - 'scripts/drive-ingest.mjs'
+      - 'scripts/test-ingestion-*.ts'
+      - '.github/workflows/pr61-recovery-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr61-recovery-contract
+  cancel-in-progress: false
+
+jobs:
+  recovery-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+      - name: Multi-batch checkpoint, lease renewal and takeover
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-multibatch-recovery.ts
+      - name: Full immutable three-layer publication contract
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-full-publication.ts
+      - name: Complete-document crash recovery
+        run: node --experimental-sqlite --experimental-strip-types scripts/test-ingestion-complete-publication.ts
