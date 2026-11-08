@@ -86,6 +86,7 @@ jobs:
             status=$(curl --silent --show-error --max-time 45 \
               --output /tmp/health.json --write-out '%{http_code}' \
               https://elevator.help/api/health/gemini) || status=000
+            echo "Production health attempt ${attempt}/12: HTTP ${status}"
             if [ "$status" = "200" ] && grep -q '"ok":true' /tmp/health.json; then
               cat /tmp/health.json
               exit 0
