@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";
 import {parseQaDriveRecoveryResponse} from "./qa-drive-recovery-response.mjs";
 import {requirePr61IsolatedQaOrigin} from "./qa-pr61-isolated-origin.mjs";
 import {buildQaFullAppMultipageFixture,hasQaFullAppMapPageCoverage} from "./qa-pr61-full-app-fixture.mjs";
+// Protect standalone runs before touching any remote QA resource.
+assertBothQaConfigs();
 const qaOrigin=requirePr61IsolatedQaOrigin(process.env.QA_APP_BASE_URL);
 const token=process.env.QA_INGESTION_TOKEN;
 if(!token)throw Error("QA_APP_CONFIGURATION_MISSING");
