@@ -200,3 +200,16 @@ for (const [name, src, remoteMarker] of [
     name + ': moving the preflight after remote setup must fail');
 }
 console.log('PASS: standalone QA scripts guard resource isolation before remote setup');
+
+// qa-untrusted-response-body-regression-20261108: never disclose upstream payloads in CI errors.
+for (const [name, source] of [
+  ['real-app', runner],
+  ['full-app', readFileSync(new URL('./qa-pr61-full-app-e2e.mjs', import.meta.url), 'utf8')],
+]) {
+  const rejectUnsafe = (text) => assert.doesNotMatch(text, /JSON\\.stringify\\((?:r|res|result|map)\\)/,
+    name + ': remote response bodies must not be serialized into QA logs');
+  rejectUnsafe(source);
+  assert.throws(() => rejectUnsafe(source + '\\nthrow Error(JSON.stringify(res));'),
+    name + ': negative regression must detect unsafe payload logging');
+}
+console.log('PASS: untrusted HTTP response bodies never serialized by isolated QA assertions');
