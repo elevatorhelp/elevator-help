@@ -53,7 +53,8 @@ export async function GET(request: Request) {
       activeQuestionUsers = null;
     }
     const [runsRaw, prRaw, edgeTraffic, archiveRunsRaw] = await Promise.all([
-      readJson("https://api.github.com/repos/" + repo + "/actions/runs?per_page=40"),
+      // GitHub outage or rate limit must not blank independent D1/Cloudflare metrics.
+      readJson("https://api.github.com/repos/" + repo + "/actions/runs?per_page=40").catch(() => null),
       // PR63 is optional dashboard context: an upstream 404/403/timeout must not hide all other metrics.
       readJson("https://api.github.com/repos/" + repo + "/pulls/63").catch(() => null),
       readEdgeTraffic({
@@ -96,7 +97,7 @@ export async function GET(request: Request) {
       activeQuestionUsers,
       agents: { worker: "not_connected", supervisor: "not_connected", manager: "not_connected" },
       metrics: { users: null, requests: null, latencyP95: null, geminiCost: null, archiveProgress: null },
-      sources: { github: "GitHub Actions REST API", agents: "not connected", usage: "not instrumented" },
+      sources: { github: runsRaw ? "GitHub Actions REST API" : "GitHub Actions REST API unavailable; workflow status may be incomplete", agents: "not connected", usage: "not instrumented" },
     }, { headers });
   } catch {
     return NextResponse.json({ error: "GitHub status temporarily unavailable" }, { status: 502, headers });
