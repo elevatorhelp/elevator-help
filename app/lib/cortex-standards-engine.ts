@@ -272,7 +272,8 @@ function verifyClaims(parsed: any, evidence: Evidence[], clauses: string[]) {
     if (!selected || !standard || !clause || !text || quote.length < 12)
       continue;
     const source = selected.text.replace(/\s+/g, " ").trim();
-    if (!source.includes(quote) || !source.includes(clause)) continue;
+    // Match parsed clause identities, never prefixes (4.2 must not match 4.20).
+    if (!source.includes(quote) || !extractClauseNumbers(source).includes(clause)) continue;
     if (
       !selected.standardCodes.some((found) =>
         standardCodesMatch(found, standard),
