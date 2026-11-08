@@ -179,3 +179,21 @@ assert.ok(multipageWorkflow.includes('ref: ${{ github.sha }}'),
 assert.ok(!multipageWorkflow.includes(' | tee /tmp/qa61-deploy.log'),
   'multipage QA must not print raw Wrangler deploy logs to Actions');
 console.log('PASS: exact-head manual-only isolated actual-app QA checks active RAW source-page provenance in both indices; no cloud requests');
+
+// standalone-isolation-regression-20261108: both QA CLIs fail closed before remote setup.
+for (const [name, src, remoteMarker] of [
+  ['real-app', runner, 'const base=new URL('],
+  ['full-app', readFileSync(new URL('./qa-pr61-full-app-e2e.mjs', import.meta.url), 'utf8'), 'const qaOrigin=requirePr61IsolatedQaOrigin('],
+]) {
+  const imported = 'import {assertBothQaConfigs} from "./qa-pr61-assert-isolated-config.mjs";';
+  const guarded = 'assertBothQaConfigs();';
+  assert.ok(src.includes(imported), name + ': QA isolation helper must be imported');
+  const guardPosition = src.indexOf(guarded);
+  const remotePosition = src.indexOf(remoteMarker);
+  assert.ok(guardPosition > 0 && remotePosition > guardPosition,
+    name + ': QA-only config must be validated before remote setup');
+  const simulatedUnsafe = src.replace(guarded, '/* deliberately removed */');
+  assert.equal(simulatedUnsafe.includes(guarded), false,
+    name + ': negative regression demonstrates an unguarded runner');
+}
+console.log('PASS: standalone QA scripts guard resource isolation before remote setup');
