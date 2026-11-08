@@ -86,7 +86,7 @@ function AdminConsole() {
           <Stat label="Independent Supervisor" value="Not connected" note="Automation history adapter required"/>
           <Stat label="Project Manager" value="Not connected" note="Automation history adapter required"/>
         </div>
-        <article className="adminPanel"><h2>PR #63 · Release closure</h2><p className="adminSecondary">Head: {data.pr63.sha || "Unknown"} · {data.pr63.draft ? "Draft" : "Open"} · {data.pr63.state}</p><a className="adminLink" href={data.pr63.url} target="_blank" rel="noreferrer">Open PR #63 ↗</a></article>
+        <article className="adminPanel"><h2>PR #63 · Release closure</h2><p className="adminSecondary">Head: {data.pr63.sha || "Unknown"} · {data.pr63.state === "unknown" ? "Status unavailable" : data.pr63.draft ? "Draft" : "Not draft"} · {data.pr63.state}</p><a className="adminLink" href={data.pr63.url} target="_blank" rel="noreferrer">Open PR #63 ↗</a></article>
       </section>
       <section aria-label="Latest workflow runs"><h2>Latest workflow runs</h2><div className="adminPanel"><ul className="adminRuns">{data.recentRuns.map(run => <li key={run.id}><span>{run.name} <small>{run.sha}</small></span><span>{runStatus(run)} {githubUrl(run.url) && <a className="adminLink" href={run.url!} target="_blank" rel="noreferrer">Details ↗</a>}</span></li>)}</ul></div></section>
     </>}
