@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth, SignInButton } from "@clerk/nextjs";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Run = { id: number; name: string; status: string; conclusion: string | null; createdAt: string | null; sha: string | null; url: string | null };
 type Status = {
@@ -37,8 +37,11 @@ function AdminConsole() {
   const [data, setData] = useState<Status | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Only the newest authenticated request may publish private metrics.
+  const requestVersion = useRef(0);
   const load = useCallback(async () => {
-    if (!isSignedIn) return;
+    const version = ++requestVersion.current;
+    if (!isSignedIn) { setData(null); setBusy(false); return; }
     // Clear the previous administrator's response before validating a fresh session.
     // Never display cached private metrics while a different account/token is checked.
     setData(null); setBusy(true); setError("");
@@ -47,11 +50,19 @@ function AdminConsole() {
       if (!token) throw new Error("Sign in to see this dashboard.");
       const response = await fetch("/api/admin/status", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
       if (!response.ok) throw new Error(response.status === 403 ? "Your account is not authorized as an administrator." : response.status === 503 ? "Admin access has not been configured." : "Dashboard data is unavailable (" + response.status + ").");
-      setData(await response.json() as Status);
-    } catch (e) { setData(null); setError(e instanceof Error ? e.message : "Unable to load dashboard."); }
-    finally { setBusy(false); }
+      const result = await response.json() as Status;
+      if (version === requestVersion.current) setData(result);
+    } catch (e) {
+      if (version === requestVersion.current) {
+        setData(null);
+        setError(e instanceof Error ? e.message : "Unable to load dashboard.");
+      }
+    } finally { if (version === requestVersion.current) setBusy(false); }
   }, [getToken, isSignedIn]);
-  useEffect(() => { if (isLoaded && isSignedIn) void load(); }, [isLoaded, isSignedIn, load]);
+  useEffect(() => {
+    if (isLoaded && isSignedIn) void load();
+    return () => { requestVersion.current++; };
+  }, [isLoaded, isSignedIn, load]);
   if (!isLoaded) return <main className="adminShell"><p>Loading sign-in…</p></main>;
   if (!isSignedIn) return <main className="adminShell"><h1>Admin dashboard</h1><p>Administrator sign-in is required.</p><SignInButton mode="modal"><button className="adminButton">Sign in</button></SignInButton></main>;
   return <main className="adminShell">
