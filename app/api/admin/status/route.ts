@@ -45,8 +45,10 @@ export async function GET(request: Request) {
       const { env } = getCloudflareContext();
       const db = (env as unknown as { CORTEX_DB?: Parameters<typeof readPublishedEvidenceInventory>[0] }).CORTEX_DB;
       if (db) [archiveInventory, activeQuestionUsers] = await Promise.all([
-        readPublishedEvidenceInventory(db),
-        readActiveQuestionUsers(db as unknown as Parameters<typeof readActiveQuestionUsers>[0]),
+        // A missing archive table must not erase independently available usage metrics.
+        readPublishedEvidenceInventory(db).catch(() => null),
+        // A missing quota table must not erase independently available archive metrics.
+        readActiveQuestionUsers(db as unknown as Parameters<typeof readActiveQuestionUsers>[0]).catch(() => null),
       ]);
     } catch {
       archiveInventory = null;
