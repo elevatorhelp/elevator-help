@@ -54,7 +54,8 @@ export async function GET(request: Request) {
     }
     const [runsRaw, prRaw, edgeTraffic, archiveRunsRaw] = await Promise.all([
       readJson("https://api.github.com/repos/" + repo + "/actions/runs?per_page=40"),
-      readJson("https://api.github.com/repos/" + repo + "/pulls/63"),
+      // PR63 is optional dashboard context: an upstream 404/403/timeout must not hide all other metrics.
+      readJson("https://api.github.com/repos/" + repo + "/pulls/63").catch(() => null),
       readEdgeTraffic({
         zoneId: process.env.CLOUDFLARE_ZONE_ID,
         token: process.env.CLOUDFLARE_ANALYTICS_TOKEN,
