@@ -3,6 +3,7 @@ import {approvedQaVectorizeTargets,safeQaIndexLookupResult} from './qa-pr61-veri
 import {classifyQaWorkerStartup,safeQaWorkerStartupMessage} from './qa-pr61-classify-startup.mjs';
 import {hasExactQaVectorReadback} from './qa-pr61-vector-readback.mjs';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
 const workflow=readFileSync(new URL('../.github/workflows/qa-pr61-actual-app.yml',import.meta.url),'utf8');
 const config=JSON.parse(readFileSync(new URL('../wrangler.qa-app.json',import.meta.url),'utf8'));
 const runner=readFileSync(new URL('./qa-pr61-real-app-e2e.mjs',import.meta.url),'utf8');
@@ -213,3 +214,17 @@ for (const [name, source] of [
     name + ': negative regression must detect unsafe payload logging');
 }
 console.log('PASS: untrusted HTTP response bodies never serialized by isolated QA assertions');
+
+// standalone-qa-syntax-negative-20261108: direct-run QA JS is syntax-checked offline.
+for (const [name, source] of [
+  ['real-app', runner],
+  ['full-app', readFileSync(new URL('./qa-pr61-full-app-e2e.mjs', import.meta.url), 'utf8')],
+]) {
+  const check = (text) => spawnSync(process.execPath, ['--check', '--input-type=module'], {
+    input: text, encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(check(source).status, 0, name + ': QA executable must have valid module syntax');
+  assert.notEqual(check(source + '\nconst intentionallyBrokenSyntax = ";\n').status, 0,
+    name + ': syntax regression must reject malformed code');
+}
+console.log('PASS: standalone QA executable module syntax and negative fixtures');
