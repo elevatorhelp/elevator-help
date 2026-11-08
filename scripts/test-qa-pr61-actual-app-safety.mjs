@@ -206,7 +206,7 @@ for (const [name, source] of [
   ['real-app', runner],
   ['full-app', readFileSync(new URL('./qa-pr61-full-app-e2e.mjs', import.meta.url), 'utf8')],
 ]) {
-  const rejectUnsafe = (text) => assert.doesNotMatch(text, /JSON\\.stringify\\((?:r|res|result|map)\\)/,
+  const rejectUnsafe = (text) => assert.doesNotMatch(text, /JSON\.stringify\((?:r|res|result|map)\)/,
     name + ': remote response bodies must not be serialized into QA logs');
   rejectUnsafe(source);
   assert.throws(() => rejectUnsafe(source + '\\nthrow Error(JSON.stringify(res));'),
