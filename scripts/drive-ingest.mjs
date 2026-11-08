@@ -975,6 +975,12 @@ async function runIsolatedFullDocument(file,accessToken,ingestToken,state,scope)
  console.log("PASS isolated Drive document complete: all layers published and checkpointed");
 }
 
+// Persisted fair rotation for non-controller scheduled runs; no dependence on wall-clock bucket.
+function nextPreferredIngestionPhase(lastSelectedPhase) {
+  const phases = ["evidence", "raw", "map"];
+  return phases[(phases.indexOf(lastSelectedPhase) + 1) % phases.length];
+}
+
 async function main() {
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
@@ -1036,7 +1042,7 @@ async function main() {
     ? scope.nextPhaseCursor % phaseOrder.length : 0;
   const preferredPhase = controllerEnabled
     ? phaseOrder[phaseCursor]
-    : phaseOrder[Math.floor(Date.now() / 21_600_000) % phaseOrder.length];
+    : nextPreferredIngestionPhase(scope.lastSelectedPhase);
   const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
   const capacity = controllerEnabled
     ? planIngestion({
@@ -1060,6 +1066,9 @@ async function main() {
   );
   const selected = batch.files;
   if (selected.length && !TARGET_FILE_ID) {
+    // Update the non-controller preference atomically with the existing cursor,
+    // before network calls, preventing skipped Map work after a delayed schedule.
+    if (!controllerEnabled) scope.lastSelectedPhase = plan.phase;
     // Advance and checkpoint before any network call. A failed file cannot
     // pin the entire archive to the same first batch on the next scheduled run.
     scope.phaseCursors[plan.phase] = batch.nextCursor;
@@ -1390,6 +1399,7 @@ export {
   needsRawBackfill,
   createIngestionCallBudget,
   createIngestionPlan,
+  nextPreferredIngestionPhase,
   selectFairIngestionBatch,
   canResumeEvidence,
   canResumeRaw,
