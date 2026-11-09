@@ -86,7 +86,7 @@ try{
    vector("map-a","source-rev-a","map"),[legacy,multi],Date.now(),epochResumed!);
  assert.ok(map1);
  assert.equal(await publishImmutableThreeLayerGeneration(dbB,leaseB,doc,{
-   rawIds:["raw-a"],evidenceIds:["e-a"],mapIds:["map-a"],sourceFingerprint:"source-rev-a",
+   rawIds:[raw1],evidenceIds:["e-a"],mapIds:[map1],sourceFingerprint:"source-rev-a",
  },Date.now(),epochResumed!),true,"successor owner can finish predecessor's partial document");
  assert.equal(a.prepare("SELECT active_generation AS gen FROM ingestion_v2_publications WHERE document_id=?")
    .get(doc)?.gen,epoch1);
@@ -107,22 +107,22 @@ try{
  assert.equal((await readPublishedImmutableEvidence(evidenceDB,doc)).length,1,
    "last completed generation stays available while new revision stages");
 
- await stageImmutableVectorPair(dbB,leaseB,doc,"raw",
+ const raw2=await stageImmutableVectorPair(dbB,leaseB,doc,"raw",
    vector("raw-b","source-rev-b","raw"),[legacy,multi],Date.now(),epoch2!);
- await stageImmutableVectorPair(dbB,leaseB,doc,"map",
+ const map2=await stageImmutableVectorPair(dbB,leaseB,doc,"map",
    vector("map-b","source-rev-b","map"),[legacy,multi],Date.now(),epoch2!);
  assert.ok(await stageImmutableExactEvidence(dbB,leaseB,doc,ev("e-b","source-rev-b"),
    Date.now(),epoch2!));
  assert.ok((await stageImmutableEvidenceReferenceTerms(dbB,leaseB,doc,
     ev("e-b","source-rev-b"),Date.now(),epoch2!))>0);
  assert.equal(await publishImmutableThreeLayerGeneration(dbB,leaseB,doc,{
-   rawIds:["raw-b"],evidenceIds:["e-b"],mapIds:["map-b"],sourceFingerprint:"source-rev-b",
+   rawIds:[raw2],evidenceIds:["e-b"],mapIds:[map2],sourceFingerprint:"source-rev-b",
  },Date.now(),epoch2!),true,"new revision epoch publishes in same root lease generation");
  const results=await searchPublishedImmutableEvidence(evidenceDB,refs,["5.4.7.3"],60);
  assert.deepEqual(results.map(x=>x.id),["e-b"],"old citation page hidden after revision publish");
  assert.equal((await readPublishedImmutableEvidence(evidenceDB,doc))[0].logicalId,"e-b");
  assert.equal(await publishImmutableThreeLayerGeneration(dbB,leaseB,doc,{
-   rawIds:["raw-a"],evidenceIds:["e-a"],mapIds:["map-a"],sourceFingerprint:"source-rev-a",
+   rawIds:[raw1],evidenceIds:["e-a"],mapIds:[map1],sourceFingerprint:"source-rev-a",
  },Date.now(),epoch1!),false,"old stage epoch cannot republish");
  console.log("PASS: source epoch survives owner rotation, preserves partial RAW/Evidence, forbids stale receipt, revisions monotonic, exact citations switch atomically");
 }finally{
