@@ -10,6 +10,8 @@ import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
 import { assertShardState, shardForDocumentId, validateShardParameters } from "./archive-sharding.mjs";
+import { createIngestionCoordinatorSession } from "./ingestion-coordinator-client.mjs";
+let activeCoordinator = null;
 
 const execFileAsync = promisify(execFile);
 const OFFICE_EXTENSIONS = new Set([
@@ -460,6 +462,9 @@ async function writeIngestionState(state, filePath = STATE_PATH) {
 async function saveState(state) {
   if (shardEnabled) assertShardState(state, shardIndex, shardCount);
   try {
+    // D1 is the authoritative checkpoint in explicit coordinated mode.
+    // Persist the same state to GitHub Actions cache only AFTER the D1 CAS.
+    if (activeCoordinator) await activeCoordinator.checkpoint(state);
     return await writeIngestionState(state);
   } catch (error) {
     throw new Error("INGESTION_STATE_WRITE_FAILED: stopping to avoid uncheckpointed writes", { cause: error });
@@ -467,6 +472,10 @@ async function saveState(state) {
 }
 
 async function callJsonEndpoint(endpoint, payload, token, label) {
+  if (activeCoordinator) {
+    await activeCoordinator.assertLive();
+    payload = {...payload,globalArchiveLease:activeCoordinator.lease};
+  }
   let response;
   try {
     response = await fetch(endpoint, {
@@ -828,7 +837,24 @@ async function main() {
     : allFiles;
   const files = TARGET_FILE_ID ? shardFiles.filter((file) => file.id === TARGET_FILE_ID) : shardFiles;
   if (TARGET_FILE_ID && !files.length) throw new Error("Target file not found in Drive scope");
-  const state = await loadState();
+  let state = await loadState();
+  if (process.env.INGESTION_D1_COORDINATOR_MODE === "strict") {
+    if (shardEnabled || TARGET_FILE_ID || FORCE_REINGEST ||
+        process.env.GITHUB_ACTIONS !== "true" ||
+        process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
+        process.env.INGESTION_D1_EXPLICIT_RUN_ID !== process.env.GITHUB_RUN_ID) {
+      throw new Error("D1_COORDINATOR_UNAPPROVED_RUNNER_MODE");
+    }
+    activeCoordinator = await createIngestionCoordinatorSession({
+      token:ingestToken,rootId:DRIVE_FOLDER_ID,
+      runId:process.env.GITHUB_RUN_ID,
+      runAttempt:process.env.GITHUB_RUN_ATTEMPT || "1",
+      legacyState:state,
+      bootstrapApproved:process.env.INGESTION_D1_BOOTSTRAP_APPROVED === "true",
+    });
+    state = activeCoordinator.state;
+  }
+  try {
   // Reject an old serial checkpoint, or the OTHER worker's checkpoint, before any writes.
   if (shardEnabled) assertShardState(state, shardIndex, shardCount);
   else if (state.parallelShard) throw new Error("SERIAL_WORKER_CANNOT_USE_PARALLEL_CHECKPOINT");
@@ -1174,6 +1200,13 @@ async function main() {
   );
   if (fileErrors.length) {
     throw new Error(`INGESTION_DOCUMENT_FAILURES: ${fileErrors.length}/${selected.length} document(s) failed; see redacted error logs`);
+  }
+  } finally {
+    if (activeCoordinator) {
+      const session=activeCoordinator;
+      activeCoordinator=null;
+      await session.close();
+    }
   }
 }
 
