@@ -4,6 +4,7 @@
  * This closes physical HTTP/D1/Vectorize boundary only, NOT Drive PDF E2E.
  */
 import {randomBytes} from "node:crypto";
+import {extractQaTwoPagePdf} from "./qa-pr100-pdf-fixture.mjs";
 import {writeFileSync, mkdirSync} from "node:fs";
 import {join} from "node:path";
 
@@ -15,7 +16,7 @@ const root=process.env.QA_V2_JOB_KEY;
 const reportDir=process.env.RUNNER_TEMP || ".";
 const reportFile=join(reportDir,"qa-pr100-real-http.json");
 const report={schema:1,run,attempt,scope:"isolated-cloudflare-qa",
-  physicalWorker:true,realDrivePdf:false,geminiCalls:0,productionChanged:false,
+  physicalWorker:true,realPdfExtraction:false,realDrivePdf:false,geminiCalls:0,productionChanged:false,
   checks:[],status:"RUNNING"};
 function persist(){
   mkdirSync(reportDir,{recursive:true});
@@ -57,16 +58,21 @@ const doc="qa-pr100-"+run;
 const fp="fixture-revision-"+run+"-"+attempt;
 const owner="gh-"+run+"-"+randomBytes(12).toString("hex");
 const vectors=[
-  {id:"raw",layer:"raw",logicalId:"qa-raw-"+run,
-   metadata:{sourceFileId:doc,sourceFingerprint:fp,
-     text:"Synthetic QA source, not a real standard or customer document.",
-     fileName:"qa-fixture.txt",sourcePath:"qa-only",page:1,chunkIndex:0,
-     status:"active",contentType:"general"}},
+  {id:"raw1",layer:"raw",logicalId:"qa-raw-1-"+run,
+    metadata:{sourceFileId:doc,sourceFingerprint:fp,
+      text:"Synthetic QA PDF page one.",fileName:"qa-fixture.pdf",
+      sourcePath:"qa-only/fixture.pdf",page:1,chunkIndex:0,
+      status:"active",contentType:"general"}},
+  {id:"raw2",layer:"raw",logicalId:"qa-raw-2-"+run,
+    metadata:{sourceFileId:doc,sourceFingerprint:fp,
+      text:"Synthetic QA PDF page two.",fileName:"qa-fixture.pdf",
+      sourcePath:"qa-only/fixture.pdf",page:2,chunkIndex:0,
+      status:"active",contentType:"general"}},
   {id:"map",layer:"map",logicalId:"qa-map-"+run,
-   metadata:{sourceFileId:doc,sourceFingerprint:fp,
-     text:"QA synthetic source map for fixture page one.",
-     fileName:"qa-fixture.txt",sourcePath:"qa-only",page:1,pageEnd:1,
-     chunkIndex:-1,status:"active",contentType:"document-map"}}
+    metadata:{sourceFileId:doc,sourceFingerprint:fp,
+      text:"Synthetic two-page QA source map.",fileName:"qa-fixture.pdf",
+      sourcePath:"qa-only/fixture.pdf",page:1,pageEnd:2,
+      chunkIndex:-1,status:"active",contentType:"document-map"}}
 ];
 const values=idx=>Array.from({length:768},(_,i)=>i===idx?1:0);
 let lease;
@@ -109,25 +115,39 @@ async function main(){
      jobKey!=="drive:QaFixtureRoot_"+run)
     throw Error("QA_INVALID_EXECUTION_CONTEXT");
 
+  // This is the same unpdf parser used in scripts/drive-ingest.mjs.
+  const pages=await extractQaTwoPagePdf();
+  report.realPdfExtraction=true;
+  record("real two-page PDF text extraction",
+    pages.length===2&&pages[0].includes("1.2.3")&&pages[1].includes("1.2.4"));
+  vectors[0].metadata.text=pages[0];
+  vectors[1].metadata.text=pages[1];
+  vectors[2].metadata.text="Synthetic section map: "+pages.join(" | ");
+
   const response=await coord("claim",{owner,ttlMs:180000});
   lease=response.lease;
   record("exclusive D1 root lease",lease?.owner===owner&&lease.jobKey===jobKey);
 
-  const evidenceId="qa-evidence-"+run;
-  const evidence=await request("/api/immutable-archive-publish",{
-    action:"stage_evidence",documentId:doc,globalArchiveLease:lease,
-    evidence:{
-      logicalId:evidenceId,sourceFingerprint:fp,
-      text:"QA-SPEC synthetic fixture, section 1.2.3. Not a real standard.",
-      fileName:"qa-fixture.txt",sourcePath:"qa-only",page:1,chunkIndex:0
-    }
-  });
-  stageEpoch=evidence.documentEpoch;
-  record("immutable source Evidence staged",
-    evidence.staged===true&&Number.isSafeInteger(stageEpoch)&&stageEpoch>=1);
+  const evidenceIds=[];
+  for(let i=0;i<pages.length;i++){
+    const evidenceId="qa-evidence-"+run+"-page-"+(i+1);
+    const evidence=await request("/api/immutable-archive-publish",{
+      action:"stage_evidence",documentId:doc,globalArchiveLease:lease,
+      evidence:{
+        logicalId:evidenceId,sourceFingerprint:fp,text:pages[i],
+        fileName:"qa-fixture.pdf",sourcePath:"qa-only/fixture.pdf",
+        page:i+1,chunkIndex:0
+      }
+    });
+    if(stageEpoch===undefined)stageEpoch=evidence.documentEpoch;
+    record("immutable PDF Evidence page "+(i+1)+" staged",
+      evidence.staged===true&&evidence.documentEpoch===stageEpoch&&
+      Number.isSafeInteger(stageEpoch)&&stageEpoch>=1);
+    evidenceIds.push(evidenceId);
+  }
 
   const fakeManifest={
-    sourceFingerprint:fp,evidenceIds:[evidenceId],
+    sourceFingerprint:fp,evidenceIds,
     rawIds:["not-staged-raw"],mapIds:["not-staged-map"]
   };
   const incomplete=await request("/api/immutable-archive-publish",{
@@ -137,18 +157,22 @@ async function main(){
   record("incomplete generation cannot publish",
     incomplete.error==="INCOMPLETE_OR_STALE_PUBLICATION");
 
-  const raw=await stageVector(vectors[0],0);
-  record("RAW vector both indexes physical readback",
-    raw.staged===true&&raw.published===false&&
-    raw.documentEpoch===stageEpoch&&/^v2r-[1-9a-z]+-[a-f0-9]{40}$/.test(raw.stagedId));
-  const map=await stageVector(vectors[1],1);
-  record("Map vector both indexes physical readback",
+  const rawIds=[];
+  for(let i=0;i<2;i++){
+    const raw=await stageVector(vectors[i],i);
+    record("PDF page "+(i+1)+" RAW dual-index readback",
+      raw.staged===true&&raw.published===false&&
+      raw.documentEpoch===stageEpoch&&/^v2r-[1-9a-z]+-[a-f0-9]{40}$/.test(raw.stagedId));
+    rawIds.push(raw.stagedId);
+  }
+  const map=await stageVector(vectors[2],2);
+  record("two-page Map dual-index readback",
     map.staged===true&&map.published===false&&
     map.documentEpoch===stageEpoch&&/^v2m-[1-9a-z]+-[a-f0-9]{40}$/.test(map.stagedId));
 
   const manifest={
-    sourceFingerprint:fp,evidenceIds:[evidenceId],
-    rawIds:[raw.stagedId],mapIds:[map.stagedId]
+    sourceFingerprint:fp,evidenceIds,
+    rawIds,mapIds:[map.stagedId]
   };
   const publish=await request("/api/immutable-archive-publish",{
     action:"publish",documentId:doc,manifest,globalArchiveLease:lease
