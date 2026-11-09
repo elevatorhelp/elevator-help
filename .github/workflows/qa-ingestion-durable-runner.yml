@@ -1,0 +1,34 @@
+name: QA durable D1 archive runner
+run-name: Coordinator heartbeat and D1 checkpoint recovery offline QA
+
+on:
+  pull_request:
+    paths:
+      - "scripts/drive-ingest.mjs"
+      - "scripts/ingestion-coordinator-client.mjs"
+      - "scripts/test-ingestion-coordinator-client.mjs"
+      - ".github/workflows/qa-ingestion-durable-runner.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  durable-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Test root ownership, CAS, D1 recovery and failed heartbeat
+        run: node scripts/test-ingestion-coordinator-client.mjs
+      - name: Install ordinary ingestion dependencies
+        run: npm ci
+      - name: Regress existing incremental ingestion checkpoints and budget
+        run: node scripts/test-incremental-ingestion.mjs
+      - name: Syntax check for actual runner
+        run: node --check scripts/drive-ingest.mjs
+      # No Cloudflare connection, secrets, paid Gemini, or document access.
