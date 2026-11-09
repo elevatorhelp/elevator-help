@@ -4,6 +4,16 @@
  */
 const MAX_MANIFEST_ENTRIES=4096;
 const STAGED_ID=/^v2[rm]-[1-9a-z][0-9a-z]*-[a-f0-9]{40}$/;
+function idsForEpoch(ids,layer,epoch){
+  return Array.isArray(ids) && ids.every(id=>{
+    if(typeof id!=="string"||!STAGED_ID.test(id))return false;
+    const prefix=layer==="raw"?"v2r-":"v2m-";
+    if(!id.startsWith(prefix))return false;
+    const encoded=id.slice(4,id.lastIndexOf("-"));
+    const parsed=parseInt(encoded,36);
+    return Number.isSafeInteger(parsed)&&parsed===epoch&&parsed.toString(36)===encoded;
+  });
+}
 
 export function assertManualQaV2Environment(env){
   if(env.INGESTION_V2_QA_MODE!=="true"||
@@ -79,7 +89,8 @@ export function verifyV2StageBatch(result,expected,layer,record){
      !validIds(result.stagedIds,layer)|| 
      !Number.isSafeInteger(result.documentEpoch))
     throw Error("V2_QA_INVALID_STAGE_RECEIPT");
-  if(layer==="evidence" || (layer!=="raw" && layer!=="map"))
+  if(layer==="evidence" || (layer!=="raw" && layer!=="map") ||
+     !idsForEpoch(result.stagedIds,layer,result.documentEpoch))
     throw Error("V2_QA_INVALID_VECTOR_LAYER");
   attachDocumentEpoch(record,result.documentEpoch);
   return result.stagedIds;
@@ -106,7 +117,9 @@ export function buildQaImmutableManifest(record,sourceFingerprint){
      !Number.isSafeInteger(record.documentEpoch)||
      !validIds(record.evidenceIds,"evidence")||
      !validIds(record.ids,"raw")||
-     !validIds(record.mapIds,"map"))
+     !validIds(record.mapIds,"map") ||
+     !idsForEpoch(record.ids,"raw",record.documentEpoch) ||
+     !idsForEpoch(record.mapIds,"map",record.documentEpoch))
     return null;
   return {
     sourceFingerprint,
