@@ -33,6 +33,8 @@ jobs:
         run: |
           node scripts/test-incremental-ingestion.mjs
           node scripts/test-ingestion-coordinator-client.mjs
+      - name: Extract original two-page synthetic PDF with production parser
+        run: node --input-type=module -e 'import {extractQaTwoPagePdf} from "./scripts/qa-pr100-pdf-fixture.mjs"; const pages=await extractQaTwoPagePdf(); if(pages.length!==2)process.exit(1); console.log("PASS: two-page PDF text extraction");'
       - name: Immutable publication revision and exact Evidence QA
         run: |
           node --experimental-strip-types scripts/test-ingestion-document-staging-epoch.ts
