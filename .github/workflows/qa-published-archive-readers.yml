@@ -1,0 +1,31 @@
+name: QA published archive reader fencing
+run-name: Published Evidence and dual Vectorize reader visibility
+
+on:
+  pull_request:
+    paths:
+      - "app/lib/ingestion-published-reader.ts"
+      - "app/lib/ingestion-immutable-publication.ts"
+      - "app/lib/archive-evidence-index.ts"
+      - "app/api/ask/route.ts"
+      - "scripts/test-published-retrieval.ts"
+      - ".github/workflows/qa-published-archive-readers.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  published-readers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Check actual Evidence and Vectorize query/getByIds visibility
+        run: node --experimental-strip-types scripts/test-published-retrieval.ts
+      - name: Recheck immutable three-layer publication
+        run: node --experimental-strip-types scripts/test-ingestion-immutable-publication.ts
+      # No Production DB, no paid Gemini/Drive requests, no Vectorize writes.
