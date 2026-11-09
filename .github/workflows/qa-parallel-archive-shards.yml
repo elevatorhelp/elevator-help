@@ -1,0 +1,69 @@
+name: QA parallel archive shard isolation
+run-name: Parallel archive shard offline QA
+
+on:
+  pull_request:
+    paths:
+      - "scripts/archive-sharding.mjs"
+      - "scripts/prepare-parallel-shard.mjs"
+      - "scripts/test-archive-sharding.mjs"
+      - ".github/workflows/qa-parallel-archive-shards.yml"
+  workflow_dispatch:
+    inputs:
+      checkpoint_run_id:
+        description: "Exact existing serial ingestion run ID (read-only checkpoint)"
+        required: true
+        type: string
+      checkpoint_attempt:
+        description: "Run attempt for exact matching serial checkpoint"
+        required: true
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  isolate:
+    name: Offline shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Test deterministic shard and persisted-state invariants
+        run: node scripts/test-archive-sharding.mjs
+      - name: Install dependencies for optional real-checkpoint test
+        if: github.event_name == 'workflow_dispatch'
+        run: npm ci
+      - name: Restore exact existing serial checkpoint (read-only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: checkpoint
+        with:
+          path: .ingestion-state
+          key: drive-ingestion-state-${{ inputs.checkpoint_run_id }}-${{ inputs.checkpoint_attempt }}
+      - name: Fail closed if exact serial checkpoint is not restored
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          test "${{ steps.checkpoint.outputs.cache-hit }}" = "true"
+          test -s .ingestion-state/drive.json
+      - name: Migrate shard checkpoint from same verified source (offline)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ARCHIVE_SHARD_INDEX: ${{ matrix.shard }}
+          ARCHIVE_SHARD_COUNT: "2"
+          ALLOW_LEGACY_SHARD_BOOTSTRAP: "true"
+          STATE_PATH: .ingestion-state/drive.json
+        run: |
+          node scripts/prepare-parallel-shard.mjs
+          node -e 'const fs=require("node:fs"); const s=JSON.parse(fs.readFileSync(".ingestion-state/drive.json")); if (s.parallelShard.index!==Number(process.env.ARCHIVE_SHARD_INDEX)) process.exit(1)'
+          echo "PASS: shard-specific checkpoint restored and partitioned offline; NO production writes"
+      # Deliberately no cache/save, Drive API, Gemini, D1, or Vectorize write here.
