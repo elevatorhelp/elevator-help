@@ -33,3 +33,8 @@ jobs:
         run: |
           node scripts/test-incremental-ingestion.mjs
           node scripts/test-ingestion-coordinator-client.mjs
+      - name: Immutable publication revision and exact Evidence QA
+        run: |
+          node --experimental-strip-types scripts/test-ingestion-document-staging-epoch.ts
+          node --experimental-strip-types scripts/test-ingestion-immutable-publication.ts
+          node --experimental-strip-types scripts/test-ingestion-v2-evidence-references.ts
