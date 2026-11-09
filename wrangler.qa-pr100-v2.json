@@ -1,0 +1,41 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "elevator-help-pr100-v2-qa",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "CORTEX_DB",
+      "database_name": "elevator-help-lease-test-01",
+      "database_id": "02716877-15e3-4478-9e24-f1ba6e5dfb00"
+    }
+  ],
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "elevator-help-staging-test"
+    },
+    {
+      "binding": "VECTORIZE_V2",
+      "index_name": "elevator-help-staging-test-v2"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "AUTH_REQUIRED": "false",
+    "INGESTION_STAGED_PUBLICATION": "false",
+    "GEMINI_MAX_CALLS_PER_INGEST_REQUEST": "0"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
