@@ -1,0 +1,33 @@
+name: QA immutable real Drive runner offline contracts
+on:
+  pull_request:
+    paths:
+      - "scripts/drive-ingest.mjs"
+      - "scripts/ingestion-v2-qa-guard.mjs"
+      - "scripts/ingestion-coordinator-client.mjs"
+      - "scripts/test-ingestion-v2-qa-guard.mjs"
+      - "app/api/drive-ingest-batch/route.ts"
+      - "app/api/document-map-ingest/route.ts"
+      - ".github/workflows/qa-drive-v2-runner.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Syntax and fail-closed QA contracts (no secrets or API calls)
+        run: |
+          node --check scripts/drive-ingest.mjs
+          node --check scripts/ingestion-coordinator-client.mjs
+          node --check scripts/ingestion-v2-qa-guard.mjs
+          node scripts/test-ingestion-v2-qa-guard.mjs
+      - name: Regression of legacy scheduled serial runner
+        run: |
+          node scripts/test-incremental-ingestion.mjs
+          node scripts/test-ingestion-coordinator-client.mjs
