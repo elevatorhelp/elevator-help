@@ -24,9 +24,15 @@ export function validateCoordinatorState(state,rootId){
 export async function createIngestionCoordinatorSession({
   token,rootId,runId,runAttempt="1",legacyState,bootstrapApproved=false,
   fetchImpl=fetch,setTimer=setInterval,clearTimer=clearInterval,
-  endpoint=COORDINATOR_ENDPOINT,
+  endpoint=COORDINATOR_ENDPOINT,qaOnly=false,
 }){
-  if(endpoint!==COORDINATOR_ENDPOINT||
+  const qaEndpointAllowed=qaOnly===true &&
+    process.env.INGESTION_V2_QA_MODE==="true" &&
+    process.env.GITHUB_ACTIONS==="true" &&
+    process.env.GITHUB_EVENT_NAME==="workflow_dispatch" &&
+    ( /^http:\/\/(?:127\.0\.0\.1|localhost):[1-9][0-9]{1,4}\/api\/ingestion-coordinator$/.test(endpoint) ||
+      /^https:\/\/[a-z0-9-]*qa[a-z0-9-]*\.[a-z0-9-]+\.workers\.dev\/api\/ingestion-coordinator$/i.test(endpoint) );
+  if((endpoint!==COORDINATOR_ENDPOINT&&!qaEndpointAllowed)||
     typeof token!=="string"||token.length<24||
     typeof rootId!=="string"||!/^[-A-Za-z0-9_]{10,128}$/.test(rootId)||
     typeof runId!=="string"||!/^[1-9][0-9]{5,19}$/.test(runId)||
