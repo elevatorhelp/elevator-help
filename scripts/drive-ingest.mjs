@@ -1262,9 +1262,18 @@ async function main() {
         const manifest=buildQaImmutableManifest(next,currentFingerprint);
         if(manifest && next.publishedFingerprint!==currentFingerprint){
           // Complete layer receipts and their checkpoint exist before publication.
-          const result=await callJsonEndpoint(IMMUTABLE_ENDPOINT,{
-            action:"publish",documentId:file.id,manifest,
-          },ingestToken,"Atomic V2 publication");
+          let result;
+          try{
+            result=await callJsonEndpoint(IMMUTABLE_ENDPOINT,{
+              action:"publish",documentId:file.id,manifest,
+            },ingestToken,"Atomic V2 publication");
+          }catch{
+            // D1 CAS may have committed before an HTTP response was lost.
+            // A read-only exact manifest attestation closes this crash window.
+            result=await callJsonEndpoint(IMMUTABLE_ENDPOINT,{
+              action:"verify_published",documentId:file.id,manifest,
+            },ingestToken,"V2 publication reconciliation");
+          }
           assertQaImmutablePublish(result,next.documentEpoch);
           next.publishedFingerprint=currentFingerprint;
           next.publishedEpoch=next.documentEpoch;
