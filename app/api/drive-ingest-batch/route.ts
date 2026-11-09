@@ -1,4 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import {stageImmutableVectorPair} from "../../lib/ingestion-immutable-publication";
+import {claimDocumentStagingEpoch} from "../../lib/ingestion-document-staging-epoch";
+import type {CoordinatorDB,ArchiveLease} from "../../lib/ingestion-global-coordinator";
 import { NextRequest, NextResponse } from "next/server";
 import {makeGlobalArchiveWriteGuard, GlobalArchiveWriteDenied} from "../../lib/ingestion-global-write-gate";
 import {
@@ -366,6 +369,7 @@ ${JSON.stringify(payload)}
 }
 
 export async function POST(request: NextRequest) {
+  let qaStageRequest=false;
   try {
     const expectedToken = process.env.INGESTION_TOKEN;
     const auth = request.headers.get("authorization") || "";
@@ -376,10 +380,17 @@ export async function POST(request: NextRequest) {
 
     const body: any = await request.json();
     const action = body?.action || "upsert";
+    qaStageRequest=action==="stage_upsert_v2";
     const { env } = getCloudflareContext();
     const vectorize = (env as any).VECTORIZE;
     const vectorizeV2 = (env as any).VECTORIZE_V2;
     const archiveDb = (env as any).CORTEX_DB;
+    if(qaStageRequest && (
+       (env as any).INGESTION_IMMUTABLE_PUBLICATION_ENABLED!=="true" ||
+       (env as any).INGESTION_COORDINATOR_ENABLED!=="true" ||
+       (env as any).INGESTION_GLOBAL_WRITE_GATE_ENABLED!=="true" ||
+       !archiveDb?.prepare
+    ))return NextResponse.json({ok:false,error:"V2_STAGING_DISABLED"},{status:404});
 
     if (action === "status") {
       return NextResponse.json({
@@ -394,7 +405,10 @@ export async function POST(request: NextRequest) {
 
     // Global ownership gate is disabled by default. In strict mode EVERY
     // write action (delete, Evidence, RAW) must have the live root lease.
-    const guardArchiveWrite=makeGlobalArchiveWriteGuard(env as any, body);
+    const guardArchiveWrite=makeGlobalArchiveWriteGuard(
+      qaStageRequest?{...(env as any),INGESTION_GLOBAL_WRITE_GATE_ENABLED:"true"}:env as any,
+      body,
+    );
     await guardArchiveWrite();
 
     if (!vectorize || !vectorizeV2) {
@@ -558,6 +572,37 @@ export async function POST(request: NextRequest) {
       }),
     );
 
+    if(qaStageRequest){
+      const lease=body?.globalArchiveLease as ArchiveLease|undefined;
+      const db=archiveDb as CoordinatorDB;
+      const fp=chunks[0]?.sourceFingerprint;
+      const doc=chunks[0]?.sourceFileId;
+      if(typeof fp!=="string"||!fp||typeof doc!=="string"||!doc||
+         chunks.some(chunk=>chunk.sourceFingerprint!==fp||chunk.sourceFileId!==doc))
+        return NextResponse.json({ok:false,error:"V2_MIXED_DOCUMENT_OR_FINGERPRINT"},{status:400});
+      await guardArchiveWrite();
+      const epoch=await claimDocumentStagingEpoch(db,lease!,doc,fp);
+      if(epoch===null)
+        return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
+      const stagedIds:string[]=[];
+      for(const {chunk,metadata,index} of vectorRecords){
+        await guardArchiveWrite();
+        const physicalId=await stageImmutableVectorPair(
+          db,lease!,doc,"raw",
+          {logicalId:chunk.id,sourceFingerprint:fp,
+           metadata,legacyValues:embeddings[index],
+           multilingualValues:multilingualEmbeddings[index]},
+          [vectorize,vectorizeV2],Date.now(),epoch,
+        );
+        stagedIds.push(physicalId);
+      }
+      return NextResponse.json({
+        ok:true,staged:true,published:false,
+        documentEpoch:epoch,stagedIds,
+        rawEmbeddingVersion:RAW_EMBEDDING_VERSION,
+      });
+    }
+
     await guardArchiveWrite();
     await vectorize.upsert(legacyVectors);
     await guardArchiveWrite();
@@ -576,6 +621,8 @@ export async function POST(request: NextRequest) {
       ),
     });
   } catch (error) {
+    if(qaStageRequest)
+      return NextResponse.json({ok:false,error:"V2_RAW_STAGING_NOT_VERIFIED"},{status:409});
     if(error instanceof GlobalArchiveWriteDenied)
       return NextResponse.json({ok:false,error:error.code},{status:409});
     console.error("Drive ingestion error:", error);
