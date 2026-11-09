@@ -6,8 +6,12 @@ on:
     paths:
       - "app/api/ingestion-coordinator/**"
       - "app/lib/ingestion-global-coordinator.ts"
+      - "app/lib/ingestion-global-write-gate.ts"
+      - "app/api/drive-ingest-batch/route.ts"
+      - "app/api/document-map-ingest/route.ts"
       - "docs/ingestion-global-coordinator-schema.sql"
       - "scripts/test-ingestion-global-coordinator.ts"
+      - "scripts/test-global-ingestion-write-gate.ts"
       - ".github/workflows/qa-ingestion-global-coordinator.yml"
   workflow_dispatch:
 
@@ -27,4 +31,6 @@ jobs:
           node-version: "22"
       - name: Verify exclusive D1-compatible SQL, recovery and fencing
         run: node --experimental-strip-types scripts/test-ingestion-global-coordinator.ts
+      - name: Verify Evidence, RAW, Map and delete write-admission gates
+        run: node --experimental-strip-types scripts/test-global-ingestion-write-gate.ts
       # No Drive, Gemini, Cloudflare credential or Production mutation.

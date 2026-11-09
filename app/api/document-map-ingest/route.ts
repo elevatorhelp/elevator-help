@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
+import {makeGlobalArchiveWriteGuard, GlobalArchiveWriteDenied} from "../../lib/ingestion-global-write-gate";
 import {
   MULTILINGUAL_EMBEDDING_VERSION,
   embedRetrievalDocuments,
@@ -325,6 +326,8 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     const { env } = getCloudflareContext();
+    const guardArchiveWrite=makeGlobalArchiveWriteGuard(env as any, body);
+    await guardArchiveWrite();
     const ai = (env as any).AI;
     const vectorize = (env as any).VECTORIZE;
     const vectorizeV2 = (env as any).VECTORIZE_V2;
@@ -429,7 +432,9 @@ export async function POST(request: NextRequest) {
       },
     }));
 
+    await guardArchiveWrite();
     await vectorize.upsert(legacyVectors);
+    await guardArchiveWrite();
     await vectorizeV2.upsert(multilingualVectors);
 
     return NextResponse.json({
@@ -440,6 +445,8 @@ export async function POST(request: NextRequest) {
       nodes,
     });
   } catch (error) {
+    if(error instanceof GlobalArchiveWriteDenied)
+      return NextResponse.json({ok:false,error:error.code},{status:409});
     console.error("Document-map ingestion error:", error);
     return NextResponse.json(
       {
