@@ -8,7 +8,7 @@ export const LEASE_TTL_MS=180_000;
 export const HEARTBEAT_MS=45_000;
 const MAX_SOURCE_FILES=200_000;
 
-export function validateCoordinatorState(state,rootId){
+export function validateCoordinatorState(state,rootId,{qaOnly=false}={}){
   if(!state||typeof state!=="object"||Array.isArray(state)||
      state.version!==3||state.parallelShard||
      !state.scopes||typeof state.scopes!=="object"||Array.isArray(state.scopes))
@@ -16,7 +16,7 @@ export function validateCoordinatorState(state,rootId){
   const root=state.scopes[rootId];
   if(!root||typeof root!=="object"||Array.isArray(root)||
      !root.files||typeof root.files!=="object"||Array.isArray(root.files)||
-     Object.keys(root.files).length<100||
+     Object.keys(root.files).length<(qaOnly?1:100)||
      Object.keys(root.files).length>MAX_SOURCE_FILES)
      throw Error("D1_COORDINATOR_INSUFFICIENT_SCOPE_CHECKPOINT");
   return state;
@@ -38,7 +38,7 @@ export async function createIngestionCoordinatorSession({
     typeof runId!=="string"||!/^[1-9][0-9]{5,19}$/.test(runId)||
     !/^[1-9][0-9]{0,5}$/.test(String(runAttempt)))
     throw Error("D1_COORDINATOR_INVALID_EXECUTION_CONTEXT");
-  validateCoordinatorState(legacyState,rootId);
+  if(!qaOnly)validateCoordinatorState(legacyState,rootId);
   const jobKey="drive:"+rootId;
   const unique=createHash("sha256").update(runId+":"+runAttempt).digest("hex").slice(0,24);
   const owner=`gh-${runId}-${unique}`;
@@ -76,7 +76,7 @@ export async function createIngestionCoordinatorSession({
   }
   async function checkpoint(state){
     await assertLive();
-    validateCoordinatorState(state,rootId);
+    validateCoordinatorState(state,rootId,{qaOnly});
     const result=await request("write_checkpoint",{
       lease,previousVersion:checkpointVersion,state,
     }).catch(()=>{
@@ -106,7 +106,7 @@ export async function createIngestionCoordinatorSession({
          typeof snapshot.checksum!=="string"||
          !/^[a-f0-9]{64}$/.test(snapshot.checksum))
          throw Error("D1_COORDINATOR_INVALID_CHECKPOINT_SNAPSHOT");
-      recovered=validateCoordinatorState(snapshot.state,rootId);
+      recovered=validateCoordinatorState(snapshot.state,rootId,{qaOnly});
       checkpointVersion=snapshot.version;
     }catch(error){
       if(error?.message!=="CHECKPOINT_NOT_FOUND_OR_LEASE_STALE"||!bootstrapApproved)
