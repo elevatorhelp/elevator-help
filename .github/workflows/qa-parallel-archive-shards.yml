@@ -38,13 +38,12 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Install dependencies for real checkpoint and canary tests
+        run: npm ci
       - name: Test deterministic shard assignment and state preservation
         run: node scripts/test-archive-sharding.mjs
       - name: Test two-process state merge and serial fallback
         run: node scripts/test-dual-indexer-checkpoint.mjs
-      - name: Install dependencies for optional real-checkpoint test
-        if: github.event_name == 'workflow_dispatch'
-        run: npm ci
       - name: Restore exact existing serial checkpoint (read only)
         if: github.event_name == 'workflow_dispatch'
         id: checkpoint
@@ -80,13 +79,12 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Install dependencies for real checkpoint and canary tests
+        run: npm ci
       - name: Test deterministic shard assignment and state preservation
         run: node scripts/test-archive-sharding.mjs
       - name: Test two-process state merge and serial fallback
         run: node scripts/test-dual-indexer-checkpoint.mjs
-      - name: Install dependencies for optional real-checkpoint test
-        if: github.event_name == 'workflow_dispatch'
-        run: npm ci
       - name: Restore exact existing serial checkpoint (read only)
         if: github.event_name == 'workflow_dispatch'
         id: checkpoint
