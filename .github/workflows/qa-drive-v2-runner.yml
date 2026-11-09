@@ -21,6 +21,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
+      - name: Install locked Node dependencies for legacy regression
+        run: npm ci
       - name: Syntax and fail-closed QA contracts (no secrets or API calls)
         run: |
           node --check scripts/drive-ingest.mjs
