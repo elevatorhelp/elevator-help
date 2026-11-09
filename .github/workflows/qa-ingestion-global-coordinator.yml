@@ -1,0 +1,30 @@
+name: QA global ingestion coordinator
+run-name: QA D1 durable checkpoint and global lease fencing
+
+on:
+  pull_request:
+    paths:
+      - "app/api/ingestion-coordinator/**"
+      - "app/lib/ingestion-global-coordinator.ts"
+      - "docs/ingestion-global-coordinator-schema.sql"
+      - "scripts/test-ingestion-global-coordinator.ts"
+      - ".github/workflows/qa-ingestion-global-coordinator.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coordinator-sqlite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Verify exclusive D1-compatible SQL, recovery and fencing
+        run: node --experimental-strip-types scripts/test-ingestion-global-coordinator.ts
+      # No Drive, Gemini, Cloudflare credential or Production mutation.
