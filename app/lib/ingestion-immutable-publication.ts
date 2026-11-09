@@ -329,6 +329,17 @@ export async function filterVisibleImmutableVectors<T extends VectorMatch>(
          match.metadata?.sourceFingerprint!==published.source_fingerprint||
          !metadataValid(match.metadata||{},doc,published.source_fingerprint as string,
              staged.layer,staged.generation))continue;
+      // A generation-looking ID and matching metadata alone are insufficient:
+      // the exact physical ID must have a durable, revision-bound staging receipt.
+      try {
+        const receipt=await db.prepare(`
+          SELECT 1 AS present FROM ingestion_v2_vector_receipts
+          WHERE staged_id=? AND document_id=? AND generation=?
+            AND layer=? AND source_fingerprint=?
+        `).bind(match.id,doc,staged.generation,staged.layer,
+                published.source_fingerprint).first();
+        if(Number(receipt?.present)!==1)continue;
+      }catch{continue;}
       visible.push(match);
     }else if(legacyAllowed&&!published){
       visible.push(match);

@@ -11,6 +11,7 @@ import {
 } from "../../lib/internal-retrieval";
 import { requiresStandardSafetyCheck } from "../../lib/query-policy";
 import { multilingualRetrievalFromEnv } from "../../lib/retrieval-backend";
+import { publishedArchiveEnv } from "../../lib/ingestion-published-reader";
 import { addWebSourceLabel } from "../../lib/source-label";
 import { authorizeChatRequest } from "../../lib/request-auth";
 import {
@@ -374,7 +375,7 @@ async function retrieveFaultEvidenceWithoutGemini(question: string) {
     normalizedQuestion: question,
     interpretation: null,
   };
-  const { env } = getCloudflareContext();
+  const env = publishedArchiveEnv(getCloudflareContext().env as any);
   const evidence = await retrieveInternalEvidence(
     question,
     route,
@@ -449,7 +450,7 @@ export async function POST(request: NextRequest) {
     const history = normalizeHistory(
       body?.history ?? body?.messages ?? body?.conversation,
     );
-    const { env } = getCloudflareContext();
+    const env = publishedArchiveEnv(getCloudflareContext().env as any);
     runtimeEnv = env;
     const requesterKey =
       authorization.userId ||
@@ -571,7 +572,7 @@ export async function POST(request: NextRequest) {
         isStandardsQuestion(effective, route)
       ) {
         try {
-          const { env } = getCloudflareContext();
+          const env = publishedArchiveEnv(getCloudflareContext().env as any);
           const result = await answerStandardsQuestion(
             effective,
             route,
@@ -646,7 +647,7 @@ export async function POST(request: NextRequest) {
       let standardsVerificationUnavailable = false;
       if (mustVerify && route) {
         try {
-          const { env } = getCloudflareContext();
+          const env = publishedArchiveEnv(getCloudflareContext().env as any);
           const result = await answerStandardsQuestion(
             effective,
             route,
@@ -699,7 +700,7 @@ export async function POST(request: NextRequest) {
       let internalEvidenceAttemptedButUnavailable = false;
       if (wantsInternal) {
         try {
-          const { env } = getCloudflareContext();
+          const env = publishedArchiveEnv(getCloudflareContext().env as any);
           const evidence = await retrieveInternalEvidence(
             effective,
             route,
