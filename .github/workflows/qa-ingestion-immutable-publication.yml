@@ -1,0 +1,28 @@
+name: QA immutable three-layer ingestion publication
+run-name: D1 atomic three-layer publication and stale-worker isolation
+
+on:
+  pull_request:
+    paths:
+      - "app/lib/ingestion-immutable-publication.ts"
+      - "docs/ingestion-immutable-publication-schema.sql"
+      - "scripts/test-ingestion-immutable-publication.ts"
+      - ".github/workflows/qa-ingestion-immutable-publication.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  immutable-d1:
+    name: Simulate stale two-process publication and source-page visibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Verify full source generation publication on two SQLite connections
+        run: node --experimental-strip-types scripts/test-ingestion-immutable-publication.ts
+      # No paid Gemini, Google Drive, Production D1 or Vectorize operations.
