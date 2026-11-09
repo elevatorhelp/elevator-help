@@ -237,6 +237,16 @@ export async function publishImmutableThreeLayerGeneration(
     manifest.evidenceIds.length,manifest.mapIds.length,now,
     lease.jobKey,lease.owner,lease.generation,now,
   ];
+  // Vector manifests carry the actual physical V2 IDs returned after both
+  // Vectorize indexes pass readback. Exact Evidence uses stable logical IDs.
+  // Comparing physical IDs to logical_id silently blocked every real publish.
+  for(const [table,layer,ids] of groups){
+    if(layer && ids.some(id=>{
+      const decoded=parseImmutableVectorId(id);
+      return !decoded || decoded.layer!==layer ||
+        decoded.generation!==stageEpoch;
+    }))return false;
+  }
   const clauses:string[]=[];
   for(const [table,layer,ids] of groups){
     const layerClause=layer?" AND layer=?":"";
@@ -246,7 +256,7 @@ export async function publishImmutableThreeLayerGeneration(
         SELECT 1 FROM ${table} x
         WHERE x.document_id=? AND x.generation=?${layer?" AND x.layer=?":""}
           AND (x.source_fingerprint<>? OR NOT EXISTS(
-            SELECT 1 FROM json_each(?) j WHERE j.value=x.logical_id))
+            SELECT 1 FROM json_each(?) j WHERE j.value=x.${layer?"staged_id":"logical_id"}))
       )`);
     params.push(documentId,stageEpoch,...(layer?[layer]:[]),ids.length,
       documentId,stageEpoch,...(layer?[layer]:[]),
