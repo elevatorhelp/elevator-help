@@ -114,6 +114,7 @@ for(const [code,text] of [
   [runner,"buildQaImmutableManifest(next,currentFingerprint)"],
   [runner,'action:"stage_evidence"'],
   [runner,'action:"publish"'],
+  [runner,'action:"verify_published"'],
   [runner,'action:V2_QA?"stage_upsert_v2":"upsert"'],
   [runner,'action:"stage_map_v2"'],
   [raw,"stageImmutableVectorPair("],
