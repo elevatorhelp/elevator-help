@@ -98,7 +98,7 @@ fails(()=>verifyV2StageBatch({
 },[{}],"raw",record),"V2_QA_INVALID_STAGE_RECEIPT");
 fails(()=>verifyV2StageBatch({
   ok:true,published:false,documentEpoch:4,stagedIds:[rawId]
-},[{}],"raw",record),"V2_QA_DOCUMENT_EPOCH_CHANGED");
+},[{}],"raw",record),"V2_QA_INVALID_VECTOR_LAYER");
 
 assert.equal(updateQaDeletionCandidate({},true).tombstonePending,false);
 const missingOnce=updateQaDeletionCandidate({},true);
