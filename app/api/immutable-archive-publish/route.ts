@@ -113,9 +113,13 @@ export async function POST(request:Request){
       if(!manifest||typeof manifest!=="object"||Array.isArray(manifest))
         return json({ok:false,error:"INVALID_MANIFEST"},400);
       validateFullImmutableManifest(manifest);
-      const documentEpoch=await claimDocumentStagingEpoch(
-        db,lease!,doc,manifest.sourceFingerprint);
-      if(documentEpoch===null)
+      // Read-only reconciliation MUST NOT claim/rewrite a document epoch.
+      const staged=await db.prepare(`
+        SELECT staging_epoch AS epoch FROM ingestion_v2_document_epochs
+        WHERE document_id=? AND job_key=? AND source_fingerprint=?
+      `).bind(doc,lease!.jobKey,manifest.sourceFingerprint).first();
+      const documentEpoch=Number(staged?.epoch);
+      if(!Number.isSafeInteger(documentEpoch)||documentEpoch<1)
         return json({ok:false,error:"DOCUMENT_STAGING_EPOCH_DENIED"},409);
       const manifestHash=createHash("sha256")
         .update(JSON.stringify([doc,documentEpoch,manifest]),"utf8").digest("hex");
