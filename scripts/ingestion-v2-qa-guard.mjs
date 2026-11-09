@@ -41,6 +41,13 @@ export function assertManualQaV2Environment(env){
   ]){
     if(env[name]!==origin+suffix)throw Error("V2_QA_ENDPOINT_MISMATCH");
   }
+  // QA must never bulk-copy confidential customer documents from the live
+  // default Drive root into an isolated test index.
+  const productionRoot="1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5";
+  if(!/^[a-zA-Z0-9_-]{10,128}$/.test(env.DRIVE_FOLDER_ID||"") ||
+     env.DRIVE_FOLDER_ID===productionRoot ||
+     env.INGESTION_V2_QA_DRIVE_ROOT!==env.DRIVE_FOLDER_ID)
+    throw Error("V2_QA_SEPARATE_DRIVE_FIXTURE_REQUIRED");
   if(!Number.isSafeInteger(Number(env.MAX_FILES))||
      Number(env.MAX_FILES)<1||Number(env.MAX_FILES)>2)
     throw Error("V2_QA_UNBOUNDED_DOCUMENTS");
