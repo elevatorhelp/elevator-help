@@ -372,7 +372,8 @@ function fingerprint(file) {
   // A staging revision changes when the embedding/map/evidence algorithms change.
   // The legacy scheduled serial writer retains its exact previous fingerprint.
   return V2_QA ? createHash("sha256").update(JSON.stringify([
-    source,RAW_EMBEDDING_VERSION,DOCUMENT_MAP_VERSION,ARCHIVE_INDEX_VERSION,
+    source,file.name||"",file.sourcePath||"",
+    RAW_EMBEDDING_VERSION,DOCUMENT_MAP_VERSION,ARCHIVE_INDEX_VERSION,
     "v2-immutable-drive-pdf",
   ])).digest("hex") : source;
 }
