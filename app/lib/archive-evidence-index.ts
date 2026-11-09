@@ -1,4 +1,5 @@
 import type { ReferenceIdentifier } from "./reference-identifiers.ts";
+import {searchPublishedImmutableEvidence} from "./ingestion-v2-evidence-references.ts";
 
 export type ArchiveEvidenceRow = {
   id: string;
@@ -39,6 +40,29 @@ async function onlyUnsupersededLegacyRows(
     }
   }
   return safe;
+}
+
+async function mergePublishedEvidenceRows(
+  db:any,rows:ArchiveEvidenceRow[],
+  identifiers:ReferenceIdentifier[],clauses:string[],limit:number,
+):Promise<ArchiveEvidenceRow[]>{
+  const legacy=await onlyUnsupersededLegacyRows(db,rows);
+  if(!db?.__immutableReadGate)return legacy;
+  // New generation's exact source pages are discoverable only via the
+  // published generation + matching identifier/clause terms, never staging.
+  let published:ArchiveEvidenceRow[];
+  try {
+    published=await searchPublishedImmutableEvidence(db,identifiers,clauses,
+      Math.max(1,Math.min(100,limit)));
+  }catch {
+    // An untrusted or unavailable D1 publication/terms table cannot prove
+    // which source pages are current. Fail closed for the entire result.
+    return [];
+  }
+  return [...published,...legacy]
+    .sort((a,b)=>(Number(b.matched_identifiers)||0)-(Number(a.matched_identifiers)||0)||
+      Number(a.page)-Number(b.page))
+    .slice(0,Math.max(1,Math.min(100,limit)));
 }
 
 // Prefer the compact index on reindexed chunks; legacy tables continue to
@@ -111,7 +135,7 @@ export async function searchArchiveEvidenceIndex(
   ];
   try {
     const result = await archiveDb.prepare(sql).bind(...bound).all();
-    return onlyUnsupersededLegacyRows(archiveDb,(result?.results || []) as ArchiveEvidenceRow[]);
+    return mergePublishedEvidenceRows(archiveDb,(result?.results || []) as ArchiveEvidenceRow[],identifiers,clauses,limit);
   } catch (error) {
     // Older databases may have the compact JSON table but no FTS virtual
     // table. Preserve exact retrieval while the schema repair is deployed.
@@ -122,6 +146,6 @@ export async function searchArchiveEvidenceIndex(
     );
     if (fallbackSql === sql) throw error;
     const result = await archiveDb.prepare(fallbackSql).bind(...bound.slice(1)).all();
-    return onlyUnsupersededLegacyRows(archiveDb,(result?.results || []) as ArchiveEvidenceRow[]);
+    return mergePublishedEvidenceRows(archiveDb,(result?.results || []) as ArchiveEvidenceRow[],identifiers,clauses,limit);
   }
 }

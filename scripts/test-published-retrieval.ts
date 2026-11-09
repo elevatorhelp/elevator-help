@@ -33,7 +33,7 @@ const rawDb={
        ?{present:1}:null;
      throw Error("UNKNOWN_D1_SQL");
    },
-   all:async()=>({results:[
+   all:async()=>({results:sql.includes("ingestion_v2_evidence_terms")?[]:[
      row("old","doc-published"),row("current","doc-unpublished"),
    ]}),
   }),
@@ -69,7 +69,10 @@ assert.equal(noDb.CORTEX_DB,undefined);
 const downDb={
  prepare:(sql:string)=>({
   bind:()=>({first:async()=>{throw Error("D1_NOT_AVAILABLE");},
-    all:async()=>({results:[row("old","doc-published")]})}),
+    all:async()=>{
+      if(sql.includes("ingestion_v2_evidence_terms"))throw Error("D1_NOT_AVAILABLE");
+      return {results:[row("old","doc-published")]};
+    }}),
  }),
 };
 const down=publishedArchiveEnv({...rawEnv,INGESTION_PUBLISHED_READS_ENABLED:"true",CORTEX_DB:downDb});

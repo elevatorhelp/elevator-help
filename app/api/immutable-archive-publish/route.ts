@@ -16,6 +16,7 @@ import {
   makeGlobalArchiveWriteGuard,GlobalArchiveWriteDenied,
 } from "../../lib/ingestion-global-write-gate";
 import type {ArchiveLease,CoordinatorDB} from "../../lib/ingestion-global-coordinator";
+import {stageImmutableEvidenceReferenceTerms} from "../../lib/ingestion-v2-evidence-references";
 
 export const dynamic="force-dynamic";
 const opts={"Cache-Control":"no-store, private","X-Content-Type-Options":"nosniff"};
@@ -91,8 +92,9 @@ export async function POST(request:Request){
       if(!evidence||typeof evidence!=="object"||Array.isArray(evidence))
         return json({ok:false,error:"INVALID_EVIDENCE_RECORD"},400);
       const staged=await stageImmutableExactEvidence(db,lease!,doc,evidence);
-      return staged?json({ok:true,staged:true,published:false}):
-        json({ok:false,error:"EVIDENCE_STAGING_DENIED"},409);
+      if(!staged)return json({ok:false,error:"EVIDENCE_STAGING_DENIED"},409);
+      const terms=await stageImmutableEvidenceReferenceTerms(db,lease!,doc,evidence);
+      return json({ok:true,staged:true,published:false,referenceTerms:terms});
     }
     if(action==="publish"){
       const manifest=data.manifest as PublicationManifest|undefined;
