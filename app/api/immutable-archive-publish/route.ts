@@ -17,6 +17,7 @@ import {
 } from "../../lib/ingestion-global-write-gate";
 import type {ArchiveLease,CoordinatorDB} from "../../lib/ingestion-global-coordinator";
 import {stageImmutableEvidenceReferenceTerms} from "../../lib/ingestion-v2-evidence-references";
+import {claimDocumentStagingEpoch} from "../../lib/ingestion-document-staging-epoch";
 
 export const dynamic="force-dynamic";
 const opts={"Cache-Control":"no-store, private","X-Content-Type-Options":"nosniff"};
@@ -81,27 +82,43 @@ export async function POST(request:Request){
       const record=data.record as ImmutableStagedVector|undefined;
       if(!record||typeof record!=="object"||Array.isArray(record))
         return json({ok:false,error:"INVALID_VECTOR_RECORD"},400);
+      const documentEpoch=await claimDocumentStagingEpoch(
+        db,lease!,doc,record.sourceFingerprint);
+      if(documentEpoch===null)
+        return json({ok:false,error:"DOCUMENT_STAGING_EPOCH_DENIED"},409);
       const stagedId=await stageImmutableVectorPair(
         db,lease!,doc,layer as PublicationLayer,record,
         [env.VECTORIZE as ImmutableIndex,env.VECTORIZE_V2 as ImmutableIndex],
+        Date.now(),documentEpoch,
       );
-      return json({ok:true,staged:true,published:false,stagedId});
+      return json({ok:true,staged:true,published:false,stagedId,documentEpoch});
     }
     if(action==="stage_evidence"){
       const evidence=data.evidence as ExactEvidence|undefined;
       if(!evidence||typeof evidence!=="object"||Array.isArray(evidence))
         return json({ok:false,error:"INVALID_EVIDENCE_RECORD"},400);
-      const staged=await stageImmutableExactEvidence(db,lease!,doc,evidence);
+      const documentEpoch=await claimDocumentStagingEpoch(
+        db,lease!,doc,evidence.sourceFingerprint);
+      if(documentEpoch===null)
+        return json({ok:false,error:"DOCUMENT_STAGING_EPOCH_DENIED"},409);
+      const staged=await stageImmutableExactEvidence(
+        db,lease!,doc,evidence,Date.now(),documentEpoch);
       if(!staged)return json({ok:false,error:"EVIDENCE_STAGING_DENIED"},409);
-      const terms=await stageImmutableEvidenceReferenceTerms(db,lease!,doc,evidence);
-      return json({ok:true,staged:true,published:false,referenceTerms:terms});
+      const terms=await stageImmutableEvidenceReferenceTerms(
+        db,lease!,doc,evidence,Date.now(),documentEpoch);
+      return json({ok:true,staged:true,published:false,referenceTerms:terms,documentEpoch});
     }
     if(action==="publish"){
       const manifest=data.manifest as PublicationManifest|undefined;
       if(!manifest||typeof manifest!=="object"||Array.isArray(manifest))
         return json({ok:false,error:"INVALID_MANIFEST"},400);
-      const published=await publishImmutableThreeLayerGeneration(db,lease!,doc,manifest);
-      return published?json({ok:true,published:true,generation:lease!.generation}):
+      const documentEpoch=await claimDocumentStagingEpoch(
+        db,lease!,doc,manifest.sourceFingerprint);
+      if(documentEpoch===null)
+        return json({ok:false,error:"DOCUMENT_STAGING_EPOCH_DENIED"},409);
+      const published=await publishImmutableThreeLayerGeneration(
+        db,lease!,doc,manifest,Date.now(),documentEpoch);
+      return published?json({ok:true,published:true,generation:documentEpoch}):
         json({ok:false,published:false,error:"INCOMPLETE_OR_STALE_PUBLICATION"},409);
     }
     return json({ok:false,error:"UNKNOWN_ACTION"},400);
