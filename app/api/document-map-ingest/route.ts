@@ -469,7 +469,7 @@ export async function POST(request: NextRequest) {
         stagedIds.push(physicalId);
       }
       return NextResponse.json({ok:true,staged:true,published:false,
-        documentEpoch:epoch,stagedIds,mapVersion});
+        documentEpoch:epoch,stagedIds,mapCount:nodes.length,mapVersion});
     }
 
     await guardArchiveWrite();
