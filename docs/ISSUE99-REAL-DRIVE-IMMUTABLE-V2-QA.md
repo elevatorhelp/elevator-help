@@ -1,6 +1,6 @@
 # Issue #99 — Real Drive immutable V2 runner: QA integration gates
 
-Status: **QA integration in Draft PR #100; Production NO-GO**.
+Status: **real isolated Cloudflare V2 HTTP + two-page synthetic PDF proof PASS; real Google Drive full-runner E2E and Production activation NO-GO**.
 
 ## Implemented in PR #100
 
@@ -34,3 +34,16 @@ The dedicated `qa-drive-v2-runner.yml` workflow tests fail-closed origin/root/qu
 - No Production D1 migration/backup/restore, no V2 feature flags or Worker deploy, no scheduled second indexer, no Production rollback proof.
 
 **Release decision:** do not enable on Production. PR #100 must remain Draft until complete remote QA evidence and review.
+
+## Verified physical HTTP evidence — 2026-11-09
+
+- Initial [real Cloudflare run #42707998201](https://github.com/elevatorhelp/elevator-help/actions/runs/42707998201) identified an actual production-code defect: two Vectorize indexes physically returned matching RAW and Map vectors, but final D1 manifest rejected publication. Root cause: the manifest correctly carried **physical staged V2 IDs**, while D1 validation compared them to `logical_id`. The root cause was fixed in PR #100, and all immutable / document-epoch / exact evidence unit tests were migrated to use verified physical IDs.
+- Corrected [real isolated Worker run #42709223590](https://github.com/elevatorhelp/elevator-help/actions/runs/42709223590): **SUCCESS**. The generated original 2-page PDF was parsed by the same `unpdf` parser used by the Drive runner; both source pages were staged as exact Evidence. Both 768-dimensional RAW page vectors and a two-page Map were inserted and independently read back through **both real Cloudflare QA Vectorize indexes**. Incomplete publication blocked; full D1 3-layer publish succeeded; exact manifest was re-attested; duplicate commit and released-lease stale publish were rejected. No Google access, private PDF, Gemini call, Production migration, scheduled indexer, or Production deployment.
+- [Durable sanitized QA artifact](https://github.com/elevatorhelp/elevator-help/actions/runs/42709223590/artifacts/13715831694) retained 30 days.
+- Explicit limitation: synthetic physical HTTP staging exercises actual Worker routes and exact PDF extraction, **not** the authenticated Google Drive fetch/token/metadata/cursor path, Gemini-generated RAW/Map vectors, signed-in /api/ask answers, full archive indexer restart or two independent parallel workers.
+
+## Code integration vs release
+
+- A green Build and complete isolated synthetic PDF HTTP proof allow a **code-only merge behind disabled-by-default V2 flags**, provided exact-head CI remains green. This is not an authorization to deploy or enable V2 on Production.
+- Keep [Issue #99](https://github.com/elevatorhelp/elevator-help/issues/99) open for a separate owner-reviewed Drive QA fixture (dedicated test-only folder + authorized service account), manual bounded ingestion, authenticated real source-page citation, D1 backup/restore, deletion tombstone publication, per-document durable checkpoint scale, production rollback and two-worker coordination.
+- The current serial scheduled ingestion path remains the only allowed Production writer until those gates pass.
