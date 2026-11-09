@@ -11,6 +11,12 @@ const safeHeaders = {
 };
 export async function qaAdminFetch(request, env, ctx, application = app) {
   const url = new URL(request.url);
+  // Clerk previously returned to "/" after completing sign-in; route it
+  // back to the ONLY public QA page. This is a fixed same-origin redirect.
+  if (url.pathname === "/" && request.method === "GET")
+    return new Response(null, {
+      status:302, headers:{...safeHeaders, location: QA_ADMIN_BROWSER_PATH},
+    });
   if (url.pathname === QA_ADMIN_BROWSER_PATH && request.method === "GET")
     return new Response(QA_ADMIN_BROWSER_HTML, {
       status: 200, headers: {...safeHeaders, "content-type":"text/html; charset=utf-8"},

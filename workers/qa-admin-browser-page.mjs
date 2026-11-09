@@ -13,7 +13,7 @@ export const QA_ADMIN_BROWSER_HTML = String.raw`<!doctype html>
 <input id="pk" type="text" spellcheck="false" autocomplete="off" placeholder="pk_test_..." aria-label="Clerk test publishable key">
 <button id="load">Load test sign-in</button>
 <button id="check" disabled>Check admin access</button>
-<p><small>Do not enter any secret key (sk_test_), password or JWT into this field. The sign-in form is served by Clerk. The JWT is sent only to this QA Worker, never displayed, logged or saved.</small></p>
+<p><small>Do not enter any secret key (sk_test_), password or JWT into this field. The sign-in form is served by Clerk. The JWT is sent only to this QA Worker, never displayed, logged or saved. After Clerk sign-in, if this page reloads, enter the public TEST publishable key again, press Load test sign-in, then Check admin access.</small></p>
 <pre id="status" role="status">Ready. Paste only the public TEST publishable key.</pre>
 <div id="sign-in"></div>
 <script>
@@ -52,10 +52,26 @@ export const QA_ADMIN_BROWSER_HTML = String.raw`<!doctype html>
       await externalScript("https://"+host+"/npm/@clerk/clerk-js@6/dist/clerk.browser.js",pk);
       clerk=window.Clerk;
       if(!clerk||typeof clerk.load!=="function")throw Error("Clerk SDK unavailable");
-      await clerk.load({ui:{ClerkUI:window.__internal_ClerkUICtor}});
+      const qaReturnUrl=window.location.origin+"/qa-admin-test";
+      await clerk.load({
+        ui:{ClerkUI:window.__internal_ClerkUICtor},
+        signInForceRedirectUrl:qaReturnUrl,
+        signUpForceRedirectUrl:qaReturnUrl,
+        signInFallbackRedirectUrl:qaReturnUrl,
+        signUpFallbackRedirectUrl:qaReturnUrl,
+      });
       check.disabled=false;
       if(clerk.isSignedIn){report("Clerk signed-in session detected. Press Check.");}
-      else {clerk.mountSignIn(document.getElementById("sign-in"));report("Complete sign-in using the Clerk form, then press Check.");}
+      else {
+        clerk.mountSignIn(document.getElementById("sign-in"),{
+          routing:"hash",
+          forceRedirectUrl:qaReturnUrl,
+          fallbackRedirectUrl:qaReturnUrl,
+          signUpForceRedirectUrl:qaReturnUrl,
+          signUpFallbackRedirectUrl:qaReturnUrl,
+        });
+        report("Complete sign-in using the Clerk form, then press Check.");
+      }
     }catch{
       report("Unable to initialize the TEST Clerk frontend. Verify the development publishable key and browser domain configuration.");
       load.disabled=false;
