@@ -20,6 +20,7 @@ import {
   needsEvidenceBackfill,
   needsRawBackfill,
 } from "./drive-ingest.mjs";
+import { recordIngestionFailure, clearIngestionFailure } from "./ingestion-failure-ledger.mjs";
 
 // Phase rotation must follow the last *persisted selection*, not a wall clock bucket.
 const phaseCycle = ["evidence", "raw", "map"];
@@ -375,3 +376,48 @@ try {
   await rm(stateTestDir, { recursive: true, force: true });
 }
 console.log("PASS: atomic checkpoint persistence and fail-closed recovery");
+
+// Real invalid-PDF failures must be traceable across runs but must not
+// include private source paths, document titles, raw SDK errors or tokens.
+const failureScope = {};
+const fakeSourceMessage = "Sensitive archive path, access_token=PRIVATE";
+const invalidPdf = Object.assign(new Error(fakeSourceMessage), { name: "InvalidPDFException" });
+const firstFailure = recordIngestionFailure(failureScope, {
+  fileId: "private-doc-id", fingerprint: "revision-1", phase: "evidence",
+  error: invalidPdf, at: "2026-11-09T10:00:00.000Z",
+});
+if (firstFailure.category !== "INVALID_PDF" ||
+    firstFailure.attempts !== 1 || firstFailure.status !== "needs_review" ||
+    JSON.stringify(failureScope).includes(fakeSourceMessage)) {
+  throw new Error("Invalid PDF must create a sanitized, pending exception ledger record");
+}
+const repeatFailure = recordIngestionFailure(failureScope, {
+  fileId: "private-doc-id", fingerprint: "revision-1", phase: "evidence",
+  error: invalidPdf, at: "2026-11-09T11:00:00.000Z",
+});
+if (repeatFailure.attempts !== 2 ||
+    repeatFailure.firstSeenAt !== firstFailure.firstSeenAt) {
+  throw new Error("Repeated invalid PDFs must retain their first failure and retry count");
+}
+const newRevision = recordIngestionFailure(failureScope, {
+  fileId: "private-doc-id", fingerprint: "revision-2", phase: "evidence",
+  error: invalidPdf, at: "2026-11-09T12:00:00.000Z",
+});
+if (newRevision.attempts !== 1) {
+  throw new Error("New document revision must start a fresh exception history");
+}
+const untrustedError = recordIngestionFailure(failureScope, {
+  fileId: "other-id", fingerprint: "revision-1", phase: "map",
+  error: new Error("hidden credentials and private text"),
+  at: "2026-11-09T12:00:00.000Z",
+});
+if (untrustedError.category !== "DOCUMENT_PROCESSING_ERROR" ||
+    JSON.stringify(failureScope).includes("hidden credentials")) {
+  throw new Error("Unknown errors must be redacted to a fixed category");
+}
+clearIngestionFailure(failureScope, "private-doc-id");
+if (failureScope.fileFailures["private-doc-id"] !== undefined ||
+    failureScope.fileFailures["other-id"]?.status !== "needs_review") {
+  throw new Error("Successful file must clear its exception without erasing other failures");
+}
+console.log("PASS: durable source-redacted per-document exception ledger across failures, revisions, recovery");

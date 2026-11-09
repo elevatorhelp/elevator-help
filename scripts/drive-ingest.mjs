@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
 import { planIngestion } from "./adaptive-ingestion-controller.mjs";
+import { recordIngestionFailure, clearIngestionFailure } from "./ingestion-failure-ledger.mjs";
 
 const execFileAsync = promisify(execFile);
 const OFFICE_EXTENSIONS = new Set([
@@ -1025,6 +1026,7 @@ async function main() {
         await deleteIds(oldIds, ingestToken);
       }
       delete scope.files[fileId];
+      clearIngestionFailure(scope, fileId);
     }
   }
 
@@ -1352,6 +1354,12 @@ async function main() {
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
     }
+    // Clear a prior per-document exception only after this phase succeeded.
+    if (scope.fileFailures?.[file.id]) {
+      clearIngestionFailure(scope, file.id);
+      state.scopes[DRIVE_FOLDER_ID] = scope;
+      await saveState(state);
+    }
     } catch (error) {
       // State persistence failures are systemic, not document-local. Continuing
       // would incur writes/API costs that cannot be resumed safely.
@@ -1365,6 +1373,13 @@ async function main() {
         ? "INGESTION_GEMINI_BUDGET_EXCEEDED"
         : error instanceof Error ? error.name : "UnknownError";
       console.error("Archive document processing failed (source redacted); category:", failureKind);
+      // Keep a safe, persistent exception entry; never mark this file complete.
+      recordIngestionFailure(scope, {
+        fileId: file.id, fingerprint: fingerprint(file), phase: plan.phase,
+        error, at: new Date().toISOString(),
+      });
+      state.scopes[DRIVE_FOLDER_ID] = scope;
+      await saveState(state);
       fileErrors.push(error);
     }
   }
