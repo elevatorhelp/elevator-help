@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { NextRequest, NextResponse } from "next/server";
+import {makeGlobalArchiveWriteGuard, GlobalArchiveWriteDenied} from "../../lib/ingestion-global-write-gate";
 import {
   canonicalManufacturer,
   extractFaultCode,
@@ -391,6 +392,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Global ownership gate is disabled by default. In strict mode EVERY
+    // write action (delete, Evidence, RAW) must have the live root lease.
+    const guardArchiveWrite=makeGlobalArchiveWriteGuard(env as any, body);
+    await guardArchiveWrite();
+
     if (!vectorize || !vectorizeV2) {
       throw new Error("Vectorize ingestion bindings are not configured");
     }
@@ -406,10 +412,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true, deleted: 0 });
       }
 
-      await Promise.all([
-        vectorize.deleteByIds(ids),
-        vectorizeV2.deleteByIds(ids),
-      ]);
+      await guardArchiveWrite();
+      await vectorize.deleteByIds(ids);
+      await guardArchiveWrite();
+      await vectorizeV2.deleteByIds(ids);
+      await guardArchiveWrite();
       await removeArchiveChunks(archiveDb, ids);
       return NextResponse.json({ ok: true, deleted: ids.length });
     }
@@ -451,6 +458,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "index_evidence") {
+      await guardArchiveWrite();
       await indexArchiveChunks(
         archiveDb,
         chunks,
@@ -550,8 +558,11 @@ export async function POST(request: NextRequest) {
       }),
     );
 
+    await guardArchiveWrite();
     await vectorize.upsert(legacyVectors);
+    await guardArchiveWrite();
     await vectorizeV2.upsert(multilingualVectors);
+    await guardArchiveWrite();
     await indexArchiveChunks(archiveDb, chunks, enriched);
 
     return NextResponse.json({
@@ -565,6 +576,8 @@ export async function POST(request: NextRequest) {
       ),
     });
   } catch (error) {
+    if(error instanceof GlobalArchiveWriteDenied)
+      return NextResponse.json({ok:false,error:error.code},{status:409});
     console.error("Drive ingestion error:", error);
     return NextResponse.json(
       {
