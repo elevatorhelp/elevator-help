@@ -858,6 +858,7 @@ function nextPreferredIngestionPhase(lastSelectedPhase) {
 }
 
 async function main() {
+  if(V2_QA)assertManualQaV2Environment(process.env);
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
 
@@ -886,6 +887,7 @@ async function main() {
       runAttempt:process.env.GITHUB_RUN_ATTEMPT || "1",
       legacyState:state,
       bootstrapApproved:process.env.INGESTION_D1_BOOTSTRAP_APPROVED === "true",
+      ...(V2_QA?{qaOnly:true,endpoint:process.env.INGESTION_COORDINATOR_ENDPOINT}:{}),
     });
     state = activeCoordinator.state;
   }
@@ -897,6 +899,7 @@ async function main() {
   state.scopes ||= {};
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
+  const workFiles=V2_QA?(scope.v2Files ||= {}):scope.files;
 
   console.log(`Found ${files.length} supported documents in configured Drive scope${shardEnabled ? " (assigned shard only)" : ""}`);
   console.log(
@@ -904,8 +907,12 @@ async function main() {
   );
 
   const foundIds = new Set(shardFiles.map((file) => file.id));
-  for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : scope.files)) {
+  for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : workFiles)) {
     if (!foundIds.has(fileId)) {
+      if(V2_QA){
+        workFiles[fileId]=updateQaDeletionCandidate(old,true);
+        continue; // Hold tombstone; never delete V2 published data here.
+      }
       // A single incomplete Drive scan must never erase archived evidence.
       if ((old.missingScanCount || 0) < 1) {
         scope.files[fileId] = {...old, missingScanCount: 1};
@@ -930,17 +937,26 @@ async function main() {
   }
 
   for (const file of shardFiles) {
-    if (scope.files[file.id]?.missingScanCount) delete scope.files[file.id].missingScanCount;
+    if(V2_QA && workFiles[file.id]?.missingScanCount)
+      workFiles[file.id]=updateQaDeletionCandidate(workFiles[file.id],false);
+    else if(workFiles[file.id]?.missingScanCount)
+      delete workFiles[file.id].missingScanCount;
   }
   // Persist the phase rotation per Drive scope instead of deriving it from wall-clock
   // time: delayed GitHub schedules must not repeatedly skip an eligible phase.
   // createIngestionPlan still enforces evidence -> raw -> map dependencies per file.
   const preferredPhase = nextPreferredIngestionPhase(scope.lastSelectedPhase);
-  const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
+  const plan = createIngestionPlan(files,workFiles,FORCE_REINGEST,preferredPhase);
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
   console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);
-  const changed = plan.files;
+  const changed=V2_QA
+    ? [...plan.files,...files.filter(file=>
+        !plan.files.some(p=>p.id===file.id) &&
+        workFiles[file.id]?.publishedFingerprint!==fingerprint(file) &&
+        buildQaImmutableManifest(workFiles[file.id],fingerprint(file))
+      )]
+    : plan.files;
   console.log(
     `${changed.length} document(s) need the ${plan.phase} phase; exact evidence, semantic vectors and document maps advance archive-wide without file-specific routing`
   );
@@ -964,7 +980,7 @@ async function main() {
   const fileErrors = [];
   for (const file of selected) {
     try {
-    const previous = scope.files[file.id] || {};
+    const previous = workFiles[file.id] || {};
     const currentFingerprint = fingerprint(file);
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
     const needsEvidence = plan.phase === "evidence";
@@ -995,6 +1011,7 @@ async function main() {
       const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken, {
         onIdentity: (identity) => { next.documentIdentity = identity; },
         onQuality: (quality) => { next.extractionQuality = quality; },
+        stageRecord:next,
         startChunk: resumeEvidence ? previous.evidenceNextChunk : 0,
         initialIds: resumeEvidence ? previous.partialEvidenceIds : [],
         onProgress: async ({ ids, nextChunk }) => {
@@ -1002,7 +1019,7 @@ async function main() {
           next.partialArchiveIndexVersion = ARCHIVE_INDEX_VERSION;
           next.partialEvidenceFingerprint = currentFingerprint;
           next.evidenceNextChunk = nextChunk;
-          scope.files[file.id] = next;
+          workFiles[file.id] = next;
           state.scopes[DRIVE_FOLDER_ID] = scope;
           await saveState(state);
         },
@@ -1012,7 +1029,7 @@ async function main() {
         ? previous.evidenceIds
         : []
       ).filter((id) => !evidenceIdSet.has(id));
-      if (staleEvidenceIds.length) await deleteIds(staleEvidenceIds, ingestToken);
+      if (!V2_QA && staleEvidenceIds.length) await deleteIds(staleEvidenceIds, ingestToken);
       next.evidenceIds = evidenceIds;
       next.archiveIndexVersion = ARCHIVE_INDEX_VERSION;
       next.evidenceFingerprint = currentFingerprint;
@@ -1021,7 +1038,7 @@ async function main() {
       delete next.partialArchiveIndexVersion;
       delete next.partialEvidenceFingerprint;
       delete next.evidenceNextChunk;
-      scope.files[file.id] = next;
+      workFiles[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
       console.log(`Exact-evidence checkpoint saved for archive document`);
@@ -1045,13 +1062,14 @@ async function main() {
         ? processText(file, accessToken, ingestToken, {
             rawStartChunk,
             initialRawIds,
+            stageRecord:next,
             onRawProgress: async ({ ids, nextChunk }) => {
               next.partialRawIds = ids;
               next.partialRawEmbeddingVersion = RAW_EMBEDDING_VERSION;
               next.partialRawFingerprint = currentFingerprint;
               next.rawNextChunk = nextChunk;
               next.rawProgressAt = new Date().toISOString();
-              scope.files[file.id] = next;
+              workFiles[file.id] = next;
               state.scopes[DRIVE_FOLDER_ID] = scope;
               await saveState(state);
             },
@@ -1061,13 +1079,14 @@ async function main() {
             ingestMap: false,
             rawStartChunk,
             initialRawIds,
+            stageRecord:next,
             onRawProgress: async ({ ids, nextChunk }) => {
               next.partialRawIds = ids;
               next.partialRawEmbeddingVersion = RAW_EMBEDDING_VERSION;
               next.partialRawFingerprint = currentFingerprint;
               next.rawNextChunk = nextChunk;
               next.rawProgressAt = new Date().toISOString();
-              scope.files[file.id] = next;
+              workFiles[file.id] = next;
               state.scopes[DRIVE_FOLDER_ID] = scope;
               await saveState(state);
             },
@@ -1080,7 +1099,7 @@ async function main() {
         next.partialRawFingerprint = currentFingerprint;
         next.rawNextChunk = indexedRaw.nextRawChunk;
         next.rawProgressAt = new Date().toISOString();
-        scope.files[file.id] = next;
+        workFiles[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
         console.log(`Raw-vector progress checkpoint saved for archive document`);
@@ -1091,7 +1110,7 @@ async function main() {
       const staleRawIds = (Array.isArray(previous.ids) ? previous.ids : []).filter(
         (id) => !newIdSet.has(id)
       );
-      if (staleRawIds.length) await deleteIds(staleRawIds, ingestToken);
+      if (!V2_QA && staleRawIds.length) await deleteIds(staleRawIds, ingestToken);
 
       next.ids = newIds;
       next.rawEmbeddingVersion = RAW_EMBEDDING_VERSION;
@@ -1103,7 +1122,7 @@ async function main() {
       delete next.partialRawFingerprint;
       delete next.rawNextChunk;
       delete next.rawProgressAt;
-      scope.files[file.id] = next;
+      workFiles[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
       console.log(`Raw-vector checkpoint saved for archive document`);
@@ -1118,7 +1137,7 @@ async function main() {
         delete next.metadataRefreshPendingMap;
         next.fingerprint = currentFingerprint;
         next.indexedAt = new Date().toISOString();
-        scope.files[file.id] = next;
+        workFiles[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
         continue;
@@ -1135,13 +1154,13 @@ async function main() {
         console.log(
           `Removing ${previous.partialMapIds.length} stale partial map vectors for archive document`
         );
-        await deleteIds(previous.partialMapIds, ingestToken);
+        if(!V2_QA)await deleteIds(previous.partialMapIds, ingestToken);
         delete next.partialMapIds;
         delete next.partialMapVersion;
         delete next.partialMapFingerprint;
         delete next.mapNextPage;
         delete next.mapProgressAt;
-        scope.files[file.id] = next;
+        workFiles[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
       }
@@ -1151,13 +1170,14 @@ async function main() {
         ingestMap: true,
         mapStartPage,
         initialMapIds,
+        stageRecord:next,
         onMapProgress: async ({ ids, nextPage }) => {
           next.partialMapIds = ids;
           next.partialMapVersion = DOCUMENT_MAP_VERSION;
           next.partialMapFingerprint = currentFingerprint;
           next.mapNextPage = nextPage;
           next.mapProgressAt = new Date().toISOString();
-          scope.files[file.id] = next;
+          workFiles[file.id] = next;
           state.scopes[DRIVE_FOLDER_ID] = scope;
           await saveState(state);
           console.log(`Document-map progress checkpoint: next page ${nextPage}`);
@@ -1171,7 +1191,7 @@ async function main() {
         next.partialMapFingerprint = currentFingerprint;
         next.mapNextPage = indexedMap.mapNextPage;
         next.mapProgressAt = new Date().toISOString();
-        scope.files[file.id] = next;
+        workFiles[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
         console.log(`Document-map progress checkpoint saved for archive document`);
@@ -1184,7 +1204,7 @@ async function main() {
           ...(Array.isArray(previous.partialMapIds) ? previous.partialMapIds : []),
         ])
       ).filter((id) => !newMapIdSet.has(id));
-      if (staleMapIds.length) await deleteIds(staleMapIds, ingestToken);
+      if (!V2_QA && staleMapIds.length) await deleteIds(staleMapIds, ingestToken);
 
       next.mapIds = newMapIds;
       next.mapVersion = DOCUMENT_MAP_VERSION;
@@ -1196,16 +1216,35 @@ async function main() {
       delete next.partialMapFingerprint;
       delete next.mapNextPage;
       delete next.mapProgressAt;
-      scope.files[file.id] = next;
+      workFiles[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
       console.log(`Document-map checkpoint saved for archive document`);
     }
 
-    if (next.rawFingerprint === currentFingerprint && next.mapFingerprint === currentFingerprint) {
+    if (V2_QA) {
+      if(!isText){
+        const manifest=buildQaImmutableManifest(next,currentFingerprint);
+        if(manifest && next.publishedFingerprint!==currentFingerprint){
+          // Complete layer receipts and their checkpoint exist before publication.
+          const result=await callJsonEndpoint(IMMUTABLE_ENDPOINT,{
+            action:"publish",documentId:file.id,manifest,
+          },ingestToken,"Atomic V2 publication");
+          assertQaImmutablePublish(result,next.documentEpoch);
+          next.publishedFingerprint=currentFingerprint;
+          next.publishedEpoch=next.documentEpoch;
+          next.fingerprint=currentFingerprint;
+          next.indexedAt=new Date().toISOString();
+          workFiles[file.id]=next;
+          state.scopes[DRIVE_FOLDER_ID]=scope;
+          await saveState(state);
+          console.log("PASS: Complete immutable PDF publication (source redacted)");
+        }
+      }
+    }else if (next.rawFingerprint === currentFingerprint && next.mapFingerprint === currentFingerprint) {
       next.fingerprint = currentFingerprint;
       next.indexedAt = new Date().toISOString();
-      scope.files[file.id] = next;
+      workFiles[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
     }
