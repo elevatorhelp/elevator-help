@@ -80,7 +80,7 @@ try{
   assert.equal(parseImmutableVectorId(raw1)?.layer,"raw");
   assert.ok(await stageImmutableExactEvidence(dbA,leaseA,doc,evidence("evidence-1")));
   assert.equal(await publishImmutableThreeLayerGeneration(dbA,leaseA,doc,{
-    rawIds:["raw-1"],evidenceIds:["evidence-1"],mapIds:["map-1"],sourceFingerprint:fp,
+    rawIds:[raw1],evidenceIds:["evidence-1"],mapIds:[immutableVectorId(leaseA,doc,"map","map-1",fp)],sourceFingerprint:fp,
   }),false,"missing Map prevents publication");
   assert.equal(a.prepare("SELECT COUNT(*) AS n FROM ingestion_v2_publications").get()?.n,0);
   assert.equal((await readPublishedImmutableEvidence(evidenceReader,doc)).length,0,
@@ -88,14 +88,14 @@ try{
   const map1=await stageImmutableVectorPair(dbA,leaseA,doc,"map",vec("map-1","map"),[idxA,idxB]);
   assert.equal(map1,immutableVectorId(leaseA,doc,"map","map-1",fp));
   const incomplete=await publishImmutableThreeLayerGeneration(dbA,leaseA,doc,{
-    rawIds:["raw-1"],evidenceIds:["evidence-1"],mapIds:["map-1"],sourceFingerprint:"wrong-revision",
+    rawIds:[raw1],evidenceIds:["evidence-1"],mapIds:[map1],sourceFingerprint:"wrong-revision",
   });
   assert.equal(incomplete,false,"source fingerprint mismatch denies publication");
   assert.equal(await publishImmutableThreeLayerGeneration(dbA,leaseA,doc,{
-    rawIds:["raw-1","unexpected"],evidenceIds:["evidence-1"],mapIds:["map-1"],sourceFingerprint:fp,
+    rawIds:[raw1,"unexpected"],evidenceIds:["evidence-1"],mapIds:[map1],sourceFingerprint:fp,
   }),false,"exact missing raw chunk denies");
   assert.equal(await publishImmutableThreeLayerGeneration(dbA,leaseA,doc,{
-    rawIds:["raw-1"],evidenceIds:["evidence-1","missing-e"],mapIds:["map-1"],sourceFingerprint:fp,
+    rawIds:[raw1],evidenceIds:["evidence-1","missing-e"],mapIds:[map1],sourceFingerprint:fp,
   }),false,"exact missing evidence denies");
 
   const visibleBefore=await filterVisibleImmutableVectors(dbB,[
@@ -104,14 +104,14 @@ try{
   ]);
   assert.equal(visibleBefore.length,0,"staged vectors invisible before D1 CAS");
   const success=await publishImmutableThreeLayerGeneration(dbA,leaseA,doc,{
-    rawIds:["raw-1"],evidenceIds:["evidence-1"],mapIds:["map-1"],sourceFingerprint:fp,
+    rawIds:[raw1],evidenceIds:["evidence-1"],mapIds:[map1],sourceFingerprint:fp,
   });
   assert.equal(success,true,"exact 3-layer receipt manifest publishes in one D1 CAS");
   assert.equal(a.prepare("SELECT active_generation FROM ingestion_v2_publications").get()?.active_generation,1);
   assert.equal((await readPublishedImmutableEvidence(evidenceReader,doc)).length,1,
     "only complete published generation's source page is visible");
   assert.equal(await publishImmutableThreeLayerGeneration(dbA,leaseA,doc,{
-    rawIds:["raw-1"],evidenceIds:["evidence-1"],mapIds:["map-1"],sourceFingerprint:fp,
+    rawIds:[raw1],evidenceIds:["evidence-1"],mapIds:[map1],sourceFingerprint:fp,
   }),false,"a second CAS may not publish same generation again");
   const raw1meta=(await idxA.getByIds([raw1]) as any[])[0].metadata;
   const map1meta=(await idxA.getByIds([map1]) as any[])[0].metadata;
@@ -133,7 +133,7 @@ try{
   const raw2=await stageImmutableVectorPair(dbB,leaseB,doc,"raw",vec("raw-2","raw","source-revision-2"),[idxA,idxB]);
   assert.ok(await stageImmutableExactEvidence(dbB,leaseB,doc,evidence("evidence-2","source-revision-2")));
   assert.equal(await publishImmutableThreeLayerGeneration(dbB,leaseB,doc,{
-    rawIds:["raw-2"],evidenceIds:["evidence-2"],mapIds:["map-2"],sourceFingerprint:"source-revision-2",
+    rawIds:[raw2],evidenceIds:["evidence-2"],mapIds:[immutableVectorId(leaseB,doc,"map","map-2","source-revision-2")],sourceFingerprint:"source-revision-2",
   }),false,"new generation incomplete still invisible; previous remains active");
   assert.equal((await filterVisibleImmutableVectors(dbA,[{id:raw1,metadata:raw1meta}],true)).length,1,
     "last complete generation remains visible until new CAS");
@@ -153,7 +153,7 @@ try{
   const map2=await stageImmutableVectorPair(dbB,leaseB,doc,"map",vec("map-2","map","source-revision-2"),[idxA,idxB]);
   assert.ok(map2);
   assert.equal(await publishImmutableThreeLayerGeneration(dbB,leaseB,doc,{
-    rawIds:["raw-2"],evidenceIds:["evidence-2"],mapIds:["map-2"],sourceFingerprint:"source-revision-2",
+    rawIds:[raw2],evidenceIds:["evidence-2"],mapIds:[map2],sourceFingerprint:"source-revision-2",
   }),true);
   const publishedPages=await readPublishedImmutableEvidence(evidenceReader,doc);
   assert.deepEqual(publishedPages.map(x=>x.logicalId),["evidence-2"],
@@ -169,7 +169,7 @@ try{
   const raw2meta=(await idxA.getByIds([raw2]) as any[])[0].metadata;
   assert.equal((await filterVisibleImmutableVectors(dbB,[{id:raw2,metadata:raw2meta}],true)).length,1);
   assert.equal(await publishImmutableThreeLayerGeneration(dbA,leaseA,doc,{
-    rawIds:["raw-1"],evidenceIds:["evidence-1"],mapIds:["map-1"],sourceFingerprint:fp,
+    rawIds:[raw1],evidenceIds:["evidence-1"],mapIds:[map1],sourceFingerprint:fp,
   }),false,"stale owner cannot republish after generation 2");
 
   // Simulate post-commit stale delayed readback in an isolated third doc:
