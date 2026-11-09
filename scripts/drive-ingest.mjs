@@ -698,8 +698,11 @@ async function buildDocumentMap(
     const result = await callDocumentMap({
       ...(V2_QA?{action:"stage_map_v2"}:{}),document,pages:window,
     },ingestToken);
+    if(V2_QA && (!Number.isSafeInteger(result?.mapCount) ||
+       result.mapCount<1||result.mapCount>12))
+      throw Error("V2_QA_MAP_RECEIPT_COUNT_INVALID");
     const ids = V2_QA
-      ? verifyV2StageBatch(result,Array.from({length:result?.mapCount||0}),
+      ? verifyV2StageBatch(result,Array.from({length:result.mapCount}),
         "map",stageRecord)
       : Array.isArray(result?.ids) ? result.ids : [];
     mapIds.push(...ids);
