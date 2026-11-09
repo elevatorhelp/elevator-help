@@ -11,6 +11,10 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
 import { assertShardState, shardForDocumentId, validateShardParameters } from "./archive-sharding.mjs";
 import { createIngestionCoordinatorSession } from "./ingestion-coordinator-client.mjs";
+import {
+  assertManualQaV2Environment,verifyV2StageBatch,verifyV2EvidenceReceipt,
+  buildQaImmutableManifest,assertQaImmutablePublish,updateQaDeletionCandidate,
+} from "./ingestion-v2-qa-guard.mjs";
 let activeCoordinator = null;
 
 const execFileAsync = promisify(execFile);
@@ -30,6 +34,8 @@ const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "1Lu7If9Nt4GUyakB6b6YriOG
 const TARGET_FILE_ID = process.env.TARGET_FILE_ID || "";
 const FORCE_REINGEST = process.env.FORCE_REINGEST === "true";
 const MAX_FILES = Number(process.env.MAX_FILES || "1");
+const V2_QA=process.env.INGESTION_V2_QA_MODE==="true";
+const IMMUTABLE_ENDPOINT=process.env.INGESTION_IMMUTABLE_ENDPOINT;
 const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/api/drive-ingest-batch";
 const DOCUMENT_MAP_ENDPOINT =
   process.env.DOCUMENT_MAP_ENDPOINT || "https://elevator.help/api/document-map-ingest";
@@ -504,6 +510,7 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
   }
 
   if (!response.ok || data?.ok === false) {
+    if(V2_QA)throw Error("V2_QA_ENDPOINT_REJECTED");
     throw new Error(`${label} error ${response.status}: ${JSON.stringify(data)}`);
   }
 
@@ -523,6 +530,7 @@ async function callDocumentMap(payload, token) {
 }
 
 async function deleteIds(ids, token) {
+  if(V2_QA)throw Error("V2_QA_UNVERSIONED_DELETE_DENIED");
   for (let i = 0; i < ids.length; i += 100) {
     await callIngest({ action: "delete", ids: ids.slice(i, i + 100) }, token);
   }
@@ -530,7 +538,8 @@ async function deleteIds(ids, token) {
 
 async function processEvidenceIndex(
   file, accessToken, ingestToken,
-  { startChunk = 0, initialIds = [], onProgress = null, onIdentity = null, onQuality = null } = {}
+  { startChunk = 0, initialIds = [], onProgress = null, onIdentity = null, onQuality = null,
+    stageRecord = null } = {}
 ) {
   const groupHint = documentGroupHint(file.name);
   let pages;
@@ -594,16 +603,25 @@ async function processEvidenceIndex(
   const ids = [...initialIds];
   for (let index = startChunk; index < chunks.length; index += BATCH_SIZE) {
     const batch = chunks.slice(index, index + BATCH_SIZE);
-    const result = await callJsonEndpoint(
-      INGEST_ENDPOINT,
-      { action: "index_evidence", chunks: batch },
-      ingestToken,
-      "Archive evidence endpoint",
-    );
-    if (result?.archiveIndexVersion !== ARCHIVE_INDEX_VERSION) {
-      throw new Error(
-        `Archive index version mismatch: expected ${ARCHIVE_INDEX_VERSION}, got ${String(result?.archiveIndexVersion ?? "missing")}`,
+    if(V2_QA){
+      for(const chunk of batch){
+        const result=await callJsonEndpoint(IMMUTABLE_ENDPOINT,{
+          action:"stage_evidence",documentId:file.id,
+          evidence:{
+            logicalId:chunk.id,sourceFingerprint:chunk.sourceFingerprint,
+            text:chunk.text,fileName:chunk.fileName,sourcePath:chunk.sourcePath,
+            page:chunk.page,chunkIndex:chunk.chunkIndex,
+          },
+        },ingestToken,"Immutable Evidence");
+        verifyV2EvidenceReceipt(result,chunk.id,stageRecord);
+      }
+    }else{
+      const result=await callJsonEndpoint(
+        INGEST_ENDPOINT,{action:"index_evidence",chunks:batch},
+        ingestToken,"Archive evidence endpoint",
       );
+      if(result?.archiveIndexVersion!==ARCHIVE_INDEX_VERSION)
+        throw Error("ARCHIVE_EVIDENCE_VERSION_MISMATCH");
     }
     ids.push(...batch.map((chunk) => chunk.id));
     if (typeof onProgress === "function") {
