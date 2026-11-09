@@ -358,7 +358,13 @@ function vectorId(fileId, page, chunkIndex) {
 }
 
 function fingerprint(file) {
-  return file.md5Checksum || `${file.modifiedTime || ""}:${file.size || ""}`;
+  const source=file.md5Checksum || `${file.modifiedTime || ""}:${file.size || ""}`;
+  // A staging revision changes when the embedding/map/evidence algorithms change.
+  // The legacy scheduled serial writer retains its exact previous fingerprint.
+  return V2_QA ? createHash("sha256").update(JSON.stringify([
+    source,RAW_EMBEDDING_VERSION,DOCUMENT_MAP_VERSION,ARCHIVE_INDEX_VERSION,
+    "v2-immutable-drive-pdf",
+  ])).digest("hex") : source;
 }
 
 async function loadState() {
@@ -518,7 +524,7 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
 }
 
 async function callIngest(payload, token) {
-  if (payload?.action === "upsert") {
+  if (payload?.action === "upsert" || payload?.action === "stage_upsert_v2") {
     ingestionBudget.reserve(GEMINI_CALLS_PER_RAW_BATCH, "raw chunk batch");
   }
   return callJsonEndpoint(INGEST_ENDPOINT, payload, token, "Ingestion endpoint");
@@ -1264,8 +1270,8 @@ async function main() {
     } catch (error) {
       // State persistence failures are systemic, not document-local. Continuing
       // would incur writes/API costs that cannot be resumed safely.
-      if (String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
-        throw error;
+      if (V2_QA || String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
+        throw Error(V2_QA?"V2_QA_DOCUMENT_STAGE_OR_PUBLISH_ABORTED":"INGESTION_STATE_WRITE_FAILED");
       }
       // Preserve successful checkpoints and allow other files in this bounded
       // run to advance; still fail the workflow so the problem is visible.
