@@ -169,6 +169,14 @@ async function listFolder(folderId, accessToken, pathPrefix = "") {
   return entries;
 }
 
+function assertQaDrivePdfIntegrity(file,bytes){
+  if(!V2_QA)return;
+  if(file?.mimeType!=="application/pdf" ||
+     !/^[a-fA-F0-9]{32}$/.test(file?.md5Checksum||"") ||
+     createHash("md5").update(bytes).digest("hex").toLowerCase()!==file.md5Checksum.toLowerCase())
+    throw Error("V2_QA_PDF_SOURCE_CHECKSUM_MISMATCH");
+}
+
 async function downloadDocument(file, accessToken) {
   const googleWorkspace = GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType);
   const url = googleWorkspace
@@ -178,7 +186,9 @@ async function downloadDocument(file, accessToken) {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) throw new Error(`Document download error: ${await response.text()}`);
-  return new Uint8Array(await response.arrayBuffer());
+  const bytes=new Uint8Array(await response.arrayBuffer());
+  assertQaDrivePdfIntegrity(file,bytes);
+  return bytes;
 }
 
 async function downloadText(fileId, accessToken) {
@@ -1305,7 +1315,8 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(error);
+    if(V2_QA)console.error("V2_QA_INGESTION_ABORTED (source details redacted)");
+    else console.error(error);
     process.exitCode = 1;
   });
 }
