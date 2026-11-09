@@ -14,6 +14,16 @@ on:
         description: Maximum changed documents to advance in this bounded run
         required: false
         default: "3"
+      dual_canary:
+        description: Manual two-process archive canary (1 document per shard, 60 Gemini calls total max)
+        required: false
+        type: boolean
+        default: false
+      dual_canary_confirmation:
+        description: For two-process canary enter exactly APPROVE_2_DOCUMENTS_SHARED_60_CALLS
+        required: false
+        type: string
+        default: ""
   # Code merges must not initiate an unplanned paid archive ingestion.
   # Ingestion is limited to its existing schedule or explicit manual dispatch.
 
@@ -124,6 +134,9 @@ jobs:
           # Existing Gemini ceiling stays 60; scripts/drive-ingest.mjs rejects higher values.
           # Per-document raw/map checkpoints are preserved. Rollback throughput: MAX_FILES back to 2.
           MAX_GEMINI_CALLS: "60"
+          DUAL_CANARY_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.dual_canary == true }}
+          DUAL_CANARY_CONFIRMATION: ${{ inputs.dual_canary_confirmation || '' }}
+          DUAL_CANARY_RUN_ID: ${{ github.run_id }}
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
         run: |
@@ -133,7 +146,15 @@ jobs:
             exit 1
           fi
           echo "Bounded archive sync: MAX_FILES=$MAX_FILES; MAX_GEMINI_CALLS=$MAX_GEMINI_CALLS"
-          node scripts/drive-ingest.mjs
+          if [ "$DUAL_CANARY_ENABLED" = "true" ]; then
+            if [ "$DUAL_CANARY_CONFIRMATION" != "APPROVE_2_DOCUMENTS_SHARED_60_CALLS" ]; then
+              echo "::error::DUAL_CANARY_CONFIRMATION_REQUIRED"
+              exit 1
+            fi
+            node scripts/run-dual-archive-indexers.mjs
+          else
+            node scripts/drive-ingest.mjs
+          fi
 
       - name: Save ingestion state
         if: always()

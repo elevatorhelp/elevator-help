@@ -7,6 +7,10 @@ on:
       - "scripts/archive-sharding.mjs"
       - "scripts/prepare-parallel-shard.mjs"
       - "scripts/test-archive-sharding.mjs"
+      - "scripts/dual-indexer-checkpoint.mjs"
+      - "scripts/run-dual-archive-indexers.mjs"
+      - "scripts/test-dual-indexer-checkpoint.mjs"
+      - ".github/workflows/drive-ingestion.yml"
       - ".github/workflows/qa-parallel-archive-shards.yml"
   workflow_dispatch:
     inputs:
@@ -36,6 +40,8 @@ jobs:
           cache: npm
       - name: Test deterministic shard assignment and state preservation
         run: node scripts/test-archive-sharding.mjs
+      - name: Test two-process state merge and serial fallback
+        run: node scripts/test-dual-indexer-checkpoint.mjs
       - name: Install dependencies for optional real-checkpoint test
         if: github.event_name == 'workflow_dispatch'
         run: npm ci
@@ -76,6 +82,8 @@ jobs:
           cache: npm
       - name: Test deterministic shard assignment and state preservation
         run: node scripts/test-archive-sharding.mjs
+      - name: Test two-process state merge and serial fallback
+        run: node scripts/test-dual-indexer-checkpoint.mjs
       - name: Install dependencies for optional real-checkpoint test
         if: github.event_name == 'workflow_dispatch'
         run: npm ci
