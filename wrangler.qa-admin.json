@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "elevator-help-pr86-admin-qa",
+  "main": "workers/qa-admin-entry.mjs",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "AUTH_REQUIRED": "true",
+    "QA_ADMIN_AUTH_ONLY": "true"
+  },
+  "workers_dev": true
+}
