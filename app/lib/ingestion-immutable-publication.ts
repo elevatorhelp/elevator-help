@@ -8,6 +8,7 @@
  */
 import {createHash} from "node:crypto";
 import {validateArchiveLease, type ArchiveLease, type CoordinatorDB} from "./ingestion-global-coordinator.ts";
+import {validateStagingEpoch,DOCUMENT_STAGING_EPOCH_FENCE_SQL} from "./ingestion-document-staging-epoch.ts";
 
 export type PublicationLayer="raw"|"map";
 export type VectorMatch={
@@ -56,12 +57,13 @@ function sha(value:string):string{
  */
 export function immutableVectorId(
   lease:ArchiveLease,doc:string,layer:PublicationLayer,
-  logicalId:string,fingerprint:string,
+  logicalId:string,fingerprint:string,documentEpoch=lease.generation,
 ):string{
   validateStage(doc,logicalId,fingerprint,lease);
+  validateStagingEpoch(documentEpoch);
   if(layer!=="raw"&&layer!=="map")throw Error("INVALID_STAGED_LAYER");
-  const digest=sha(JSON.stringify([lease.jobKey,lease.generation,doc,layer,logicalId,fingerprint]));
-  const id=`v2${layer==="raw"?"r":"m"}-${lease.generation.toString(36)}-${digest.slice(0,40)}`;
+  const digest=sha(JSON.stringify([lease.jobKey,documentEpoch,doc,layer,logicalId,fingerprint]));
+  const id=`v2${layer==="raw"?"r":"m"}-${documentEpoch.toString(36)}-${digest.slice(0,40)}`;
   if(Buffer.byteLength(id,"utf8")>64)throw Error("STAGED_VECTOR_ID_TOO_LONG");
   return id;
 }
@@ -119,20 +121,22 @@ async function leaseActive(db:CoordinatorDB,lease:ArchiveLease,now:number){
 export async function stageImmutableVectorPair(
  db:CoordinatorDB,lease:ArchiveLease,documentId:string,layer:PublicationLayer,
  record:ImmutableStagedVector,indices:readonly [ImmutableIndex,ImmutableIndex],
- now=Date.now(),
+ now=Date.now(),documentEpoch?:number,
 ):Promise<string>{
   validateStage(documentId,record.logicalId,record.sourceFingerprint,lease);
+  const stageEpoch=documentEpoch??lease.generation;
+  validateStagingEpoch(stageEpoch);
   if(layer!=="raw"&&layer!=="map")throw Error("INVALID_STAGED_LAYER");
   ensureVectors(record.legacyValues);ensureVectors(record.multilingualValues);
   const meta={...record.metadata,sourceFileId:documentId,
     sourceFingerprint:record.sourceFingerprint,
-    stagedGeneration:lease.generation,stagedLayer:layer};
-  if(!metadataValid(meta,documentId,record.sourceFingerprint,layer,lease.generation))
+    stagedGeneration:stageEpoch,stagedLayer:layer};
+  if(!metadataValid(meta,documentId,record.sourceFingerprint,layer,stageEpoch))
     throw Error("INVALID_STAGED_SOURCE_METADATA");
   if(!Array.isArray(indices)||indices.length!==2||
       indices.some(x=>!x||typeof x.insert!=="function"||typeof x.getByIds!=="function"))
     throw Error("STAGED_VECTOR_INDEX_UNAVAILABLE");
-  const id=immutableVectorId(lease,documentId,layer,record.logicalId,record.sourceFingerprint);
+  const id=immutableVectorId(lease,documentId,layer,record.logicalId,record.sourceFingerprint,stageEpoch);
   await leaseActive(db,lease,now);
   await Promise.all([
     indices[0].insert([{id,values:record.legacyValues,metadata:meta}]),
@@ -143,7 +147,7 @@ export async function stageImmutableVectorPair(
   const found=await Promise.all([
     indices[0].getByIds([id]),indices[1].getByIds([id]),
   ]);
-  if(!found.every(x=>readbackValid(x,id,documentId,record.sourceFingerprint,layer,lease.generation)))
+  if(!found.every(x=>readbackValid(x,id,documentId,record.sourceFingerprint,layer,stageEpoch)))
     throw Error("STAGED_DUAL_VECTOR_READBACK_NOT_READY");
 
   const at=Date.now();
@@ -155,22 +159,25 @@ export async function stageImmutableVectorPair(
     SELECT ?,?,?,?,?,?,? WHERE EXISTS (
       SELECT 1 FROM ingestion_global_leases
       WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?
-    )
+    ) ${documentEpoch!==undefined?DOCUMENT_STAGING_EPOCH_FENCE_SQL:""}
     ON CONFLICT(document_id,generation,layer,logical_id) DO UPDATE
     SET created_at_ms=ingestion_v2_vector_receipts.created_at_ms
     WHERE ingestion_v2_vector_receipts.staged_id=excluded.staged_id
       AND ingestion_v2_vector_receipts.source_fingerprint=excluded.source_fingerprint
     RETURNING staged_id
-  `).bind(documentId,lease.generation,layer,record.logicalId,id,
-       record.sourceFingerprint,at,lease.jobKey,lease.owner,lease.generation,at).first();
+  `).bind(documentId,stageEpoch,layer,record.logicalId,id,
+       record.sourceFingerprint,at,lease.jobKey,lease.owner,lease.generation,at,
+       ...(documentEpoch!==undefined?[documentId,lease.jobKey,stageEpoch,record.sourceFingerprint]:[])).first();
   if(row?.staged_id!==id)throw Error("STAGED_VECTOR_RECEIPT_DENIED");
   return id;
 }
 export async function stageImmutableExactEvidence(
  db:CoordinatorDB,lease:ArchiveLease,documentId:string,
- evidence:ExactEvidence, now=Date.now(),
+ evidence:ExactEvidence, now=Date.now(),documentEpoch?:number,
 ):Promise<boolean>{
   validateStage(documentId,evidence.logicalId,evidence.sourceFingerprint,lease);
+  const stageEpoch=documentEpoch??lease.generation;
+  validateStagingEpoch(stageEpoch);
   if(!validIdentity(evidence.text,60000)||
     !validIdentity(evidence.fileName,512)||
     !validIdentity(evidence.sourcePath,1024)||
@@ -184,7 +191,7 @@ export async function stageImmutableExactEvidence(
     SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (
       SELECT 1 FROM ingestion_global_leases
       WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?
-    )
+    ) ${documentEpoch!==undefined?DOCUMENT_STAGING_EPOCH_FENCE_SQL:""}
     ON CONFLICT(document_id,generation,logical_id) DO UPDATE
     SET created_at_ms=ingestion_v2_staged_evidence.created_at_ms
     WHERE ingestion_v2_staged_evidence.source_fingerprint=excluded.source_fingerprint
@@ -194,9 +201,10 @@ export async function stageImmutableExactEvidence(
       AND ingestion_v2_staged_evidence.page=excluded.page
       AND ingestion_v2_staged_evidence.chunk_index=excluded.chunk_index
     RETURNING logical_id
-  `).bind(documentId,lease.generation,evidence.logicalId,evidence.sourceFingerprint,
+  `).bind(documentId,stageEpoch,evidence.logicalId,evidence.sourceFingerprint,
      evidence.text,evidence.fileName,evidence.sourcePath,evidence.page,
-     evidence.chunkIndex,now,lease.jobKey,lease.owner,lease.generation,now).first();
+     evidence.chunkIndex,now,lease.jobKey,lease.owner,lease.generation,now,
+     ...(documentEpoch!==undefined?[documentId,lease.jobKey,stageEpoch,evidence.sourceFingerprint]:[])).first();
   return row?.logical_id===evidence.logicalId;
 }
 function manifestIds(xs:unknown):xs is string[]{
@@ -213,17 +221,19 @@ export function validateFullImmutableManifest(manifest:PublicationManifest):void
 }
 export async function publishImmutableThreeLayerGeneration(
  db:CoordinatorDB,lease:ArchiveLease,documentId:string,
- manifest:PublicationManifest,now=Date.now(),
+ manifest:PublicationManifest,now=Date.now(),documentEpoch?:number,
 ):Promise<boolean>{
   validateDoc(documentId,lease);validateFullImmutableManifest(manifest);
+  const stageEpoch=documentEpoch??lease.generation;
+  validateStagingEpoch(stageEpoch);
   const groups=[
     ["ingestion_v2_vector_receipts","raw",manifest.rawIds],
     ["ingestion_v2_staged_evidence",null,manifest.evidenceIds],
     ["ingestion_v2_vector_receipts","map",manifest.mapIds],
   ] as const;
   const params:unknown[]=[
-    documentId,lease.jobKey,lease.generation,manifest.sourceFingerprint,
-    sha(JSON.stringify([documentId,lease.generation,manifest])),manifest.rawIds.length,
+    documentId,lease.jobKey,stageEpoch,manifest.sourceFingerprint,
+    sha(JSON.stringify([documentId,stageEpoch,manifest])),manifest.rawIds.length,
     manifest.evidenceIds.length,manifest.mapIds.length,now,
     lease.jobKey,lease.owner,lease.generation,now,
   ];
@@ -238,8 +248,8 @@ export async function publishImmutableThreeLayerGeneration(
           AND (x.source_fingerprint<>? OR NOT EXISTS(
             SELECT 1 FROM json_each(?) j WHERE j.value=x.logical_id))
       )`);
-    params.push(documentId,lease.generation,...(layer?[layer]:[]),ids.length,
-      documentId,lease.generation,...(layer?[layer]:[]),
+    params.push(documentId,stageEpoch,...(layer?[layer]:[]),ids.length,
+      documentId,stageEpoch,...(layer?[layer]:[]),
       manifest.sourceFingerprint,JSON.stringify(ids));
   }
   // THIS statement is the only visibility/publication switch. Even a late
@@ -251,7 +261,8 @@ export async function publishImmutableThreeLayerGeneration(
     WHERE EXISTS(
       SELECT 1 FROM ingestion_global_leases
       WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?
-    ) AND ${clauses.join(" AND ")}
+    ) ${documentEpoch!==undefined?DOCUMENT_STAGING_EPOCH_FENCE_SQL:""}
+    AND ${clauses.join(" AND ")}
     ON CONFLICT(document_id) DO UPDATE SET
       job_key=excluded.job_key,
       active_generation=excluded.active_generation,
@@ -262,8 +273,11 @@ export async function publishImmutableThreeLayerGeneration(
     WHERE ingestion_v2_publications.job_key=excluded.job_key
       AND ingestion_v2_publications.active_generation<excluded.active_generation
     RETURNING active_generation`;
+  if(documentEpoch!==undefined){
+    params.splice(13,0,documentId,lease.jobKey,stageEpoch,manifest.sourceFingerprint);
+  }
   const row=await db.prepare(sql).bind(...params).first();
-  return Number(row?.active_generation)===lease.generation;
+  return Number(row?.active_generation)===stageEpoch;
 }
 /** Exact citation pages only from the D1-published generation.
  * Does not read uncommitted staging rows; any database error fails closed.

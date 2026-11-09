@@ -9,6 +9,7 @@ import {
 import {extractClauseNumbers} from "./standard-identifiers.ts";
 import {validateArchiveLease,type ArchiveLease,type CoordinatorDB} from "./ingestion-global-coordinator.ts";
 import type {ExactEvidence} from "./ingestion-immutable-publication.ts";
+import {validateStagingEpoch,DOCUMENT_STAGING_EPOCH_FENCE_SQL} from "./ingestion-document-staging-epoch.ts";
 
 export type PublishedV2EvidenceRow={
  id:string;text:string;source_file_id:string;file_name:string;source_path:string;
@@ -19,9 +20,11 @@ const MAX_REFS=30,MAX_CLAUSES=40,MAX_RESULT=100;
 
 export async function stageImmutableEvidenceReferenceTerms(
  db:CoordinatorDB,lease:ArchiveLease,documentId:string,
- evidence:ExactEvidence,now=Date.now(),
+ evidence:ExactEvidence,now=Date.now(),documentEpoch?:number,
 ):Promise<number>{
   validateArchiveLease(lease);
+  const stageEpoch=documentEpoch??lease.generation;
+  validateStagingEpoch(stageEpoch);
   if(!documentId||documentId.length>180||
      !evidence?.logicalId||!evidence?.sourceFingerprint||!evidence?.text||
      !Number.isSafeInteger(now)||now<=0)
@@ -46,7 +49,8 @@ export async function stageImmutableEvidenceReferenceTerms(
       SELECT ?,?,?,?,?,?,?,? WHERE EXISTS(
         SELECT 1 FROM ingestion_global_leases
         WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?
-      ) AND EXISTS(
+      ) ${documentEpoch!==undefined?DOCUMENT_STAGING_EPOCH_FENCE_SQL:""}
+      AND EXISTS(
         SELECT 1 FROM ingestion_v2_staged_evidence e
         WHERE e.document_id=? AND e.generation=? AND e.logical_id=?
           AND e.source_fingerprint=?
@@ -56,9 +60,10 @@ export async function stageImmutableEvidenceReferenceTerms(
       WHERE ingestion_v2_evidence_terms.source_fingerprint=excluded.source_fingerprint
         AND ingestion_v2_evidence_terms.label=excluded.label
       RETURNING term_key
-    `).bind(documentId,lease.generation,evidence.logicalId,evidence.sourceFingerprint,
+    `).bind(documentId,stageEpoch,evidence.logicalId,evidence.sourceFingerprint,
       item.kind,item.key,item.label,now,lease.jobKey,lease.owner,lease.generation,now,
-      documentId,lease.generation,evidence.logicalId,evidence.sourceFingerprint).first();
+      ...(documentEpoch!==undefined?[documentId,lease.jobKey,stageEpoch,evidence.sourceFingerprint]:[]),
+      documentId,stageEpoch,evidence.logicalId,evidence.sourceFingerprint).first();
     if(row?.term_key!==item.key)throw Error("IMMUTABLE_REFERENCE_TERM_STAGING_DENIED");
     count++;
   }

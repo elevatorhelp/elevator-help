@@ -1,0 +1,34 @@
+name: QA durable document staging epoch
+run-name: Cross-run immutable document revision and owner-fence QA
+
+on:
+  pull_request:
+    paths:
+      - "app/lib/ingestion-document-staging-epoch.ts"
+      - "app/lib/ingestion-immutable-publication.ts"
+      - "app/lib/ingestion-v2-evidence-references.ts"
+      - "app/api/immutable-archive-publish/route.ts"
+      - "docs/ingestion-v2-document-epoch-schema.sql"
+      - "scripts/test-ingestion-document-staging-epoch.ts"
+      - ".github/workflows/qa-ingestion-document-epoch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  durable-epoch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Verify same document resumes after owner lease rotation
+        run: node --experimental-strip-types scripts/test-ingestion-document-staging-epoch.ts
+      - name: Regress old three-layer atomic publication
+        run: node --experimental-strip-types scripts/test-ingestion-immutable-publication.ts
+      - name: Regress V2 exact source citations
+        run: node --experimental-strip-types scripts/test-ingestion-v2-evidence-references.ts
+      # In-memory SQLite only, no Production writes or paid API calls.
