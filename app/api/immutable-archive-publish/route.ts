@@ -5,10 +5,10 @@
  */
 import {getCloudflareContext} from "@opennextjs/cloudflare";
 import {NextResponse} from "next/server";
-import {timingSafeEqual} from "node:crypto";
+import {timingSafeEqual,createHash} from "node:crypto";
 import {
   stageImmutableVectorPair,stageImmutableExactEvidence,
-  publishImmutableThreeLayerGeneration,
+  publishImmutableThreeLayerGeneration,validateFullImmutableManifest,
   type ImmutableIndex,type ImmutableStagedVector,type ExactEvidence,
   type PublicationManifest,type PublicationLayer,
 } from "../../lib/ingestion-immutable-publication";
@@ -107,6 +107,31 @@ export async function POST(request:Request){
       const terms=await stageImmutableEvidenceReferenceTerms(
         db,lease!,doc,evidence,Date.now(),documentEpoch);
       return json({ok:true,staged:true,published:false,referenceTerms:terms,documentEpoch});
+    }
+    if(action==="verify_published"){
+      const manifest=data.manifest as PublicationManifest|undefined;
+      if(!manifest||typeof manifest!=="object"||Array.isArray(manifest))
+        return json({ok:false,error:"INVALID_MANIFEST"},400);
+      validateFullImmutableManifest(manifest);
+      // Read-only reconciliation MUST NOT claim/rewrite a document epoch.
+      const staged=await db.prepare(`
+        SELECT staging_epoch AS epoch FROM ingestion_v2_document_epochs
+        WHERE document_id=? AND job_key=? AND source_fingerprint=?
+      `).bind(doc,lease!.jobKey,manifest.sourceFingerprint).first();
+      const documentEpoch=Number(staged?.epoch);
+      if(!Number.isSafeInteger(documentEpoch)||documentEpoch<1)
+        return json({ok:false,error:"DOCUMENT_STAGING_EPOCH_DENIED"},409);
+      const manifestHash=createHash("sha256")
+        .update(JSON.stringify([doc,documentEpoch,manifest]),"utf8").digest("hex");
+      const already=await db.prepare(`
+        SELECT active_generation AS generation FROM ingestion_v2_publications
+        WHERE document_id=? AND job_key=? AND active_generation=?
+          AND source_fingerprint=? AND manifest_sha256=?
+      `).bind(doc,lease!.jobKey,documentEpoch,
+        manifest.sourceFingerprint,manifestHash).first();
+      return Number(already?.generation)===documentEpoch
+        ?json({ok:true,published:true,generation:documentEpoch})
+        :json({ok:false,published:false,error:"PUBLICATION_NOT_VERIFIED"},409);
     }
     if(action==="publish"){
       const manifest=data.manifest as PublicationManifest|undefined;

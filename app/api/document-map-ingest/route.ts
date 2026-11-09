@@ -1,4 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import {stageImmutableVectorPair} from "../../lib/ingestion-immutable-publication";
+import {claimDocumentStagingEpoch} from "../../lib/ingestion-document-staging-epoch";
+import type {CoordinatorDB,ArchiveLease} from "../../lib/ingestion-global-coordinator";
 import { NextRequest, NextResponse } from "next/server";
 import {makeGlobalArchiveWriteGuard, GlobalArchiveWriteDenied} from "../../lib/ingestion-global-write-gate";
 import {
@@ -273,6 +276,7 @@ ${JSON.stringify(pages)}
 }
 
 export async function POST(request: NextRequest) {
+  let qaStageRequest=false;
   try {
     const expectedToken = process.env.INGESTION_TOKEN;
     const auth = request.headers.get("authorization") || "";
@@ -280,6 +284,7 @@ export async function POST(request: NextRequest) {
       return unauthorized();
 
     const body: any = await request.json();
+    qaStageRequest=body?.action==="stage_map_v2";
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
 
@@ -326,7 +331,16 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     const { env } = getCloudflareContext();
-    const guardArchiveWrite=makeGlobalArchiveWriteGuard(env as any, body);
+    if(qaStageRequest && (
+       (env as any).INGESTION_IMMUTABLE_PUBLICATION_ENABLED!=="true" ||
+       (env as any).INGESTION_COORDINATOR_ENABLED!=="true" ||
+       (env as any).INGESTION_GLOBAL_WRITE_GATE_ENABLED!=="true" ||
+       !(env as any).CORTEX_DB?.prepare
+    ))return NextResponse.json({ok:false,error:"V2_STAGING_DISABLED"},{status:404});
+    const guardArchiveWrite=makeGlobalArchiveWriteGuard(
+      qaStageRequest?{...(env as any),INGESTION_GLOBAL_WRITE_GATE_ENABLED:"true"}:env as any,
+      body,
+    );
     await guardArchiveWrite();
     const ai = (env as any).AI;
     const vectorize = (env as any).VECTORIZE;
@@ -432,6 +446,32 @@ export async function POST(request: NextRequest) {
       },
     }));
 
+    if(qaStageRequest){
+      const lease=body?.globalArchiveLease as ArchiveLease|undefined;
+      const fp=document.sourceFingerprint;
+      const doc=document.sourceFileId;
+      if(typeof fp!=="string"||!fp)
+        return NextResponse.json({ok:false,error:"V2_DOCUMENT_FINGERPRINT_REQUIRED"},{status:400});
+      const db=(env as any).CORTEX_DB as CoordinatorDB;
+      await guardArchiveWrite();
+      const epoch=await claimDocumentStagingEpoch(db,lease!,doc,fp);
+      if(epoch===null)
+        return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
+      const stagedIds:string[]=[];
+      for(const {id,metadata,index} of vectors){
+        await guardArchiveWrite();
+        const physicalId=await stageImmutableVectorPair(
+          db,lease!,doc,"map",
+          {logicalId:id,sourceFingerprint:fp,metadata,
+           legacyValues:embeddings[index],multilingualValues:multilingualEmbeddings[index]},
+          [vectorize,vectorizeV2],Date.now(),epoch,
+        );
+        stagedIds.push(physicalId);
+      }
+      return NextResponse.json({ok:true,staged:true,published:false,
+        documentEpoch:epoch,stagedIds,mapCount:nodes.length,mapVersion});
+    }
+
     await guardArchiveWrite();
     await vectorize.upsert(legacyVectors);
     await guardArchiveWrite();
@@ -445,6 +485,8 @@ export async function POST(request: NextRequest) {
       nodes,
     });
   } catch (error) {
+    if(qaStageRequest)
+      return NextResponse.json({ok:false,error:"V2_MAP_STAGING_NOT_VERIFIED"},{status:409});
     if(error instanceof GlobalArchiveWriteDenied)
       return NextResponse.json({ok:false,error:error.code},{status:409});
     console.error("Document-map ingestion error:", error);

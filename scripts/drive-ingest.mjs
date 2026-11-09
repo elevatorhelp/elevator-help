@@ -11,6 +11,10 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
 import { assertShardState, shardForDocumentId, validateShardParameters } from "./archive-sharding.mjs";
 import { createIngestionCoordinatorSession } from "./ingestion-coordinator-client.mjs";
+import {
+  assertManualQaV2Environment,verifyV2StageBatch,verifyV2EvidenceReceipt,
+  buildQaImmutableManifest,assertQaImmutablePublish,updateQaDeletionCandidate,
+} from "./ingestion-v2-qa-guard.mjs";
 let activeCoordinator = null;
 
 const execFileAsync = promisify(execFile);
@@ -30,6 +34,8 @@ const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "1Lu7If9Nt4GUyakB6b6YriOG
 const TARGET_FILE_ID = process.env.TARGET_FILE_ID || "";
 const FORCE_REINGEST = process.env.FORCE_REINGEST === "true";
 const MAX_FILES = Number(process.env.MAX_FILES || "1");
+const V2_QA=process.env.INGESTION_V2_QA_MODE==="true";
+const IMMUTABLE_ENDPOINT=process.env.INGESTION_IMMUTABLE_ENDPOINT;
 const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/api/drive-ingest-batch";
 const DOCUMENT_MAP_ENDPOINT =
   process.env.DOCUMENT_MAP_ENDPOINT || "https://elevator.help/api/document-map-ingest";
@@ -163,6 +169,14 @@ async function listFolder(folderId, accessToken, pathPrefix = "") {
   return entries;
 }
 
+function assertQaDrivePdfIntegrity(file,bytes){
+  if(!V2_QA)return;
+  if(file?.mimeType!=="application/pdf" ||
+     !/^[a-fA-F0-9]{32}$/.test(file?.md5Checksum||"") ||
+     createHash("md5").update(bytes).digest("hex").toLowerCase()!==file.md5Checksum.toLowerCase())
+    throw Error("V2_QA_PDF_SOURCE_CHECKSUM_MISMATCH");
+}
+
 async function downloadDocument(file, accessToken) {
   const googleWorkspace = GOOGLE_WORKSPACE_MIME_TYPES.has(file.mimeType);
   const url = googleWorkspace
@@ -172,7 +186,9 @@ async function downloadDocument(file, accessToken) {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) throw new Error(`Document download error: ${await response.text()}`);
-  return new Uint8Array(await response.arrayBuffer());
+  const bytes=new Uint8Array(await response.arrayBuffer());
+  assertQaDrivePdfIntegrity(file,bytes);
+  return bytes;
 }
 
 async function downloadText(fileId, accessToken) {
@@ -352,7 +368,14 @@ function vectorId(fileId, page, chunkIndex) {
 }
 
 function fingerprint(file) {
-  return file.md5Checksum || `${file.modifiedTime || ""}:${file.size || ""}`;
+  const source=file.md5Checksum || `${file.modifiedTime || ""}:${file.size || ""}`;
+  // A staging revision changes when the embedding/map/evidence algorithms change.
+  // The legacy scheduled serial writer retains its exact previous fingerprint.
+  return V2_QA ? createHash("sha256").update(JSON.stringify([
+    source,file.name||"",file.sourcePath||"",
+    RAW_EMBEDDING_VERSION,DOCUMENT_MAP_VERSION,ARCHIVE_INDEX_VERSION,
+    "v2-immutable-drive-pdf",
+  ])).digest("hex") : source;
 }
 
 async function loadState() {
@@ -504,6 +527,7 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
   }
 
   if (!response.ok || data?.ok === false) {
+    if(V2_QA)throw Error("V2_QA_ENDPOINT_REJECTED");
     throw new Error(`${label} error ${response.status}: ${JSON.stringify(data)}`);
   }
 
@@ -511,7 +535,7 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
 }
 
 async function callIngest(payload, token) {
-  if (payload?.action === "upsert") {
+  if (payload?.action === "upsert" || payload?.action === "stage_upsert_v2") {
     ingestionBudget.reserve(GEMINI_CALLS_PER_RAW_BATCH, "raw chunk batch");
   }
   return callJsonEndpoint(INGEST_ENDPOINT, payload, token, "Ingestion endpoint");
@@ -523,6 +547,7 @@ async function callDocumentMap(payload, token) {
 }
 
 async function deleteIds(ids, token) {
+  if(V2_QA)throw Error("V2_QA_UNVERSIONED_DELETE_DENIED");
   for (let i = 0; i < ids.length; i += 100) {
     await callIngest({ action: "delete", ids: ids.slice(i, i + 100) }, token);
   }
@@ -530,7 +555,8 @@ async function deleteIds(ids, token) {
 
 async function processEvidenceIndex(
   file, accessToken, ingestToken,
-  { startChunk = 0, initialIds = [], onProgress = null, onIdentity = null, onQuality = null } = {}
+  { startChunk = 0, initialIds = [], onProgress = null, onIdentity = null, onQuality = null,
+    stageRecord = null } = {}
 ) {
   const groupHint = documentGroupHint(file.name);
   let pages;
@@ -594,16 +620,25 @@ async function processEvidenceIndex(
   const ids = [...initialIds];
   for (let index = startChunk; index < chunks.length; index += BATCH_SIZE) {
     const batch = chunks.slice(index, index + BATCH_SIZE);
-    const result = await callJsonEndpoint(
-      INGEST_ENDPOINT,
-      { action: "index_evidence", chunks: batch },
-      ingestToken,
-      "Archive evidence endpoint",
-    );
-    if (result?.archiveIndexVersion !== ARCHIVE_INDEX_VERSION) {
-      throw new Error(
-        `Archive index version mismatch: expected ${ARCHIVE_INDEX_VERSION}, got ${String(result?.archiveIndexVersion ?? "missing")}`,
+    if(V2_QA){
+      for(const chunk of batch){
+        const result=await callJsonEndpoint(IMMUTABLE_ENDPOINT,{
+          action:"stage_evidence",documentId:file.id,
+          evidence:{
+            logicalId:chunk.id,sourceFingerprint:chunk.sourceFingerprint,
+            text:chunk.text,fileName:chunk.fileName,sourcePath:chunk.sourcePath,
+            page:chunk.page,chunkIndex:chunk.chunkIndex,
+          },
+        },ingestToken,"Immutable Evidence");
+        verifyV2EvidenceReceipt(result,chunk.id,stageRecord);
+      }
+    }else{
+      const result=await callJsonEndpoint(
+        INGEST_ENDPOINT,{action:"index_evidence",chunks:batch},
+        ingestToken,"Archive evidence endpoint",
       );
+      if(result?.archiveIndexVersion!==ARCHIVE_INDEX_VERSION)
+        throw Error("ARCHIVE_EVIDENCE_VERSION_MISMATCH");
     }
     ids.push(...batch.map((chunk) => chunk.id));
     if (typeof onProgress === "function") {
@@ -620,7 +655,7 @@ async function buildDocumentMap(
   ingestToken,
   languageHint,
   groupHint,
-  { startPage = 1, initialIds = [], onProgress = null } = {}
+  { startPage = 1, initialIds = [], onProgress = null,stageRecord=null } = {}
 ) {
   const pageInputs = pages
     .map((pageText, index) => ({
@@ -660,8 +695,16 @@ async function buildDocumentMap(
       };
     }
     const window = pageInputs.slice(i, i + MAP_PAGES_PER_BATCH);
-    const result = await callDocumentMap({ document, pages: window }, ingestToken);
-    const ids = Array.isArray(result?.ids) ? result.ids : [];
+    const result = await callDocumentMap({
+      ...(V2_QA?{action:"stage_map_v2"}:{}),document,pages:window,
+    },ingestToken);
+    if(V2_QA && (!Number.isSafeInteger(result?.mapCount) ||
+       result.mapCount<1||result.mapCount>12))
+      throw Error("V2_QA_MAP_RECEIPT_COUNT_INVALID");
+    const ids = V2_QA
+      ? verifyV2StageBatch(result,Array.from({length:result.mapCount}),
+        "map",stageRecord)
+      : Array.isArray(result?.ids) ? result.ids : [];
     mapIds.push(...ids);
     const nextPage = window[window.length - 1].page + 1;
     if (typeof onProgress === "function") {
@@ -685,6 +728,7 @@ async function processPdf(
     rawStartChunk = 0,
     initialRawIds = [],
     onRawProgress = null,
+    stageRecord = null,
     mapStartPage = 1,
     initialMapIds = [],
     onMapProgress = null,
@@ -732,18 +776,23 @@ async function processPdf(
         break;
       }
       const batch = chunks.slice(i, i + BATCH_SIZE);
-      const result = await callIngest({ action: "upsert", chunks: batch }, ingestToken);
+      const result = await callIngest({
+        action:V2_QA?"stage_upsert_v2":"upsert",chunks:batch,
+      },ingestToken);
       if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
         throw new Error(
           `Ingestion endpoint raw embedding version mismatch: expected ${RAW_EMBEDDING_VERSION}, got ${String(result?.rawEmbeddingVersion ?? "missing")}`
         );
       }
-      rawIds.push(...batch.map((chunk) => chunk.id));
+      const insertedIds=V2_QA
+        ? verifyV2StageBatch(result,batch,"raw",stageRecord)
+        : batch.map(chunk=>chunk.id);
+      rawIds.push(...insertedIds);
       nextRawChunk = i + batch.length;
       if (typeof onRawProgress === "function") {
         await onRawProgress({ ids: [...rawIds], nextChunk: nextRawChunk });
       }
-      console.log(`Upserted ${result.upserted} chunks (${Math.min(i + BATCH_SIZE, chunks.length)}/${chunks.length})`);
+      console.log(`Processed ${batch.length} raw chunks (${Math.min(i+BATCH_SIZE,chunks.length)}/${chunks.length})`);
     }
   }
 
@@ -752,6 +801,7 @@ async function processPdf(
         startPage: mapStartPage,
         initialIds: initialMapIds,
         onProgress: onMapProgress,
+        stageRecord,
       })
     : null;
   if (ingestMap) {
@@ -772,7 +822,7 @@ async function processText(
   file,
   accessToken,
   ingestToken,
-  { rawStartChunk = 0, initialRawIds = [], onRawProgress = null } = {}
+  { rawStartChunk = 0, initialRawIds = [], onRawProgress = null,stageRecord=null } = {}
 ) {
   const text = await downloadText(file.id, accessToken);
   const chunks = splitIntoChunks(text).map((part, chunkIndex) => ({
@@ -796,11 +846,16 @@ async function processText(
       break;
     }
     const batch = chunks.slice(i, i + BATCH_SIZE);
-    const result = await callIngest({ action: "upsert", chunks: batch }, ingestToken);
+    const result = await callIngest({
+      action:V2_QA?"stage_upsert_v2":"upsert",chunks:batch,
+    },ingestToken);
     if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
       throw new Error("Ingestion endpoint raw embedding version mismatch");
     }
-    ids.push(...batch.map((chunk) => chunk.id));
+    const insertedIds=V2_QA
+      ? verifyV2StageBatch(result,batch,"raw",stageRecord)
+      : batch.map(chunk=>chunk.id);
+    ids.push(...insertedIds);
     nextRawChunk = i + batch.length;
     if (typeof onRawProgress === "function") {
       await onRawProgress({ ids: [...ids], nextChunk: nextRawChunk });
@@ -823,6 +878,7 @@ function nextPreferredIngestionPhase(lastSelectedPhase) {
 }
 
 async function main() {
+  if(V2_QA)assertManualQaV2Environment(process.env);
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
 
@@ -835,9 +891,14 @@ async function main() {
   const shardFiles = shardEnabled
     ? allFiles.filter((file) => shardForDocumentId(file.id, shardCount) === shardIndex)
     : allFiles;
-  const files = TARGET_FILE_ID ? shardFiles.filter((file) => file.id === TARGET_FILE_ID) : shardFiles;
+  const selectedScopeFiles=TARGET_FILE_ID
+    ? shardFiles.filter(file=>file.id===TARGET_FILE_ID) : shardFiles;
+  // Immutable V2 pilot never marks a text-only document with an empty Map as complete.
+  const files=V2_QA?selectedScopeFiles.filter(file=>file.mimeType==="application/pdf"):selectedScopeFiles;
   if (TARGET_FILE_ID && !files.length) throw new Error("Target file not found in Drive scope");
-  let state = await loadState();
+  // In QA, a missing local evictable cache is allowed only because the strict
+  // coordinator MUST provide an existing durable D1 checkpoint. No bootstrap.
+  let state = V2_QA ? await readIngestionState(STATE_PATH,true) : await loadState();
   if (process.env.INGESTION_D1_COORDINATOR_MODE === "strict") {
     if (shardEnabled || TARGET_FILE_ID || FORCE_REINGEST ||
         process.env.GITHUB_ACTIONS !== "true" ||
@@ -851,6 +912,7 @@ async function main() {
       runAttempt:process.env.GITHUB_RUN_ATTEMPT || "1",
       legacyState:state,
       bootstrapApproved:process.env.INGESTION_D1_BOOTSTRAP_APPROVED === "true",
+      ...(V2_QA?{qaOnly:true,endpoint:process.env.INGESTION_COORDINATOR_ENDPOINT}:{}),
     });
     state = activeCoordinator.state;
   }
@@ -862,6 +924,7 @@ async function main() {
   state.scopes ||= {};
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
+  const workFiles=V2_QA?(scope.v2Files ||= {}):scope.files;
 
   console.log(`Found ${files.length} supported documents in configured Drive scope${shardEnabled ? " (assigned shard only)" : ""}`);
   console.log(
@@ -869,8 +932,12 @@ async function main() {
   );
 
   const foundIds = new Set(shardFiles.map((file) => file.id));
-  for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : scope.files)) {
+  for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : workFiles)) {
     if (!foundIds.has(fileId)) {
+      if(V2_QA){
+        workFiles[fileId]=updateQaDeletionCandidate(old,true);
+        continue; // Hold tombstone; never delete V2 published data here.
+      }
       // A single incomplete Drive scan must never erase archived evidence.
       if ((old.missingScanCount || 0) < 1) {
         scope.files[fileId] = {...old, missingScanCount: 1};
@@ -895,33 +962,45 @@ async function main() {
   }
 
   for (const file of shardFiles) {
-    if (scope.files[file.id]?.missingScanCount) delete scope.files[file.id].missingScanCount;
+    if(V2_QA && workFiles[file.id]?.missingScanCount)
+      workFiles[file.id]=updateQaDeletionCandidate(workFiles[file.id],false);
+    else if(workFiles[file.id]?.missingScanCount)
+      delete workFiles[file.id].missingScanCount;
   }
   // Persist the phase rotation per Drive scope instead of deriving it from wall-clock
   // time: delayed GitHub schedules must not repeatedly skip an eligible phase.
   // createIngestionPlan still enforces evidence -> raw -> map dependencies per file.
-  const preferredPhase = nextPreferredIngestionPhase(scope.lastSelectedPhase);
-  const plan = createIngestionPlan(files, scope.files, FORCE_REINGEST, preferredPhase);
+  const preferredPhase=nextPreferredIngestionPhase(
+    V2_QA?scope.v2LastSelectedPhase:scope.lastSelectedPhase
+  );
+  const plan = createIngestionPlan(files,workFiles,FORCE_REINGEST,preferredPhase);
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
   console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);
-  const changed = plan.files;
+  const changed=V2_QA
+    ? [...plan.files,...files.filter(file=>
+        !plan.files.some(p=>p.id===file.id) &&
+        workFiles[file.id]?.publishedFingerprint!==fingerprint(file) &&
+        buildQaImmutableManifest(workFiles[file.id],fingerprint(file))
+      )]
+    : plan.files;
   console.log(
     `${changed.length} document(s) need the ${plan.phase} phase; exact evidence, semantic vectors and document maps advance archive-wide without file-specific routing`
   );
 
   scope.phaseCursors ||= {};
-  const batch = selectFairIngestionBatch(
-    changed, MAX_FILES, scope.phaseCursors[plan.phase] ?? null
-  );
+  scope.v2PhaseCursors ||= {};
+  const cursors=V2_QA?scope.v2PhaseCursors:scope.phaseCursors;
+  const batch=selectFairIngestionBatch(changed,MAX_FILES,cursors[plan.phase]??null);
   const selected = batch.files;
   if (selected.length && !TARGET_FILE_ID) {
     // Record the attempted phase before external calls; retrying a failed run
     // must not repeatedly select the same phase and starve the others.
-    scope.lastSelectedPhase = plan.phase;
+    if(V2_QA)scope.v2LastSelectedPhase=plan.phase;
+    else scope.lastSelectedPhase=plan.phase;
     // Advance and checkpoint before any network call. A failed file cannot
     // pin the entire archive to the same first batch on the next scheduled run.
-    scope.phaseCursors[plan.phase] = batch.nextCursor;
+    cursors[plan.phase]=batch.nextCursor;
     state.scopes[DRIVE_FOLDER_ID] = scope;
     await saveState(state);
   }
@@ -929,7 +1008,7 @@ async function main() {
   const fileErrors = [];
   for (const file of selected) {
     try {
-    const previous = scope.files[file.id] || {};
+    const previous = workFiles[file.id] || {};
     const currentFingerprint = fingerprint(file);
     const isText = file.mimeType === "text/plain" || TEXT_EXTENSIONS.has(extname(file.name).toLowerCase());
     const needsEvidence = plan.phase === "evidence";
@@ -942,6 +1021,13 @@ async function main() {
       sourcePath: file.sourcePath,
       modifiedTime: file.modifiedTime || null,
     };
+    if(V2_QA && next.v2SourceFingerprint!==currentFingerprint){
+      // Durable document epochs are revision-scoped, NOT per-run lease-scoped.
+      delete next.documentEpoch;
+      delete next.publishedFingerprint;
+      delete next.publishedEpoch;
+      next.v2SourceFingerprint=currentFingerprint;
+    }
 
     if (needsEvidence) {
       if (previous.name && (previous.name !== file.name || previous.sourcePath !== file.sourcePath)) {
@@ -960,6 +1046,7 @@ async function main() {
       const evidenceIds = await processEvidenceIndex(file, accessToken, ingestToken, {
         onIdentity: (identity) => { next.documentIdentity = identity; },
         onQuality: (quality) => { next.extractionQuality = quality; },
+        stageRecord:next,
         startChunk: resumeEvidence ? previous.evidenceNextChunk : 0,
         initialIds: resumeEvidence ? previous.partialEvidenceIds : [],
         onProgress: async ({ ids, nextChunk }) => {
@@ -967,7 +1054,7 @@ async function main() {
           next.partialArchiveIndexVersion = ARCHIVE_INDEX_VERSION;
           next.partialEvidenceFingerprint = currentFingerprint;
           next.evidenceNextChunk = nextChunk;
-          scope.files[file.id] = next;
+          workFiles[file.id] = next;
           state.scopes[DRIVE_FOLDER_ID] = scope;
           await saveState(state);
         },
@@ -977,7 +1064,7 @@ async function main() {
         ? previous.evidenceIds
         : []
       ).filter((id) => !evidenceIdSet.has(id));
-      if (staleEvidenceIds.length) await deleteIds(staleEvidenceIds, ingestToken);
+      if (!V2_QA && staleEvidenceIds.length) await deleteIds(staleEvidenceIds, ingestToken);
       next.evidenceIds = evidenceIds;
       next.archiveIndexVersion = ARCHIVE_INDEX_VERSION;
       next.evidenceFingerprint = currentFingerprint;
@@ -986,7 +1073,7 @@ async function main() {
       delete next.partialArchiveIndexVersion;
       delete next.partialEvidenceFingerprint;
       delete next.evidenceNextChunk;
-      scope.files[file.id] = next;
+      workFiles[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
       console.log(`Exact-evidence checkpoint saved for archive document`);
@@ -1010,13 +1097,14 @@ async function main() {
         ? processText(file, accessToken, ingestToken, {
             rawStartChunk,
             initialRawIds,
+            stageRecord:next,
             onRawProgress: async ({ ids, nextChunk }) => {
               next.partialRawIds = ids;
               next.partialRawEmbeddingVersion = RAW_EMBEDDING_VERSION;
               next.partialRawFingerprint = currentFingerprint;
               next.rawNextChunk = nextChunk;
               next.rawProgressAt = new Date().toISOString();
-              scope.files[file.id] = next;
+              workFiles[file.id] = next;
               state.scopes[DRIVE_FOLDER_ID] = scope;
               await saveState(state);
             },
@@ -1026,13 +1114,14 @@ async function main() {
             ingestMap: false,
             rawStartChunk,
             initialRawIds,
+            stageRecord:next,
             onRawProgress: async ({ ids, nextChunk }) => {
               next.partialRawIds = ids;
               next.partialRawEmbeddingVersion = RAW_EMBEDDING_VERSION;
               next.partialRawFingerprint = currentFingerprint;
               next.rawNextChunk = nextChunk;
               next.rawProgressAt = new Date().toISOString();
-              scope.files[file.id] = next;
+              workFiles[file.id] = next;
               state.scopes[DRIVE_FOLDER_ID] = scope;
               await saveState(state);
             },
@@ -1045,7 +1134,7 @@ async function main() {
         next.partialRawFingerprint = currentFingerprint;
         next.rawNextChunk = indexedRaw.nextRawChunk;
         next.rawProgressAt = new Date().toISOString();
-        scope.files[file.id] = next;
+        workFiles[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
         console.log(`Raw-vector progress checkpoint saved for archive document`);
@@ -1056,7 +1145,7 @@ async function main() {
       const staleRawIds = (Array.isArray(previous.ids) ? previous.ids : []).filter(
         (id) => !newIdSet.has(id)
       );
-      if (staleRawIds.length) await deleteIds(staleRawIds, ingestToken);
+      if (!V2_QA && staleRawIds.length) await deleteIds(staleRawIds, ingestToken);
 
       next.ids = newIds;
       next.rawEmbeddingVersion = RAW_EMBEDDING_VERSION;
@@ -1068,7 +1157,7 @@ async function main() {
       delete next.partialRawFingerprint;
       delete next.rawNextChunk;
       delete next.rawProgressAt;
-      scope.files[file.id] = next;
+      workFiles[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
       console.log(`Raw-vector checkpoint saved for archive document`);
@@ -1083,7 +1172,7 @@ async function main() {
         delete next.metadataRefreshPendingMap;
         next.fingerprint = currentFingerprint;
         next.indexedAt = new Date().toISOString();
-        scope.files[file.id] = next;
+        workFiles[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
         continue;
@@ -1100,13 +1189,13 @@ async function main() {
         console.log(
           `Removing ${previous.partialMapIds.length} stale partial map vectors for archive document`
         );
-        await deleteIds(previous.partialMapIds, ingestToken);
+        if(!V2_QA)await deleteIds(previous.partialMapIds, ingestToken);
         delete next.partialMapIds;
         delete next.partialMapVersion;
         delete next.partialMapFingerprint;
         delete next.mapNextPage;
         delete next.mapProgressAt;
-        scope.files[file.id] = next;
+        workFiles[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
       }
@@ -1116,13 +1205,14 @@ async function main() {
         ingestMap: true,
         mapStartPage,
         initialMapIds,
+        stageRecord:next,
         onMapProgress: async ({ ids, nextPage }) => {
           next.partialMapIds = ids;
           next.partialMapVersion = DOCUMENT_MAP_VERSION;
           next.partialMapFingerprint = currentFingerprint;
           next.mapNextPage = nextPage;
           next.mapProgressAt = new Date().toISOString();
-          scope.files[file.id] = next;
+          workFiles[file.id] = next;
           state.scopes[DRIVE_FOLDER_ID] = scope;
           await saveState(state);
           console.log(`Document-map progress checkpoint: next page ${nextPage}`);
@@ -1136,7 +1226,7 @@ async function main() {
         next.partialMapFingerprint = currentFingerprint;
         next.mapNextPage = indexedMap.mapNextPage;
         next.mapProgressAt = new Date().toISOString();
-        scope.files[file.id] = next;
+        workFiles[file.id] = next;
         state.scopes[DRIVE_FOLDER_ID] = scope;
         await saveState(state);
         console.log(`Document-map progress checkpoint saved for archive document`);
@@ -1149,7 +1239,7 @@ async function main() {
           ...(Array.isArray(previous.partialMapIds) ? previous.partialMapIds : []),
         ])
       ).filter((id) => !newMapIdSet.has(id));
-      if (staleMapIds.length) await deleteIds(staleMapIds, ingestToken);
+      if (!V2_QA && staleMapIds.length) await deleteIds(staleMapIds, ingestToken);
 
       next.mapIds = newMapIds;
       next.mapVersion = DOCUMENT_MAP_VERSION;
@@ -1161,24 +1251,52 @@ async function main() {
       delete next.partialMapFingerprint;
       delete next.mapNextPage;
       delete next.mapProgressAt;
-      scope.files[file.id] = next;
+      workFiles[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
       console.log(`Document-map checkpoint saved for archive document`);
     }
 
-    if (next.rawFingerprint === currentFingerprint && next.mapFingerprint === currentFingerprint) {
+    if (V2_QA) {
+      if(!isText){
+        const manifest=buildQaImmutableManifest(next,currentFingerprint);
+        if(manifest && next.publishedFingerprint!==currentFingerprint){
+          // Complete layer receipts and their checkpoint exist before publication.
+          let result;
+          try{
+            result=await callJsonEndpoint(IMMUTABLE_ENDPOINT,{
+              action:"publish",documentId:file.id,manifest,
+            },ingestToken,"Atomic V2 publication");
+          }catch{
+            // D1 CAS may have committed before an HTTP response was lost.
+            // A read-only exact manifest attestation closes this crash window.
+            result=await callJsonEndpoint(IMMUTABLE_ENDPOINT,{
+              action:"verify_published",documentId:file.id,manifest,
+            },ingestToken,"V2 publication reconciliation");
+          }
+          assertQaImmutablePublish(result,next.documentEpoch);
+          next.publishedFingerprint=currentFingerprint;
+          next.publishedEpoch=next.documentEpoch;
+          next.fingerprint=currentFingerprint;
+          next.indexedAt=new Date().toISOString();
+          workFiles[file.id]=next;
+          state.scopes[DRIVE_FOLDER_ID]=scope;
+          await saveState(state);
+          console.log("PASS: Complete immutable PDF publication (source redacted)");
+        }
+      }
+    }else if (next.rawFingerprint === currentFingerprint && next.mapFingerprint === currentFingerprint) {
       next.fingerprint = currentFingerprint;
       next.indexedAt = new Date().toISOString();
-      scope.files[file.id] = next;
+      workFiles[file.id] = next;
       state.scopes[DRIVE_FOLDER_ID] = scope;
       await saveState(state);
     }
     } catch (error) {
       // State persistence failures are systemic, not document-local. Continuing
       // would incur writes/API costs that cannot be resumed safely.
-      if (String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
-        throw error;
+      if (V2_QA || String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
+        throw Error(V2_QA?"V2_QA_DOCUMENT_STAGE_OR_PUBLISH_ABORTED":"INGESTION_STATE_WRITE_FAILED");
       }
       // Preserve successful checkpoints and allow other files in this bounded
       // run to advance; still fail the workflow so the problem is visible.
@@ -1212,7 +1330,8 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(error);
+    if(V2_QA)console.error("V2_QA_INGESTION_ABORTED (source details redacted)");
+    else console.error(error);
     process.exitCode = 1;
   });
 }
