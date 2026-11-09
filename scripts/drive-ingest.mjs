@@ -892,7 +892,9 @@ async function main() {
   // Immutable V2 pilot never marks a text-only document with an empty Map as complete.
   const files=V2_QA?selectedScopeFiles.filter(file=>file.mimeType==="application/pdf"):selectedScopeFiles;
   if (TARGET_FILE_ID && !files.length) throw new Error("Target file not found in Drive scope");
-  let state = await loadState();
+  // In QA, a missing local evictable cache is allowed only because the strict
+  // coordinator MUST provide an existing durable D1 checkpoint. No bootstrap.
+  let state = V2_QA ? await readIngestionState(STATE_PATH,true) : await loadState();
   if (process.env.INGESTION_D1_COORDINATOR_MODE === "strict") {
     if (shardEnabled || TARGET_FILE_ID || FORCE_REINGEST ||
         process.env.GITHUB_ACTIONS !== "true" ||
