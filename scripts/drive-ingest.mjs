@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
+import { assertShardState, shardForDocumentId, validateShardParameters } from "./archive-sharding.mjs";
 
 const execFileAsync = promisify(execFile);
 const OFFICE_EXTENSIONS = new Set([
@@ -31,6 +32,10 @@ const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/ap
 const DOCUMENT_MAP_ENDPOINT =
   process.env.DOCUMENT_MAP_ENDPOINT || "https://elevator.help/api/document-map-ingest";
 const STATE_PATH = process.env.STATE_PATH || ".ingestion-state/drive.json";
+const shardEnabled = process.env.ARCHIVE_SHARD_INDEX !== undefined || process.env.ARCHIVE_SHARD_COUNT !== undefined;
+const shardIndex = Number(process.env.ARCHIVE_SHARD_INDEX);
+const shardCount = Number(process.env.ARCHIVE_SHARD_COUNT);
+if (shardEnabled) validateShardParameters(shardIndex, shardCount);
 const BATCH_SIZE = 8;
 const CHUNK_SIZE = 2200;
 const CHUNK_OVERLAP = 250;
@@ -453,6 +458,7 @@ async function writeIngestionState(state, filePath = STATE_PATH) {
 }
 
 async function saveState(state) {
+  if (shardEnabled) assertShardState(state, shardIndex, shardCount);
   try {
     return await writeIngestionState(state);
   } catch (error) {
@@ -817,20 +823,26 @@ async function main() {
   const serviceAccount = JSON.parse(serviceAccountRaw);
   const accessToken = await getGoogleAccessToken(serviceAccount);
   const allFiles = await listFolder(DRIVE_FOLDER_ID, accessToken);
-  const files = TARGET_FILE_ID ? allFiles.filter((file) => file.id === TARGET_FILE_ID) : allFiles;
+  const shardFiles = shardEnabled
+    ? allFiles.filter((file) => shardForDocumentId(file.id, shardCount) === shardIndex)
+    : allFiles;
+  const files = TARGET_FILE_ID ? shardFiles.filter((file) => file.id === TARGET_FILE_ID) : shardFiles;
   if (TARGET_FILE_ID && !files.length) throw new Error("Target file not found in Drive scope");
   const state = await loadState();
+  // Reject an old serial checkpoint, or the OTHER worker's checkpoint, before any writes.
+  if (shardEnabled) assertShardState(state, shardIndex, shardCount);
+  else if (state.parallelShard) throw new Error("SERIAL_WORKER_CANNOT_USE_PARALLEL_CHECKPOINT");
   state.version = 3;
   state.scopes ||= {};
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
 
-  console.log(`Found ${files.length} supported documents in configured Drive scope`);
+  console.log(`Found ${files.length} supported documents in configured Drive scope${shardEnabled ? " (assigned shard only)" : ""}`);
   console.log(
     `Gemini ingestion safety budget: at most ${ingestionBudget.snapshot().limit} calls in this process.`
   );
 
-  const foundIds = new Set(allFiles.map((file) => file.id));
+  const foundIds = new Set(shardFiles.map((file) => file.id));
   for (const [fileId, old] of Object.entries(TARGET_FILE_ID ? {} : scope.files)) {
     if (!foundIds.has(fileId)) {
       // A single incomplete Drive scan must never erase archived evidence.
@@ -856,7 +868,7 @@ async function main() {
     }
   }
 
-  for (const file of allFiles) {
+  for (const file of shardFiles) {
     if (scope.files[file.id]?.missingScanCount) delete scope.files[file.id].missingScanCount;
   }
   // Persist the phase rotation per Drive scope instead of deriving it from wall-clock
