@@ -871,7 +871,10 @@ async function main() {
   const shardFiles = shardEnabled
     ? allFiles.filter((file) => shardForDocumentId(file.id, shardCount) === shardIndex)
     : allFiles;
-  const files = TARGET_FILE_ID ? shardFiles.filter((file) => file.id === TARGET_FILE_ID) : shardFiles;
+  const selectedScopeFiles=TARGET_FILE_ID
+    ? shardFiles.filter(file=>file.id===TARGET_FILE_ID) : shardFiles;
+  // Immutable V2 pilot never marks a text-only document with an empty Map as complete.
+  const files=V2_QA?selectedScopeFiles.filter(file=>file.mimeType==="application/pdf"):selectedScopeFiles;
   if (TARGET_FILE_ID && !files.length) throw new Error("Target file not found in Drive scope");
   let state = await loadState();
   if (process.env.INGESTION_D1_COORDINATOR_MODE === "strict") {
@@ -945,7 +948,9 @@ async function main() {
   // Persist the phase rotation per Drive scope instead of deriving it from wall-clock
   // time: delayed GitHub schedules must not repeatedly skip an eligible phase.
   // createIngestionPlan still enforces evidence -> raw -> map dependencies per file.
-  const preferredPhase = nextPreferredIngestionPhase(scope.lastSelectedPhase);
+  const preferredPhase=nextPreferredIngestionPhase(
+    V2_QA?scope.v2LastSelectedPhase:scope.lastSelectedPhase
+  );
   const plan = createIngestionPlan(files,workFiles,FORCE_REINGEST,preferredPhase);
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
@@ -962,17 +967,18 @@ async function main() {
   );
 
   scope.phaseCursors ||= {};
-  const batch = selectFairIngestionBatch(
-    changed, MAX_FILES, scope.phaseCursors[plan.phase] ?? null
-  );
+  scope.v2PhaseCursors ||= {};
+  const cursors=V2_QA?scope.v2PhaseCursors:scope.phaseCursors;
+  const batch=selectFairIngestionBatch(changed,MAX_FILES,cursors[plan.phase]??null);
   const selected = batch.files;
   if (selected.length && !TARGET_FILE_ID) {
     // Record the attempted phase before external calls; retrying a failed run
     // must not repeatedly select the same phase and starve the others.
-    scope.lastSelectedPhase = plan.phase;
+    if(V2_QA)scope.v2LastSelectedPhase=plan.phase;
+    else scope.lastSelectedPhase=plan.phase;
     // Advance and checkpoint before any network call. A failed file cannot
     // pin the entire archive to the same first batch on the next scheduled run.
-    scope.phaseCursors[plan.phase] = batch.nextCursor;
+    cursors[plan.phase]=batch.nextCursor;
     state.scopes[DRIVE_FOLDER_ID] = scope;
     await saveState(state);
   }
@@ -993,6 +999,13 @@ async function main() {
       sourcePath: file.sourcePath,
       modifiedTime: file.modifiedTime || null,
     };
+    if(V2_QA && next.v2SourceFingerprint!==currentFingerprint){
+      // Durable document epochs are revision-scoped, NOT per-run lease-scoped.
+      delete next.documentEpoch;
+      delete next.publishedFingerprint;
+      delete next.publishedEpoch;
+      next.v2SourceFingerprint=currentFingerprint;
+    }
 
     if (needsEvidence) {
       if (previous.name && (previous.name !== file.name || previous.sourcePath !== file.sourcePath)) {
