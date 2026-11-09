@@ -20,6 +20,8 @@ function env(overrides={}){
     INGESTION_COORDINATOR_ENDPOINT:origin+"/api/ingestion-coordinator",
     INGESTION_IMMUTABLE_ENDPOINT:origin+"/api/immutable-archive-publish",
     MAX_GEMINI_CALLS:"12",MAX_FILES:"1",
+    DRIVE_FOLDER_ID:"QaSyntheticPdfRoot_20261109",
+    INGESTION_V2_QA_DRIVE_ROOT:"QaSyntheticPdfRoot_20261109",
     ...overrides,
   };
 }
@@ -50,6 +52,8 @@ for(const value of ["https://elevator.help","https://elevator.help:443",
 fails(()=>assertManualQaV2Environment(env({INGEST_ENDPOINT:"https://elevator.help/api/drive-ingest-batch"})),"V2_QA_ENDPOINT_MISMATCH");
 fails(()=>assertManualQaV2Environment(env({MAX_GEMINI_CALLS:"60"})),"V2_QA_UNBOUNDED_GEMINI");
 fails(()=>assertManualQaV2Environment(env({MAX_FILES:"3"})),"V2_QA_UNBOUNDED_DOCUMENTS");
+fails(()=>assertManualQaV2Environment(env({DRIVE_FOLDER_ID:"1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5"})),"V2_QA_SEPARATE_DRIVE_FIXTURE_REQUIRED");
+fails(()=>assertManualQaV2Environment(env({INGESTION_V2_QA_DRIVE_ROOT:"some-other-test-root"})),"V2_QA_SEPARATE_DRIVE_FIXTURE_REQUIRED");
 
 const rawId="v2r-3-"+"a".repeat(40);
 const mapId="v2m-3-"+"b".repeat(40);
