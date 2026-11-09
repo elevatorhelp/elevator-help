@@ -638,7 +638,7 @@ async function buildDocumentMap(
   ingestToken,
   languageHint,
   groupHint,
-  { startPage = 1, initialIds = [], onProgress = null } = {}
+  { startPage = 1, initialIds = [], onProgress = null,stageRecord=null } = {}
 ) {
   const pageInputs = pages
     .map((pageText, index) => ({
@@ -678,8 +678,13 @@ async function buildDocumentMap(
       };
     }
     const window = pageInputs.slice(i, i + MAP_PAGES_PER_BATCH);
-    const result = await callDocumentMap({ document, pages: window }, ingestToken);
-    const ids = Array.isArray(result?.ids) ? result.ids : [];
+    const result = await callDocumentMap({
+      ...(V2_QA?{action:"stage_map_v2"}:{}),document,pages:window,
+    },ingestToken);
+    const ids = V2_QA
+      ? verifyV2StageBatch(result,Array.from({length:result?.mapCount||0}),
+        "map",stageRecord)
+      : Array.isArray(result?.ids) ? result.ids : [];
     mapIds.push(...ids);
     const nextPage = window[window.length - 1].page + 1;
     if (typeof onProgress === "function") {
@@ -703,6 +708,7 @@ async function processPdf(
     rawStartChunk = 0,
     initialRawIds = [],
     onRawProgress = null,
+    stageRecord = null,
     mapStartPage = 1,
     initialMapIds = [],
     onMapProgress = null,
@@ -750,18 +756,23 @@ async function processPdf(
         break;
       }
       const batch = chunks.slice(i, i + BATCH_SIZE);
-      const result = await callIngest({ action: "upsert", chunks: batch }, ingestToken);
+      const result = await callIngest({
+        action:V2_QA?"stage_upsert_v2":"upsert",chunks:batch,
+      },ingestToken);
       if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
         throw new Error(
           `Ingestion endpoint raw embedding version mismatch: expected ${RAW_EMBEDDING_VERSION}, got ${String(result?.rawEmbeddingVersion ?? "missing")}`
         );
       }
-      rawIds.push(...batch.map((chunk) => chunk.id));
+      const insertedIds=V2_QA
+        ? verifyV2StageBatch(result,batch,"raw",stageRecord)
+        : batch.map(chunk=>chunk.id);
+      rawIds.push(...insertedIds);
       nextRawChunk = i + batch.length;
       if (typeof onRawProgress === "function") {
         await onRawProgress({ ids: [...rawIds], nextChunk: nextRawChunk });
       }
-      console.log(`Upserted ${result.upserted} chunks (${Math.min(i + BATCH_SIZE, chunks.length)}/${chunks.length})`);
+      console.log(`Processed ${batch.length} raw chunks (${Math.min(i+BATCH_SIZE,chunks.length)}/${chunks.length})`);
     }
   }
 
@@ -770,6 +781,7 @@ async function processPdf(
         startPage: mapStartPage,
         initialIds: initialMapIds,
         onProgress: onMapProgress,
+        stageRecord,
       })
     : null;
   if (ingestMap) {
@@ -790,7 +802,7 @@ async function processText(
   file,
   accessToken,
   ingestToken,
-  { rawStartChunk = 0, initialRawIds = [], onRawProgress = null } = {}
+  { rawStartChunk = 0, initialRawIds = [], onRawProgress = null,stageRecord=null } = {}
 ) {
   const text = await downloadText(file.id, accessToken);
   const chunks = splitIntoChunks(text).map((part, chunkIndex) => ({
@@ -814,11 +826,16 @@ async function processText(
       break;
     }
     const batch = chunks.slice(i, i + BATCH_SIZE);
-    const result = await callIngest({ action: "upsert", chunks: batch }, ingestToken);
+    const result = await callIngest({
+      action:V2_QA?"stage_upsert_v2":"upsert",chunks:batch,
+    },ingestToken);
     if (result?.rawEmbeddingVersion !== RAW_EMBEDDING_VERSION) {
       throw new Error("Ingestion endpoint raw embedding version mismatch");
     }
-    ids.push(...batch.map((chunk) => chunk.id));
+    const insertedIds=V2_QA
+      ? verifyV2StageBatch(result,batch,"raw",stageRecord)
+      : batch.map(chunk=>chunk.id);
+    ids.push(...insertedIds);
     nextRawChunk = i + batch.length;
     if (typeof onRawProgress === "function") {
       await onRawProgress({ ids: [...ids], nextChunk: nextRawChunk });
