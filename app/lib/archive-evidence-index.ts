@@ -14,6 +14,33 @@ export type ArchiveEvidenceRow = {
   matched_identifiers: number;
 };
 
+// In strict published-read mode a V2-published document supersedes every
+// legacy exact-source row. Fail closed on missing schema or D1 errors.
+async function onlyUnsupersededLegacyRows(
+  db:any,rows:ArchiveEvidenceRow[],
+):Promise<ArchiveEvidenceRow[]>{
+  if(!db?.__immutableReadGate)return rows;
+  const cache=new Map<string,Promise<any>>();
+  const safe:ArchiveEvidenceRow[]=[];
+  for(const row of rows){
+    const doc=row.source_file_id;
+    if(typeof doc!=="string"||!doc.trim())continue;
+    let publication=cache.get(doc);
+    if(!publication){
+      publication=Promise.resolve().then(()=>db.prepare(
+        "SELECT active_generation FROM ingestion_v2_publications WHERE document_id=?"
+      ).bind(doc).first());
+      cache.set(doc,publication);
+    }
+    try {
+      if(!(await publication))safe.push(row);
+    }catch{
+      // D1 cannot prove a legacy row is still active -> do not cite it.
+    }
+  }
+  return safe;
+}
+
 // Prefer the compact index on reindexed chunks; legacy tables continue to
 // serve untouched chunks, so a rolling migration cannot lose exact matches.
 export async function searchArchiveEvidenceIndex(
@@ -84,7 +111,7 @@ export async function searchArchiveEvidenceIndex(
   ];
   try {
     const result = await archiveDb.prepare(sql).bind(...bound).all();
-    return (result?.results || []) as ArchiveEvidenceRow[];
+    return onlyUnsupersededLegacyRows(archiveDb,(result?.results || []) as ArchiveEvidenceRow[]);
   } catch (error) {
     // Older databases may have the compact JSON table but no FTS virtual
     // table. Preserve exact retrieval while the schema repair is deployed.
@@ -95,6 +122,6 @@ export async function searchArchiveEvidenceIndex(
     );
     if (fallbackSql === sql) throw error;
     const result = await archiveDb.prepare(fallbackSql).bind(...bound.slice(1)).all();
-    return (result?.results || []) as ArchiveEvidenceRow[];
+    return onlyUnsupersededLegacyRows(archiveDb,(result?.results || []) as ArchiveEvidenceRow[]);
   }
 }
