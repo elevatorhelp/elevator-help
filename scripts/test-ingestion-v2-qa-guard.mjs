@@ -108,6 +108,14 @@ assert.equal(updateQaDeletionCandidate(missingOnce,false).tombstonePending,false
 const runner=readFileSync(new URL("./drive-ingest.mjs",import.meta.url),"utf8");
 const raw=readFileSync(new URL("../app/api/drive-ingest-batch/route.ts",import.meta.url),"utf8");
 const map=readFileSync(new URL("../app/api/document-map-ingest/route.ts",import.meta.url),"utf8");
+const publicationApi=readFileSync(new URL("../app/api/immutable-archive-publish/route.ts",import.meta.url),"utf8");
+const verifyBranch=publicationApi.split('if(action==="verify_published"){')[1]?.split('if(action==="publish"){')[0];
+assert.ok(verifyBranch?.includes("ingestion_v2_publications"),
+  "Reconciliation must verify persisted D1 publication");
+assert.ok(verifyBranch?.includes("ingestion_v2_document_epochs"),
+  "Reconciliation must use current document revision");
+assert.ok(!verifyBranch?.includes("claimDocumentStagingEpoch("),
+  "Read-only reconciliation must not increment/replace document epoch");
 for(const [code,text] of [
   [runner,"if(V2_QA)assertManualQaV2Environment(process.env)"],
   [runner,"scope.v2Files"],
