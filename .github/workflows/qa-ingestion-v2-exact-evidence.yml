@@ -1,0 +1,34 @@
+name: QA V2 published exact Evidence
+run-name: Published immutable source identifier and clause citation QA
+
+on:
+  pull_request:
+    paths:
+      - "app/lib/ingestion-v2-evidence-references.ts"
+      - "app/lib/archive-evidence-index.ts"
+      - "app/api/immutable-archive-publish/route.ts"
+      - "docs/ingestion-v2-evidence-reference-schema.sql"
+      - "scripts/test-ingestion-v2-evidence-references.ts"
+      - "scripts/test-published-retrieval.ts"
+      - ".github/workflows/qa-ingestion-v2-exact-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v2-exact-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Verify published exact clause and reference resolver
+        run: node --experimental-strip-types scripts/test-ingestion-v2-evidence-references.ts
+      - name: Regress published reader fail-closed behavior
+        run: node --experimental-strip-types scripts/test-published-retrieval.ts
+      - name: Regress three-layer atomic D1 publication
+        run: node --experimental-strip-types scripts/test-ingestion-immutable-publication.ts
+      # QA-only in-memory SQLite. No Production data, secret or billed AI calls.
