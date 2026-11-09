@@ -62,10 +62,10 @@ try{
   assert.ok((await stageImmutableEvidenceReferenceTerms(dbA,lease,doc,evidence("e-a","rev-a")))>0);
   assert.deepEqual(await searchPublishedImmutableEvidence(dbB,idents,["5.4.7.3"],60),[],
     "staged but unpublished Evidence must never be discoverable");
-  await stageImmutableVectorPair(dbA,lease,doc,"raw",vec("raw","r-a","rev-a"),[idx0,idx1]);
-  await stageImmutableVectorPair(dbA,lease,doc,"map",vec("map","m-a","rev-a"),[idx0,idx1]);
+  const rawA=await stageImmutableVectorPair(dbA,lease,doc,"raw",vec("raw","r-a","rev-a"),[idx0,idx1]);
+  const mapA=await stageImmutableVectorPair(dbA,lease,doc,"map",vec("map","m-a","rev-a"),[idx0,idx1]);
   assert.equal(await publishImmutableThreeLayerGeneration(dbA,lease,doc,{
-    rawIds:["r-a"],evidenceIds:["e-a"],mapIds:["m-a"],sourceFingerprint:"rev-a",
+    rawIds:[rawA],evidenceIds:["e-a"],mapIds:[mapA],sourceFingerprint:"rev-a",
   }),true);
   const found=await searchPublishedImmutableEvidence(dbB,idents,["5.4.7.3"],60);
   assert.equal(found.length,1);
@@ -87,10 +87,10 @@ try{
     "new owner without published manifest must preserve old complete exact evidence");
   assert.ok(await stageImmutableExactEvidence(dbB,next,doc,evidence("e-b","rev-b")));
   assert.ok((await stageImmutableEvidenceReferenceTerms(dbB,next,doc,evidence("e-b","rev-b")))>0);
-  await stageImmutableVectorPair(dbB,next,doc,"raw",vec("raw","r-b","rev-b"),[idx0,idx1]);
-  await stageImmutableVectorPair(dbB,next,doc,"map",vec("map","m-b","rev-b"),[idx0,idx1]);
+  const rawB=await stageImmutableVectorPair(dbB,next,doc,"raw",vec("raw","r-b","rev-b"),[idx0,idx1]);
+  const mapB=await stageImmutableVectorPair(dbB,next,doc,"map",vec("map","m-b","rev-b"),[idx0,idx1]);
   assert.equal(await publishImmutableThreeLayerGeneration(dbB,next,doc,{
-    rawIds:["r-b"],evidenceIds:["e-b"],mapIds:["m-b"],sourceFingerprint:"rev-b",
+    rawIds:[rawB],evidenceIds:["e-b"],mapIds:[mapB],sourceFingerprint:"rev-b",
   }),true);
   const newRows=await searchPublishedImmutableEvidence(dbA,idents,["5.4.7.3"],60);
   assert.deepEqual(newRows.map(x=>x.id),["e-b"],
