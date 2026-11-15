@@ -37,8 +37,8 @@ export function buildQa106ReceiptSql(){
   });
   return queries.join(" UNION ALL ")+";";
 }
-const bounded=v=>Number.isSafeInteger(Number(v))&&Number(v)>=0&&Number(v)<=1000000?
- Number(v):null;
+const bounded=v=>typeof v==="number" && Number.isSafeInteger(v)&&
+ v>=0&&v<=1000000?v:null;
 export function summarizeQa106Receipts(rows){
   if(!Array.isArray(rows)||rows.length!==2 ||
     new Set(rows.map(r=>r.slot)).size!==2 ||
