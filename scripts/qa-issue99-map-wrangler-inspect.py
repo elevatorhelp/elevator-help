@@ -77,7 +77,7 @@ def main():
                 parts=[TARGET,str(m["mapVersion"]),m.get("modifiedTime") or "",
                     str(m["page"]),str(m["pageEnd"]),m["mapNodeType"],
                     m.get("sectionId") or "",m.get("sectionTitle") or "",summary]
-                digest=hashlib.sha256("\\u001f".join(parts).encode()).hexdigest()
+                digest=hashlib.sha256("\u001f".join(parts).encode()).hexdigest()
                 logical="map-"+digest[:40]
                 epoch=m["stagedGeneration"]
                 chars="0123456789abcdefghijklmnopqrstuvwxyz"
