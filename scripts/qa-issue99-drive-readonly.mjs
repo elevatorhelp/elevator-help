@@ -50,6 +50,14 @@ async function main(){
   assert(typeof token.access_token==="string","QA_GOOGLE_OAUTH_FAILED");
   console.log("PASS: existing service account authorized read-only Google OAuth token");
   const headers={Authorization:"Bearer "+token.access_token};
+  // A direct file permission can be correct while parent-folder traversal is
+  // still forbidden. Check these separately and identify the actual blocker.
+  const direct=await http("https://www.googleapis.com/drive/v3/files/"+FIXTURE+
+    "?fields=id,mimeType,size,md5Checksum,trashed",{headers});
+  const directMeta=await direct.json();
+  assert(directMeta.id===FIXTURE&&directMeta.mimeType===EXPECTED_MIME&&
+    directMeta.trashed!==true,"QA_DIRECT_PDF_NOT_VISIBLE");
+  console.log("PASS: service account can read explicitly shared QA PDF metadata");
   const folder=await http("https://www.googleapis.com/drive/v3/files/"+ROOT+
     "?fields=id,mimeType,trashed",{headers});
   const folderMeta=await folder.json();
