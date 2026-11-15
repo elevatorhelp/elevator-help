@@ -32,6 +32,10 @@ export function buildQa106ReceiptSql(){
       current("ingestion_v2_vector_receipts"," AND r.layer='map'")+" AS map_current,"+
       "(SELECT COUNT(*) FROM ingestion_v2_vector_receipts WHERE document_id="+idSql+
         " AND layer='raw') AS raw_all_epochs,"+
+      "(SELECT COUNT(*) FROM ingestion_v2_pending_map_windows w "+
+        "JOIN ingestion_v2_document_epochs e ON e.document_id=w.document_id "+
+        "AND e.staging_epoch=w.generation AND e.source_fingerprint=w.source_fingerprint "+
+        "WHERE w.document_id="+idSql+" AND w.job_key='"+job+"') AS pending_map_windows,"+
       "(SELECT COUNT(*) FROM ingestion_v2_publications WHERE document_id="+idSql+
         " AND job_key='"+job+"') AS published_count";
   });
@@ -46,13 +50,14 @@ export function summarizeQa106Receipts(rows){
   return slots.map(slot=>{
     const r=rows.find(x=>x.slot===slot);
     const fields=["epoch_present","evidence_current","raw_current","map_current",
-      "raw_all_epochs","published_count"];
+      "raw_all_epochs","pending_map_windows","published_count"];
     const vals=Object.fromEntries(fields.map(k=>[k,bounded(r?.[k])]));
     if(fields.some(k=>vals[k]===null))fail("QA106_RECEIPTS_INVALID_COUNTS");
     return {slot,epochPresent:vals.epoch_present===1,
       evidenceRows:vals.evidence_current,rawReceipts:vals.raw_current,
       mapReceipts:vals.map_current,
       rawReceiptsAcrossEpochs:vals.raw_all_epochs,
+      pendingMapWindows:vals.pending_map_windows,
       published:vals.published_count===1,
       anyOrphanedOldRaw:vals.raw_all_epochs>vals.raw_current};
   });
@@ -83,6 +88,7 @@ async function main(){
       " raw_current="+rec.rawReceipts+
       " map_current="+rec.mapReceipts+
       " raw_all_epochs="+rec.rawReceiptsAcrossEpochs+
+      " pending_map_windows="+rec.pendingMapWindows+
       " orphaned_old_raw="+rec.anyOrphanedOldRaw+
       " published="+rec.published);
   }
