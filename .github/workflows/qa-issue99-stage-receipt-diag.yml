@@ -1,0 +1,51 @@
+name: Issue99 remote QA D1 physical stage receipts read-only
+on:
+  push:
+    branches: [fix/issue99-map-staging-diagnostics-20261115]
+    paths:
+      - ".github/workflows/qa-issue99-stage-receipt-diag.yml"
+permissions:
+  contents: read
+jobs:
+  inspect:
+    if: github.repository == 'elevatorhelp/elevator-help'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Read ONLY QA D1 per-document physical staging counts
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx wrangler d1 execute elevator-help-lease-test-01 --remote \
+            --config wrangler.qa-pr100-v2.json --json \
+            --command "SELECT
+              (SELECT COUNT(*) FROM ingestion_v2_staged_evidence WHERE document_id='1ZpJMQSX3jYv8LDpaFA9Uu7iabFHuMgwz') AS evidence_rows,
+              (SELECT COUNT(*) FROM ingestion_v2_vector_receipts WHERE document_id='1ZpJMQSX3jYv8LDpaFA9Uu7iabFHuMgwz' AND layer='raw') AS raw_receipts,
+              (SELECT COUNT(*) FROM ingestion_v2_vector_receipts WHERE document_id='1ZpJMQSX3jYv8LDpaFA9Uu7iabFHuMgwz' AND layer='map') AS map_receipts,
+              (SELECT COUNT(*) FROM ingestion_v2_publications WHERE document_id='1ZpJMQSX3jYv8LDpaFA9Uu7iabFHuMgwz') AS published,
+              (SELECT COUNT(*) FROM ingestion_worker_checkpoints WHERE job_key='drive:1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC') AS checkpoints;" \
+            > "$RUNNER_TEMP/issue99-qa-stage-counters.json"
+          python3 - <<'PY'
+          import json, os, pathlib
+          p=pathlib.Path(os.environ["RUNNER_TEMP"])/"issue99-qa-stage-counters.json"
+          data=json.loads(p.read_text())
+          rows=data if isinstance(data,list) else [data]
+          results=[v for item in rows for v in item.get("results",[])]
+          if len(results)!=1:raise SystemExit("QA_D1_DIAG_UNEXPECTED_COUNT_ROWS")
+          r=results[0]
+          keys=("evidence_rows","raw_receipts","map_receipts","published","checkpoints")
+          if any(k not in r for k in keys):raise SystemExit("QA_D1_DIAG_INVALID_SQL_RESULT")
+          print("QA D1 synthetic PDF only: "+", ".join(f"{k}={int(r[k])}" for k in keys))
+          p.unlink()
+          PY
