@@ -93,9 +93,14 @@ async function main(){
   listingUrl.searchParams.set("pageSize","100");
   const listing=await http(listingUrl,{headers});
   const metadata=await listing.json();
-  const pdfFiles=(metadata.files||[]).filter(x=>x.mimeType===EXPECTED_MIME);
-  assert(pdfFiles.length===1 && !metadata.nextPageToken,
-    "QA_DRIVE_UNREVIEWED_PDF_IN_FIXTURE");
+  // Source Google Doc is retained for revision tests, but the bounded runner
+  // may only encounter this exact PDF; reject folders and any other source.
+  const allowedSourceDoc="1TS3dwWpEtnfl4E_f1-iOm_qbSkZhBSKIy4QbMzZWTh4";
+  assert(Array.isArray(metadata.files)&&metadata.files.length>=1 &&
+    metadata.files.every(x=>x.id===FIXTURE||x.id===allowedSourceDoc) &&
+    !metadata.nextPageToken,"QA_DRIVE_UNREVIEWED_SOURCE_IN_FIXTURE");
+  const pdfFiles=metadata.files.filter(x=>x.mimeType===EXPECTED_MIME);
+  assert(pdfFiles.length===1,"QA_DRIVE_UNREVIEWED_PDF_IN_FIXTURE");
   const item=pdfFiles.find(x=>x.id===FIXTURE);
   assert(item?.mimeType===EXPECTED_MIME &&
     item.md5Checksum?.toLowerCase()===directMeta.md5Checksum.toLowerCase() &&
