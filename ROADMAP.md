@@ -41,7 +41,7 @@
 ---
 
 
-**Canonical plan — one source of truth.** Updated 2026-10-20.
+**Canonical plan — one source of truth.** Latest operating snapshot updated **2026-11-16**; original baseline dated 2026-10-20 (historical entries retained).
 **Owner:** elevator.help project owner. **Implementation:** engineering/Codex with GitHub PR + CI + production evidence.
 **Target Beta sign-off:** **2026-11-13**. **Owner-approved target Gamma sign-off:** **2026-12-11**.
 **GitHub privacy/repository decision and execution:** **2026-12-14 to 2026-12-18, AFTER Gamma**.
