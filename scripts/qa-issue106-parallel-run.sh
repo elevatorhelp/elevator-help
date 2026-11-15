@@ -164,11 +164,31 @@ run_slot A seed
 run_slot B seed
 phase evidence
 # Real QA Worker A runtime is restarted between durable stages, B stays online.
+pkill -TERM -P "$PIDA" 2>/dev/null || true
 kill "$PIDA" 2>/dev/null || true
 wait "$PIDA" 2>/dev/null || true
 PIDA=""
+stopped=0
+for attempt in $(seq 1 20);do
+  codeA=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \
+    -X POST -H "Authorization: Bearer $TOKEN_A" \
+    -H "Content-Type: application/json" --data '{"action":"status"}' \
+    "http://127.0.0.1:8787/api/drive-ingest-batch" 2>/dev/null || true)
+  if [[ "$codeA" != 200 ]];then stopped=1;break;fi
+  sleep 1
+done
+if [[ "$stopped" != 1 ]];then
+  echo "::error::QA106_WORKER_A_DID_NOT_ACTUALLY_STOP";exit 1
+fi
+codeB=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 \
+  -X POST -H "Authorization: Bearer $TOKEN_B" \
+  -H "Content-Type: application/json" --data '{"action":"status"}' \
+  "http://127.0.0.1:8788/api/drive-ingest-batch" 2>/dev/null || true)
+if [[ "$codeB" != 200 ]];then
+  echo "::error::QA106_WORKER_B_INTERRUPTED_BY_A_RESTART";exit 1
+fi
 start_worker A
-echo "PASS: restarted QA Worker A at Evidence checkpoint while B stayed online"
+echo "PASS: Worker A was genuinely stopped and restarted at checkpoint; Worker B remained available"
 phase raw
 phase map
 if [[ ! -s "$OVERLAP" ]];then
