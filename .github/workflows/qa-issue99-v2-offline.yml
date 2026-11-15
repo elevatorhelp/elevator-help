@@ -1,0 +1,51 @@
+name: Issue99 real Drive immutable manual-runner offline review
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/qa-issue99-v2-offline.yml"
+      - ".github/workflows/qa-issue99-v2-real-drive.yml"
+      - "scripts/qa-issue99-*.mjs"
+      - "scripts/ingestion-v2-qa-guard.mjs"
+      - "app/lib/ingestion-immutable-publication.ts"
+  push:
+    branches: [qa/issue99-real-drive-readonly-20261115]
+    paths:
+      - ".github/workflows/qa-issue99-v2-offline.yml"
+      - "scripts/qa-issue99-seed-checkpoint.mjs"
+      - "scripts/qa-issue99-attest-v2.mjs"
+permissions:
+  contents: read
+jobs:
+  safe-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Compile all manual pipeline scripts and prove execution guards fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in \
+            scripts/qa-issue99-drive-readonly.mjs \
+            scripts/qa-issue99-seed-checkpoint.mjs \
+            scripts/qa-issue99-attest-v2.mjs \
+            scripts/drive-ingest.mjs; do
+            node --check "$script"
+          done
+          if node scripts/qa-issue99-seed-checkpoint.mjs > /dev/null 2>&1; then
+            echo "::error::QA_UNAPPROVED_D1_SEED_EXECUTED"
+            exit 1
+          fi
+          if node scripts/qa-issue99-attest-v2.mjs > /dev/null 2>&1; then
+            echo "::error::QA_UNAPPROVED_ATTESTATION_EXECUTED"
+            exit 1
+          fi
+          node scripts/test-ingestion-v2-qa-guard.mjs
+          node --experimental-strip-types scripts/test-ingestion-immutable-publication.ts
+          node --experimental-strip-types scripts/test-ingestion-document-staging-epoch.ts
+          echo "PASS: offline manual-runner guards, publication IDs, and staging epochs"
