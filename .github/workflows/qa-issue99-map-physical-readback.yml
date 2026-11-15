@@ -1,0 +1,28 @@
+name: Issue99 isolated Vectorize Map physical readback forensics
+on:
+  push:
+    branches:
+      - qa/issue99-map-dual-index-readback-forensics-20261115
+    paths:
+      - scripts/qa-issue99-map-physical-readback.mjs
+      - .github/workflows/qa-issue99-map-physical-readback.yml
+permissions:
+  contents: read
+jobs:
+  inspect-qa-only:
+    if: github.repository == 'elevatorhelp/elevator-help'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Read-only remote QA Vectorize Map physical metadata diagnosis
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node --check scripts/qa-issue99-map-physical-readback.mjs
+          node scripts/qa-issue99-map-physical-readback.mjs
+      # No migrations, vector writes, source export, or Gemini calls.
