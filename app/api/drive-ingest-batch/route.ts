@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {stageImmutableVectorPair} from "../../lib/ingestion-immutable-publication";
+import {classifyQaV2RawError,type QaV2RawStage} from "../../lib/qa-v2-raw-error";
 import {claimDocumentStagingEpoch} from "../../lib/ingestion-document-staging-epoch";
 import type {CoordinatorDB,ArchiveLease} from "../../lib/ingestion-global-coordinator";
 import { NextRequest, NextResponse } from "next/server";
@@ -370,6 +371,7 @@ ${JSON.stringify(payload)}
 
 export async function POST(request: NextRequest) {
   let qaStageRequest=false;
+  let qaRawStage:QaV2RawStage="validation";
   try {
     const expectedToken = process.env.INGESTION_TOKEN;
     const auth = request.headers.get("authorization") || "";
@@ -405,6 +407,7 @@ export async function POST(request: NextRequest) {
 
     // Global ownership gate is disabled by default. In strict mode EVERY
     // write action (delete, Evidence, RAW) must have the live root lease.
+    qaRawStage="lease_guard";
     const guardArchiveWrite=makeGlobalArchiveWriteGuard(
       qaStageRequest?{...(env as any),INGESTION_GLOBAL_WRITE_GATE_ENABLED:"true"}:env as any,
       body,
@@ -507,6 +510,7 @@ export async function POST(request: NextRequest) {
     const geminiBudget = createGeminiCallBudget(
       (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST ?? 2,
     );
+    qaRawStage="gemini_enrichment";
     const enriched = await enrichChunks(chunks, apiKey, geminiBudget.fetch);
     const embeddingTexts = chunks.map((chunk, index) => {
       const context = enriched[index]?.retrievalContext;
@@ -514,11 +518,13 @@ export async function POST(request: NextRequest) {
         ? `[RETRIEVAL CONTEXT]\n${context}\n\n[RAW SOURCE]\n${chunk.text}`
         : chunk.text;
     });
+    qaRawStage="workers_ai_embedding";
     const embeddingResult = await ai.run("@cf/baai/bge-base-en-v1.5", {
       text: embeddingTexts,
     });
 
     const embeddings = (embeddingResult as any).data;
+    qaRawStage="gemini_embedding";
     const multilingualEmbeddings = await embedRetrievalDocuments(
       chunks.map((chunk) => chunk.text),
       apiKey,
@@ -581,9 +587,11 @@ export async function POST(request: NextRequest) {
          chunks.some(chunk=>chunk.sourceFingerprint!==fp||chunk.sourceFileId!==doc))
         return NextResponse.json({ok:false,error:"V2_MIXED_DOCUMENT_OR_FINGERPRINT"},{status:400});
       await guardArchiveWrite();
+      qaRawStage="epoch_claim";
       const epoch=await claimDocumentStagingEpoch(db,lease!,doc,fp);
       if(epoch===null)
         return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
+      qaRawStage="vector_staging";
       const stagedIds:string[]=[];
       for(const {chunk,metadata,index} of vectorRecords){
         await guardArchiveWrite();
@@ -622,7 +630,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if(qaStageRequest)
-      return NextResponse.json({ok:false,error:"V2_RAW_STAGING_NOT_VERIFIED"},{status:409});
+      return NextResponse.json({ok:false,error:classifyQaV2RawError(qaRawStage,error)},{status:409});
     if(error instanceof GlobalArchiveWriteDenied)
       return NextResponse.json({ok:false,error:error.code},{status:409});
     console.error("Drive ingestion error:", error);
