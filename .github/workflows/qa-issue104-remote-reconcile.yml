@@ -1,0 +1,80 @@
+name: Issue104 no-Gemini remote Map reconcile API QA
+run-name: Issue104 remote Cloudflare Map reconciliation against already-published QA vectors
+on:
+  push:
+    branches:
+      - qa/issue104-remote-reconcile-20261115
+    paths:
+      - .github/workflows/qa-issue104-remote-reconcile.yml
+      - scripts/qa-issue104-real-reconcile-http.mjs
+permissions:
+  contents: read
+concurrency:
+  group: issue104-remote-readback-qa-only
+  cancel-in-progress: false
+jobs:
+  remote:
+    if: github.repository == 'elevatorhelp/elevator-help'
+    runs-on: ubuntu-latest
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies and check readback script
+        run: |
+          npm ci
+          node --check scripts/qa-issue104-real-reconcile-http.mjs
+      - name: Build isolated QA Worker (no Production deployment)
+        run: npm run cf:build
+      - name: Create additive pending-intent table in ONLY QA D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx wrangler d1 execute elevator-help-lease-test-01 --remote \
+            --config wrangler.qa-pr100-v2.json \
+            --file docs/ingestion-v2-pending-map-windows-schema.sql > /dev/null
+          echo "PASS: additive Map intent table installed in isolated QA D1"
+      - name: Remote QA HTTP reconciliation without Gemini or Drive access
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export QA_V2_JOB_KEY="drive:1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC"
+          export QA_V2_INGESTION_TOKEN="$(openssl rand -hex 32)"
+          npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
+            --ip 127.0.0.1 --port 8787 \
+            --var "INGESTION_TOKEN:${QA_V2_INGESTION_TOKEN}" \
+            --var "INGESTION_COORDINATOR_JOB_KEY:${QA_V2_JOB_KEY}" \
+            --var "INGESTION_COORDINATOR_ENABLED:true" \
+            --var "INGESTION_GLOBAL_WRITE_GATE_ENABLED:true" \
+            --var "INGESTION_IMMUTABLE_PUBLICATION_ENABLED:true" \
+            > "$RUNNER_TEMP/qa-issue104-worker-private.log" 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true; rm -f "$RUNNER_TEMP/qa-issue104-worker-private.log"' EXIT
+          ready=0
+          for attempt in $(seq 1 75); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 \
+              -X POST -H "Authorization: Bearer ${QA_V2_INGESTION_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data '{"action":"status"}' \
+              http://127.0.0.1:8787/api/drive-ingest-batch || true)
+            if [ "$code" = 200 ]; then ready=1; break; fi
+            if ! kill -0 "$worker_pid" 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [ "$ready" != 1 ]; then
+            echo "::error::QA104_WORKER_NOT_READY"
+            exit 1
+          fi
+          node --experimental-strip-types scripts/qa-issue104-real-reconcile-http.mjs
+      # No GEMINI_API_KEY, source PDF, vector values, Production index or
+      # Production D1 are accessible to this workflow.
