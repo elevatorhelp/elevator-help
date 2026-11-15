@@ -10,6 +10,7 @@ if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ||
       "$QA106_CONFIRMATION" != QA_ONLY_TWO_PDFS_MAX_24_GEMINI_CALLS ]];then
   echo "::error::QA106_NOT_AUTHORIZED";exit 1
 fi
+source scripts/qa-issue106-worker-process-group.sh
 ROOT="1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC"
 TOKEN_A="$(openssl rand -hex 32)"
 TOKEN_B="$(openssl rand -hex 32)"
@@ -17,8 +18,8 @@ PIDA=""
 PIDB=""
 OVERLAP="$RUNNER_TEMP/qa106-parallel-d1-overlap.txt"
 cleanup(){
-  if [[ -n "$PIDA" ]];then kill "$PIDA" 2>/dev/null || true;fi
-  if [[ -n "$PIDB" ]];then kill "$PIDB" 2>/dev/null || true;fi
+  qa106_stop_worker_group "$PIDA" || true
+  qa106_stop_worker_group "$PIDB" || true
   rm -f "$RUNNER_TEMP"/qa106-private-*.log "$RUNNER_TEMP"/qa106-private-*.json
 }
 trap cleanup EXIT
@@ -29,7 +30,7 @@ start_worker(){
   else echo "::error::QA106_INVALID_WORKER_SLOT";return 1;fi
   job="drive:$ROOT"
   job="${job}_qa_$slot"
-  npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
+  setsid npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
     --ip 127.0.0.1 --port "$port" \
     --var "INGESTION_TOKEN:$token" \
     --var "GEMINI_API_KEY:$GEMINI_API_KEY" \
@@ -40,6 +41,10 @@ start_worker(){
     --var "INGESTION_IMMUTABLE_PUBLICATION_ENABLED:true" \
     > "$RUNNER_TEMP/qa106-private-worker-$slot.log" 2>&1 &
   pid=$!
+  if ! qa106_assert_worker_group "$pid"; then
+    kill "$pid" 2>/dev/null || true
+    return 1
+  fi
   if [[ "$slot" == A ]];then PIDA="$pid";else PIDB="$pid";fi
   for attempt in $(seq 1 75);do
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 \
@@ -166,9 +171,7 @@ run_slot A seed
 run_slot B seed
 phase evidence
 # Real QA Worker A runtime is restarted between durable stages, B stays online.
-pkill -TERM -P "$PIDA" 2>/dev/null || true
-kill "$PIDA" 2>/dev/null || true
-wait "$PIDA" 2>/dev/null || true
+qa106_stop_worker_group "$PIDA"
 PIDA=""
 stopped=0
 for attempt in $(seq 1 20);do
