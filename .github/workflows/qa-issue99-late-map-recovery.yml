@@ -1,0 +1,97 @@
+name: Issue99 QA recover existing Map vectors without Gemini
+run-name: Issue99 D1 immutable recovery from two already-written Map pairs (zero Gemini)
+on:
+  push:
+    branches:
+      - qa/issue99-late-map-recovery-20261115
+    paths:
+      - .github/workflows/qa-issue99-late-map-recovery.yml
+      - scripts/qa-issue99-recover-map-private.py
+      - scripts/qa-issue99-recover-map.mjs
+permissions:
+  contents: read
+concurrency:
+  group: issue99-qa-no-gemini-map-recovery
+  cancel-in-progress: false
+jobs:
+  reconcile:
+    if: github.repository == 'elevatorhelp/elevator-help' && github.ref == 'refs/heads/qa/issue99-late-map-recovery-20261115'
+    runs-on: ubuntu-latest
+    timeout-minutes: 17
+    steps:
+      - name: Checkout exact branch and only synthetic QA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Reconstruct two already-visible vector pairs (QA read only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          QA_RECOVERY_CONFIRMATION: QA_ONLY_REUSE_EXISTING_MAP_NO_GEMINI
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::QA_RECOVERY_CF_SECRET_MISSING"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::QA_RECOVERY_CF_ACCOUNT_MISSING"; exit 1; }
+          node --check scripts/qa-issue99-recover-map.mjs
+          python3 -m py_compile scripts/qa-issue99-recover-map-private.py
+          python3 scripts/qa-issue99-recover-map-private.py
+          test -s "$RUNNER_TEMP/qa-issue99-map-recovery-private.json"
+      - name: Build QA-only Cloudflare actual Worker
+        run: npm run cf:build
+      - name: Verify immutable physical Map receipt and publish with D1 CAS (NO Gemini)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          QA_RECOVERY_CONFIRMATION: QA_ONLY_REUSE_EXISTING_MAP_NO_GEMINI
+        shell: bash
+        run: |
+          set -euo pipefail
+          export QA_V2_INGESTION_TOKEN="$(openssl rand -hex 32)"
+          export QA_V2_JOB_KEY="drive:1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC"
+          worker_pid=""
+          cleanup() {
+            rm -f "$RUNNER_TEMP/qa-issue99-map-recovery-private.json"
+            if [ -n "$worker_pid" ]; then kill "$worker_pid" 2>/dev/null || true; fi
+          }
+          trap cleanup EXIT
+          npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
+            --ip 127.0.0.1 --port 8787 \
+            --var "INGESTION_TOKEN:${QA_V2_INGESTION_TOKEN}" \
+            --var "INGESTION_COORDINATOR_JOB_KEY:${QA_V2_JOB_KEY}" \
+            --var "INGESTION_COORDINATOR_ENABLED:true" \
+            --var "INGESTION_GLOBAL_WRITE_GATE_ENABLED:true" \
+            --var "INGESTION_IMMUTABLE_PUBLICATION_ENABLED:true" \
+            --var "GEMINI_MAX_CALLS_PER_INGEST_REQUEST:0" \
+            > "$RUNNER_TEMP/qa-map-recovery-private-worker.log" 2>&1 &
+          worker_pid=$!
+          ready=0
+          for attempt in $(seq 1 70); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+              -X POST -H "Authorization: Bearer ${QA_V2_INGESTION_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data '{"action":"status"}' \
+              http://127.0.0.1:8787/api/drive-ingest-batch || true)
+            if [ "$code" = 200 ]; then ready=1; break; fi
+            if ! kill -0 "$worker_pid" 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [ "$ready" != 1 ]; then
+            echo "::error::QA_RECOVERY_WORKER_NOT_READY"
+            exit 1
+          fi
+          node scripts/qa-issue99-recover-map.mjs
+          printf '%s\n' QA_REAL_DRIVE_V2_PUBLICATION_PASS_NO_ADDITIONAL_GEMINI > "$RUNNER_TEMP/qa-issue99-recovery-summary.txt"
+      - name: Retain sanitized result only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: issue99-qa-map-recovery-${{ github.run_id }}
+          path: ${{ runner.temp }}/qa-issue99-recovery-summary.txt
+          if-no-files-found: warn
+          retention-days: 30
+      # No secret model key, no production D1 migration, no Worker deployment, no scheduled runs.
