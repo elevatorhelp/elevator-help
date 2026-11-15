@@ -66,6 +66,9 @@ assert.equal(corrupt.v2Invalid,1);
 assert.throws(()=>safeQa106IndexSummary({ok:true,...a,legacyMissing:3},"A"),
  /UNVERIFIED_RESPONSE/);
 await assert.rejects(inspectSlot(fakeEnv("B"),"C"),/UNKNOWN_SLOT/);
+const wrongMethod=await worker.fetch(
+ new Request("http://localhost/inspect",{method:"GET"}),fakeEnv("A"));
+assert.equal(wrongMethod.status,404);
 const forbidden=await worker.fetch(
  new Request("http://localhost/inspect",{method:"POST",
  headers:{"Content-Type":"application/json"},
@@ -90,4 +93,5 @@ assert.doesNotMatch(workflow,/secrets\.(?:GEMINI|OPENAI|GOOGLE_GENAI)_/);
 assert.match(workflow,/branches: \[main\]/);
 assert.doesNotMatch(shell,/\b(upsert|insert|delete)\b/i);
 assert.match(shell,/unset GEMINI_API_KEY GEMINI_BENCHMARK_API_KEY/);
+assert.match(shell,/-X POST -H "Content-Type: application\/json"/);
 console.log("PASS: Issue106 dual Vectorize metadata/presence probe read-only; no model, source data or IDs leaked");
