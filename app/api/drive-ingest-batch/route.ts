@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {stageImmutableVectorPair} from "../../lib/ingestion-immutable-publication";
+import {reconcileExistingQaV2RawChunks} from "../../lib/qa-v2-raw-recovery";
 import {classifyQaV2RawError,type QaV2RawStage} from "../../lib/qa-v2-raw-error";
 import {claimDocumentStagingEpoch} from "../../lib/ingestion-document-staging-epoch";
 import type {CoordinatorDB,ArchiveLease} from "../../lib/ingestion-global-coordinator";
@@ -500,6 +501,44 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // In the QA V2 writer only, reconcile BOTH Vectorize physical IDs and
+    // durable D1 receipts BEFORE a new Gemini or Workers AI invocation.
+    // Persisted RAW receipts may be ahead of an interrupted runner checkpoint.
+    let paidChunks:IncomingChunk[]=chunks;
+    const reusedRawIds=new Map<string,string>();
+    let qaDoc="",qaFp="",qaEpoch=0;
+    if(qaStageRequest){
+      const lease=body?.globalArchiveLease as ArchiveLease|undefined;
+      qaDoc=chunks[0]?.sourceFileId||"";
+      qaFp=chunks[0]?.sourceFingerprint||"";
+      if(!qaDoc||!qaFp||
+         chunks.some(c=>c.sourceFingerprint!==qaFp||c.sourceFileId!==qaDoc))
+        return NextResponse.json(
+          {ok:false,error:"V2_MIXED_DOCUMENT_OR_FINGERPRINT"},{status:400});
+      await guardArchiveWrite();
+      qaRawStage="epoch_claim";
+      const epoch=await claimDocumentStagingEpoch(
+        archiveDb as CoordinatorDB,lease!,qaDoc,qaFp);
+      if(epoch===null)
+        return NextResponse.json(
+          {ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
+      qaEpoch=epoch;
+      qaRawStage="vector_staging";
+      const staged=await reconcileExistingQaV2RawChunks(
+        archiveDb as CoordinatorDB,lease!,qaDoc,qaFp,qaEpoch,
+        chunks.map(c=>c.id),[vectorize,vectorizeV2],guardArchiveWrite);
+      for(const [logicalId,physicalId] of staged)reusedRawIds.set(logicalId,physicalId);
+      paidChunks=chunks.filter(c=>!reusedRawIds.has(c.id));
+      if(paidChunks.length===0){
+        // Entire batch already paid and staged; no model call is necessary.
+        return NextResponse.json({
+          ok:true,staged:true,published:false,documentEpoch:qaEpoch,
+          stagedIds:chunks.map(c=>reusedRawIds.get(c.id)),
+          rawEmbeddingVersion:RAW_EMBEDDING_VERSION,
+        });
+      }
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
     const ai = (env as any).AI;
 
@@ -511,8 +550,8 @@ export async function POST(request: NextRequest) {
       (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST ?? 2,
     );
     qaRawStage="gemini_enrichment";
-    const enriched = await enrichChunks(chunks, apiKey, geminiBudget.fetch);
-    const embeddingTexts = chunks.map((chunk, index) => {
+    const enriched = await enrichChunks(paidChunks, apiKey, geminiBudget.fetch);
+    const embeddingTexts = paidChunks.map((chunk, index) => {
       const context = enriched[index]?.retrievalContext;
       return context
         ? `[RETRIEVAL CONTEXT]\n${context}\n\n[RAW SOURCE]\n${chunk.text}`
@@ -526,16 +565,16 @@ export async function POST(request: NextRequest) {
     const embeddings = (embeddingResult as any).data;
     qaRawStage="gemini_embedding";
     const multilingualEmbeddings = await embedRetrievalDocuments(
-      chunks.map((chunk) => chunk.text),
+      paidChunks.map((chunk) => chunk.text),
       apiKey,
       geminiBudget.fetch,
     );
 
-    if (!Array.isArray(embeddings) || embeddings.length !== chunks.length) {
+    if (!Array.isArray(embeddings) || embeddings.length !== paidChunks.length) {
       throw new Error("Embedding count does not match chunk count");
     }
 
-    const vectorRecords = chunks.map((chunk, index) => {
+    const vectorRecords = paidChunks.map((chunk, index) => {
       const meta = enriched[index];
       const metadata: Record<string, string | number> = {
         // Final standards evidence must remain the exact raw source text. The
@@ -579,34 +618,26 @@ export async function POST(request: NextRequest) {
     );
 
     if(qaStageRequest){
+      qaRawStage="vector_staging";
       const lease=body?.globalArchiveLease as ArchiveLease|undefined;
       const db=archiveDb as CoordinatorDB;
-      const fp=chunks[0]?.sourceFingerprint;
-      const doc=chunks[0]?.sourceFileId;
-      if(typeof fp!=="string"||!fp||typeof doc!=="string"||!doc||
-         chunks.some(chunk=>chunk.sourceFingerprint!==fp||chunk.sourceFileId!==doc))
-        return NextResponse.json({ok:false,error:"V2_MIXED_DOCUMENT_OR_FINGERPRINT"},{status:400});
-      await guardArchiveWrite();
-      qaRawStage="epoch_claim";
-      const epoch=await claimDocumentStagingEpoch(db,lease!,doc,fp);
-      if(epoch===null)
-        return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
-      qaRawStage="vector_staging";
-      const stagedIds:string[]=[];
       for(const {chunk,metadata,index} of vectorRecords){
         await guardArchiveWrite();
         const physicalId=await stageImmutableVectorPair(
-          db,lease!,doc,"raw",
-          {logicalId:chunk.id,sourceFingerprint:fp,
+          db,lease!,qaDoc,"raw",
+          {logicalId:chunk.id,sourceFingerprint:qaFp,
            metadata,legacyValues:embeddings[index],
            multilingualValues:multilingualEmbeddings[index]},
-          [vectorize,vectorizeV2],Date.now(),epoch,
+          [vectorize,vectorizeV2],Date.now(),qaEpoch,
         );
-        stagedIds.push(physicalId);
+        reusedRawIds.set(chunk.id,physicalId);
       }
+      const stagedIds=chunks.map(c=>reusedRawIds.get(c.id));
+      if(stagedIds.some(id=>typeof id!=="string"))
+        throw Error("V2_RAW_RECOVERY_INCOMPLETE_BATCH");
       return NextResponse.json({
         ok:true,staged:true,published:false,
-        documentEpoch:epoch,stagedIds,
+        documentEpoch:qaEpoch,stagedIds,
         rawEmbeddingVersion:RAW_EMBEDDING_VERSION,
       });
     }
@@ -629,8 +660,13 @@ export async function POST(request: NextRequest) {
       ),
     });
   } catch (error) {
-    if(qaStageRequest)
-      return NextResponse.json({ok:false,error:classifyQaV2RawError(qaRawStage,error)},{status:409});
+    if(qaStageRequest){
+      const code=error instanceof Error?error.message:"";
+      const safe=/^V2_RAW_RECOVERY_(?:DUPLICATE_OR_INVALID_BATCH|INDEX_UNAVAILABLE|INVALID_VECTOR_READBACK|D1_UNAVAILABLE|RECEIPT_MISMATCH|INCOMPLETE_PAIR|RECEIPT_VECTOR_MISSING|ATTESTATION_DENIED|LATE_READBACK|INCOMPLETE_BATCH)$/.test(code);
+      return NextResponse.json({
+        ok:false,error:safe?code:classifyQaV2RawError(qaRawStage,error)
+      },{status:409});
+    }
     if(error instanceof GlobalArchiveWriteDenied)
       return NextResponse.json({ok:false,error:error.code},{status:409});
     console.error("Drive ingestion error:", error);
