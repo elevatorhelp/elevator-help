@@ -732,7 +732,7 @@ async function buildDocumentMap(
           throw Error("V2_QA_INVALID_RECOVERED_MAP");
         result=previous;
         console.log("PASS: recovered existing Map vectors without Gemini");
-      }else if(previous.status!=="none")
+      }else if(previous.status!=="none"&&previous.status!=="pending")
         throw Error("V2_QA_INVALID_RECOVERY_STATE");
       if(QA106_MAP_RECOVERY_ONLY && previous.status==="none")
         throw Error("QA106_MAP_RECOVERY_INTENT_MISSING");
