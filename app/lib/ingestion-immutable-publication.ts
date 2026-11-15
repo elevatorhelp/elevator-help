@@ -144,11 +144,25 @@ export async function stageImmutableVectorPair(
   ]);
   // Eventual consistency: if either index has not yet made the vector visible,
   // reject the receipt. A later explicit retry can re-check it.
-  const found=await Promise.all([
-    indices[0].getByIds([id]),indices[1].getByIds([id]),
-  ]);
-  if(!found.every(x=>readbackValid(x,id,documentId,record.sourceFingerprint,layer,stageEpoch)))
-    throw Error("STAGED_DUAL_VECTOR_READBACK_NOT_READY");
+  // Real Cloudflare Vectorize index readback is eventually consistent.
+  // Recheck the SAME physical ID, never re-run Gemini or insert duplicates.
+  // Strictly limited to epoch-fenced QA staging; legacy paths retain fail-fast.
+  const maxReadbacks=documentEpoch!==undefined?17:1;
+  let verified=false;
+  for(let probe=0;probe<maxReadbacks;probe++){
+    if(probe>0){
+      await new Promise(resolve=>setTimeout(resolve,4500));
+      await leaseActive(db,lease,Date.now());
+    }
+    const found=await Promise.all([
+      indices[0].getByIds([id]),indices[1].getByIds([id]),
+    ]);
+    if(found.every(x=>readbackValid(x,id,documentId,record.sourceFingerprint,layer,stageEpoch))){
+      verified=true;
+      break;
+    }
+  }
+  if(!verified)throw Error("STAGED_DUAL_VECTOR_READBACK_NOT_READY");
 
   const at=Date.now();
   // The receipt is atomically conditioned on the SAME live generation, after
