@@ -99,6 +99,13 @@ jobs:
           node --check scripts/qa-issue106-resume-readonly.mjs
           node scripts/test-issue106-resume-readonly.mjs
 
+      - name: Validate Issue106 redacted Worker diagnostics and no-cost D1 state summaries
+        run: |
+          node --check scripts/qa-issue106-safe-worker-error.mjs
+          node --check scripts/qa-issue106-d1-readonly-diagnostic.mjs
+          node scripts/test-issue106-safe-worker-error.mjs
+          node scripts/test-issue106-d1-readonly-diagnostic.mjs
+
       - name: Build
         run: npm run build
 

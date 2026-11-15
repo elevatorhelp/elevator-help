@@ -126,6 +126,16 @@ phase(){
   if [[ "$stage" == map && ! -f "$OVERLAP" ]];then probe_overlap || true;fi
   wait "$a" || failA=$?
   wait "$b" || failB=$?
+  # Do NOT dump raw private logs: expose only reviewed codes, selected phase,
+  # and per-process bounded reservation count on a failure.
+  for slot in A B;do
+    local rc=0
+    if [[ "$slot" == A ]];then rc="$failA";else rc="$failB";fi
+    if [[ "$rc" != 0 ]];then
+      echo "::error::QA106_SLOT_${slot}_PROCESS_FAILED"
+      node scripts/qa-issue106-safe-worker-error.mjs "$RUNNER_TEMP/qa106-private-$stage-$slot.log" || true
+    fi
+  done
   if [[ "$failA" == 0 && "$failB" == 0 ]];then
     echo "PASS: both Workers saved $stage phase"
     return 0
