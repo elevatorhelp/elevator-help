@@ -533,7 +533,7 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
     // upstream bodies or free-form endpoint errors into CI logs.
     if(V2_QA){
       const code=data?.error;
-      if(typeof code==="string" && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE)$/.test(code))
+      if(typeof code==="string" && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE|PENDING_VECTOR_READBACK|PENDING_INTENT_DENIED|PENDING_INTENT_CORRUPT|PENDING_VECTOR_METADATA_MISMATCH)$/.test(code))
         throw Error(code);
       throw Error("V2_QA_ENDPOINT_REJECTED");
     }
@@ -693,20 +693,34 @@ async function buildDocumentMap(
   }
 
   for (let i = firstIndex; i < pageInputs.length; i += MAP_PAGES_PER_BATCH) {
-    if (ingestionBudget.snapshot().remaining < GEMINI_CALLS_PER_MAP_WINDOW) {
-      console.log(
-        `Document-map budget checkpoint reached before page ${pageInputs[i].page}`
-      );
-      return {
-        ids: mapIds,
-        complete: false,
-        nextPage: pageInputs[i].page,
-      };
-    }
     const window = pageInputs.slice(i, i + MAP_PAGES_PER_BATCH);
-    const result = await callDocumentMap({
-      ...(V2_QA?{action:"stage_map_v2"}:{}),document,pages:window,
-    },ingestToken);
+    let result=null;
+    if(V2_QA){
+      // Recovery FIRST: no Gemini budget or embedding call for late-visible Map vectors.
+      const previous=await callJsonEndpoint(DOCUMENT_MAP_ENDPOINT,{
+        action:"reconcile_map_v2",document,pages:window,
+      },ingestToken,"Document-map reconciliation");
+      if(previous.status==="pending")
+        throw Error("V2_MAP_PENDING_VECTOR_READBACK");
+      if(previous.status==="complete"){
+        if(previous.recovered!==true||previous.staged!==true)
+          throw Error("V2_QA_INVALID_RECOVERED_MAP");
+        result=previous;
+        console.log("PASS: recovered existing Map vectors without Gemini");
+      }else if(previous.status!=="none")
+        throw Error("V2_QA_INVALID_RECOVERY_STATE");
+    }
+    if(!result){
+      if (ingestionBudget.snapshot().remaining < GEMINI_CALLS_PER_MAP_WINDOW) {
+        console.log(`Document-map budget checkpoint reached before page ${pageInputs[i].page}`);
+        return {ids:mapIds,complete:false,nextPage:pageInputs[i].page};
+      }
+      result=await callDocumentMap({
+        ...(V2_QA?{action:"stage_map_v2"}:{}),document,pages:window,
+      },ingestToken);
+      if(V2_QA && result?.status==="pending")
+        throw Error("V2_MAP_PENDING_VECTOR_READBACK");
+    }
     if(V2_QA && (!Number.isSafeInteger(result?.mapCount) ||
        result.mapCount<1||result.mapCount>12))
       throw Error("V2_QA_MAP_RECEIPT_COUNT_INVALID");
@@ -1306,7 +1320,7 @@ async function main() {
       // would incur writes/API costs that cannot be resumed safely.
       if (V2_QA || String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
         const code=error instanceof Error?error.message:"";
-        if(V2_QA && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE)$/.test(code))
+        if(V2_QA && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE|PENDING_VECTOR_READBACK|PENDING_INTENT_DENIED|PENDING_INTENT_CORRUPT|PENDING_VECTOR_METADATA_MISMATCH)$/.test(code))
           throw Error(code);
         throw Error(V2_QA?"V2_QA_DOCUMENT_STAGE_OR_PUBLISH_ABORTED":"INGESTION_STATE_WRITE_FAILED");
       }
@@ -1344,7 +1358,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main().catch((error) => {
     if(V2_QA){
       const code=error instanceof Error?error.message:"";
-      const safe=/^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE)$/.test(code)?code:"V2_QA_INGESTION_ABORTED";
+      const safe=/^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE|PENDING_VECTOR_READBACK|PENDING_INTENT_DENIED|PENDING_INTENT_CORRUPT|PENDING_VECTOR_METADATA_MISMATCH)$/.test(code)?code:"V2_QA_INGESTION_ABORTED";
       console.error(safe+" (source details redacted)");
     }
     else console.error(error);
