@@ -358,8 +358,11 @@ export async function POST(request: NextRequest) {
       apiKey,
       geminiBudget.fetch,
     );
-    if (!nodes.length)
+    if (!nodes.length) {
+      if (qaStageRequest)
+        return NextResponse.json({ok:false,error:"V2_MAP_NO_GROUNDED_NODES"},{status:422});
       return NextResponse.json({ ok: true, upserted: 0, ids: [], nodes: [] });
+    }
 
     const mapTexts = nodes.map((node) => {
       const lines = [
@@ -485,8 +488,23 @@ export async function POST(request: NextRequest) {
       nodes,
     });
   } catch (error) {
-    if(qaStageRequest)
-      return NextResponse.json({ok:false,error:"V2_MAP_STAGING_NOT_VERIFIED"},{status:409});
+    if (qaStageRequest) {
+      // Expose only reviewed error categories, never upstream Gemini responses,
+      // prompts, source paths or Worker credentials in CI logs or the API.
+      const detail=error instanceof Error?error.message:"";
+      let code="V2_MAP_STAGING_NOT_VERIFIED";
+      if (error instanceof GlobalArchiveWriteDenied) code="V2_MAP_LEASE_DENIED";
+      else if (detail==="STAGED_DUAL_VECTOR_READBACK_NOT_READY") code="V2_MAP_VECTOR_READBACK_TIMEOUT";
+      else if (detail==="IMMUTABLE_STAGE_LEASE_STALE") code="V2_MAP_LEASE_STALE";
+      else if (detail==="STAGED_VECTOR_RECEIPT_DENIED") code="V2_MAP_VECTOR_RECEIPT_DENIED";
+      else if (detail.startsWith("Gemini document-map error: 429")) code="V2_MAP_GEMINI_RATE_LIMITED";
+      else if (detail.startsWith("Gemini document-map error: 403")) code="V2_MAP_GEMINI_PERMISSION_DENIED";
+      else if (detail.startsWith("Gemini document-map error:")) code="V2_MAP_GEMINI_GENERATION_REJECTED";
+      else if (detail.startsWith("Gemini embedding error")) code="V2_MAP_GEMINI_EMBEDDING_REJECTED";
+      else if (detail.startsWith("GEMINI_CALL_BUDGET_EXCEEDED")) code="V2_MAP_GEMINI_BUDGET_EXCEEDED";
+      else if (detail.includes("embedding count mismatch")) code="V2_MAP_EMBEDDING_COUNT_MISMATCH";
+      return NextResponse.json({ok:false,error:code},{status:409});
+    }
     if(error instanceof GlobalArchiveWriteDenied)
       return NextResponse.json({ok:false,error:error.code},{status:409});
     console.error("Document-map ingestion error:", error);
