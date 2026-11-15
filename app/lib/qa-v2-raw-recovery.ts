@@ -18,11 +18,14 @@ import type {ArchiveLease,CoordinatorDB} from "./ingestion-global-coordinator.ts
 
 const fail=(code:string):never=>{throw Error(code);};
 function readOne(found:unknown,expected:string){
-  if(!Array.isArray(found)||found.length>1)
-    fail("V2_RAW_RECOVERY_INVALID_VECTOR_READBACK");
-  if(found.length===0)return false;
-  if(found[0]?.id!==expected)
-    fail("V2_RAW_RECOVERY_INVALID_VECTOR_READBACK");
+  if(!Array.isArray(found))
+    throw Error("V2_RAW_RECOVERY_INVALID_VECTOR_READBACK");
+  const vectors=found as Array<{id?:unknown}>;
+  if(vectors.length>1)
+    throw Error("V2_RAW_RECOVERY_INVALID_VECTOR_READBACK");
+  if(vectors.length===0)return false;
+  if(vectors[0]?.id!==expected)
+    throw Error("V2_RAW_RECOVERY_INVALID_VECTOR_READBACK");
   return true;
 }
 export async function reconcileExistingQaV2RawChunks(
@@ -43,7 +46,7 @@ export async function reconcileExistingQaV2RawChunks(
     await assertLease();
     const physicalId=immutableVectorId(
       lease,documentId,"raw",logicalId,sourceFingerprint,epoch);
-    let row:Record<string,unknown>|null;
+    let row:Record<string,unknown>|null=null;
     try{
       row=await db.prepare(
         "SELECT staged_id FROM ingestion_v2_vector_receipts "+
