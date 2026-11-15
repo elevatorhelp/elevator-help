@@ -11,6 +11,7 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { resolveDocumentIdentity, detectDocumentLanguage } from "./document-identity.mjs";
 import { assertShardState, shardForDocumentId, validateShardParameters } from "./archive-sharding.mjs";
 import { createIngestionCoordinatorSession } from "./ingestion-coordinator-client.mjs";
+import {assertQa106ParallelContext,QA106_PDFS} from "./qa-issue106-parallel-guard.mjs";
 import {
   assertManualQaV2Environment,verifyV2StageBatch,verifyV2EvidenceReceipt,
   buildQaImmutableManifest,assertQaImmutablePublish,updateQaDeletionCandidate,
@@ -902,6 +903,7 @@ function nextPreferredIngestionPhase(lastSelectedPhase) {
 
 async function main() {
   if(V2_QA)assertManualQaV2Environment(process.env);
+  const qaParallel=V2_QA?assertQa106ParallelContext(process.env):null;
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
 
@@ -911,9 +913,23 @@ async function main() {
   const serviceAccount = JSON.parse(serviceAccountRaw);
   const accessToken = await getGoogleAccessToken(serviceAccount);
   const allFiles = await listFolder(DRIVE_FOLDER_ID, accessToken);
-  const shardFiles = shardEnabled
-    ? allFiles.filter((file) => shardForDocumentId(file.id, shardCount) === shardIndex)
-    : allFiles;
+  const shardFiles = qaParallel
+    ? allFiles.filter(file=>file.id===qaParallel.documentId)
+    : shardEnabled
+      ? allFiles.filter((file) => shardForDocumentId(file.id, shardCount) === shardIndex)
+      : allFiles;
+  if(qaParallel){
+    // Only the two reviewed PDFs plus the original synthetic source and
+    // original published fixture may exist in the shared QA folder.
+    const allowed=new Set([
+      QA106_PDFS.A,QA106_PDFS.B,
+      "1TS3dwWpEtnfl4E_f1-iOm_qbSkZhBSKIy4QbMzZWTh4",
+      "1ZpJMQSX3jYv8LDpaFA9Uu7iabFHuMgwz",
+    ]);
+    if(allFiles.length!==4||allFiles.some(file=>!allowed.has(file.id))||
+       shardFiles.length!==1||shardFiles[0].mimeType!=="application/pdf")
+      throw Error("QA106_DRIVE_SOURCE_ALLOWLIST_MISMATCH");
+  }
   const selectedScopeFiles=TARGET_FILE_ID
     ? shardFiles.filter(file=>file.id===TARGET_FILE_ID) : shardFiles;
   // Immutable V2 pilot never marks a text-only document with an empty Map as complete.
@@ -936,6 +952,7 @@ async function main() {
       legacyState:state,
       bootstrapApproved:process.env.INGESTION_D1_BOOTSTRAP_APPROVED === "true",
       ...(V2_QA?{qaOnly:true,endpoint:process.env.INGESTION_COORDINATOR_ENDPOINT}:{}),
+      ...(qaParallel?{qaJobKey:qaParallel.jobKey}:{}),
     });
     state = activeCoordinator.state;
   }
@@ -947,6 +964,12 @@ async function main() {
   state.scopes ||= {};
   const scope = state.scopes[DRIVE_FOLDER_ID] || { files: {} };
   scope.files ||= {};
+  if(qaParallel && (
+    Object.keys(state.scopes).length!==1||
+    Object.keys(scope.files).length!==1||
+    !Object.hasOwn(scope.files,qaParallel.documentId)||
+    (scope.v2Files && Object.keys(scope.v2Files).some(id=>id!==qaParallel.documentId))
+  ))throw Error("QA106_CROSS_WORKER_CHECKPOINT_DENIED");
   const workFiles=V2_QA?(scope.v2Files ||= {}):scope.files;
 
   console.log(`Found ${files.length} supported documents in configured Drive scope${shardEnabled ? " (assigned shard only)" : ""}`);
