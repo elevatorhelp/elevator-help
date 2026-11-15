@@ -185,6 +185,61 @@ export async function stageImmutableVectorPair(
   if(row?.staged_id!==id)throw Error("STAGED_VECTOR_RECEIPT_DENIED");
   return id;
 }
+/**
+ * Read back EXISTING immutable V2 vectors without inserting again or invoking
+ * embeddings. This is the only way a cross-run late-visibility Map can acquire
+ * its missing D1 receipt; even if a previous owner inserted its physical ID,
+ * a successor lease can only attest the SAME revision/epoch and both indexes.
+ *
+ * Return false on not-yet-visible pairs (retry a later run; never regenerate).
+ * Throw on visible but mismatched metadata/IDs (corruption is NOT "pending").
+ */
+export async function attestExistingImmutableVectorPair(
+ db:CoordinatorDB,lease:ArchiveLease,documentId:string,layer:PublicationLayer,
+ logicalId:string,sourceFingerprint:string,
+ indices:readonly [ImmutableIndex,ImmutableIndex],documentEpoch:number,
+ now=Date.now(),
+):Promise<boolean>{
+  validateStage(documentId,logicalId,sourceFingerprint,lease);
+  validateStagingEpoch(documentEpoch);
+  if(layer!=="map"&&layer!=="raw")throw Error("INVALID_STAGED_LAYER");
+  if(!Array.isArray(indices)||indices.length!==2||
+     indices.some(x=>!x||typeof x.getByIds!=="function"))
+    throw Error("STAGED_VECTOR_INDEX_UNAVAILABLE");
+  const id=immutableVectorId(
+    lease,documentId,layer,logicalId,sourceFingerprint,documentEpoch);
+  await leaseActive(db,lease,now);
+  const reads=await Promise.all(indices.map(index=>index.getByIds([id])));
+  let missing=false;
+  for(const found of reads){
+    if(!Array.isArray(found)||found.length===0){
+      missing=true;
+      continue;
+    }
+    if(!readbackValid(found,id,documentId,sourceFingerprint,layer,documentEpoch))
+      throw Error("V2_MAP_PENDING_VECTOR_METADATA_MISMATCH");
+  }
+  if(missing)return false;
+  const at=Date.now();
+  const row=await db.prepare(`
+    INSERT INTO ingestion_v2_vector_receipts
+    (document_id,generation,layer,logical_id,staged_id,source_fingerprint,created_at_ms)
+    SELECT ?,?,?,?,?,?,? WHERE EXISTS (
+      SELECT 1 FROM ingestion_global_leases
+      WHERE job_key=? AND owner=? AND generation=? AND lease_until_ms>?
+    ) ${DOCUMENT_STAGING_EPOCH_FENCE_SQL}
+    ON CONFLICT(document_id,generation,layer,logical_id) DO UPDATE
+    SET created_at_ms=ingestion_v2_vector_receipts.created_at_ms
+    WHERE ingestion_v2_vector_receipts.staged_id=excluded.staged_id
+      AND ingestion_v2_vector_receipts.source_fingerprint=excluded.source_fingerprint
+    RETURNING staged_id
+  `).bind(documentId,documentEpoch,layer,logicalId,id,
+    sourceFingerprint,at,lease.jobKey,lease.owner,lease.generation,at,
+    documentId,lease.jobKey,documentEpoch,sourceFingerprint).first();
+  if(row?.staged_id!==id)throw Error("STAGED_VECTOR_RECEIPT_DENIED");
+  return true;
+}
+
 export async function stageImmutableExactEvidence(
  db:CoordinatorDB,lease:ArchiveLease,documentId:string,
  evidence:ExactEvidence, now=Date.now(),documentEpoch?:number,
