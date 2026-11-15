@@ -46,8 +46,9 @@ jobs:
               print("QA_ONLY_"+kind+"_map_physical_ids_listed="+str(len(ids)))
               if data.get("isTruncated"):
                   print("QA_ONLY_LIST_TRUNCATED: requires paging; no completeness claim")
-              (root/("qa-index-"+kind+".json")).unlink()
           print("QA_ONLY_MAP_PHYSICAL_IDS_COMMON="+str(len(sets[0]&sets[1])))
           print("QA_ONLY_NO_GEMINI_NO_WRITES")
           PY
+          python3 scripts/qa-issue99-map-wrangler-inspect.py
+          rm -f "$RUNNER_TEMP/qa-index-legacy.json" "$RUNNER_TEMP/qa-index-multilingual.json"
       # No migrations, vector writes, source export, or Gemini calls.
