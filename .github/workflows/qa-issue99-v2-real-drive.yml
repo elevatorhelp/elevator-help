@@ -1,0 +1,139 @@
+name: Issue99 manual real Google Drive immutable V2 QA
+run-name: Issue99 1-PDF immutable QA Evidence RAW Map Publish (isolated only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type exactly QA_ONLY_ONE_PDF_MAX_12_GEMINI_CALLS to authorize bounded QA"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue99-v2-manual-cloudflare-test-only
+  cancel-in-progress: false
+
+jobs:
+  real-pdf:
+    if: github.repository == 'elevatorhelp/elevator-help' && github.ref == 'refs/heads/main' && inputs.confirmation == 'QA_ONLY_ONE_PDF_MAX_12_GEMINI_CALLS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - name: Exact reviewed code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Fail closed if any credentials unavailable
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$GOOGLE_SERVICE_ACCOUNT_JSON" || { echo "::error::QA_DRIVE_SECRET_MISSING"; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::QA_CLOUDFLARE_SECRET_MISSING"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::QA_CLOUDFLARE_ACCOUNT_MISSING"; exit 1; }
+          test -n "$GEMINI_API_KEY" || { echo "::error::QA_GEMINI_SECRET_MISSING"; exit 1; }
+          node --check scripts/qa-issue99-seed-checkpoint.mjs
+          node --check scripts/qa-issue99-attest-v2.mjs
+          node --check scripts/drive-ingest.mjs
+      - name: Verify real Drive fixture before paid work
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/qa-issue99-drive-readonly.mjs
+      - name: Build isolated actual Cloudflare worker
+        run: npm run cf:build
+      - name: Apply additive migrations to ONLY known QA D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          for schema in \
+            docs/ingestion-global-coordinator-schema.sql \
+            docs/ingestion-immutable-publication-schema.sql \
+            docs/ingestion-v2-document-epoch-schema.sql \
+            docs/ingestion-v2-evidence-reference-schema.sql; do
+            npx wrangler d1 execute elevator-help-lease-test-01 --remote \
+              --config wrangler.qa-pr100-v2.json --file "$schema" > /dev/null
+          done
+          echo "PASS: isolated QA D1 schema ready"
+      - name: Start isolated remote QA Worker, seed checkpoint, ingest and attest ONE reviewed PDF
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          QA_V2_SEED_CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export QA_V2_INGESTION_TOKEN="$(openssl rand -hex 32)"
+          export ELEVATOR_INGESTION_TOKEN="$QA_V2_INGESTION_TOKEN"
+          export QA_ROOT="1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC"
+          export QA_V2_JOB_KEY="drive:$QA_ROOT"
+          export DRIVE_FOLDER_ID="$QA_ROOT"
+          export INGESTION_V2_QA_DRIVE_ROOT="$QA_ROOT"
+          export INGESTION_V2_QA_MODE=true
+          export INGESTION_D1_COORDINATOR_MODE=strict
+          export INGESTION_D1_EXPLICIT_RUN_ID="$GITHUB_RUN_ID"
+          export INGESTION_V2_QA_ORIGIN="http://127.0.0.1:8787"
+          export INGEST_ENDPOINT="$INGESTION_V2_QA_ORIGIN/api/drive-ingest-batch"
+          export DOCUMENT_MAP_ENDPOINT="$INGESTION_V2_QA_ORIGIN/api/document-map-ingest"
+          export INGESTION_COORDINATOR_ENDPOINT="$INGESTION_V2_QA_ORIGIN/api/ingestion-coordinator"
+          export INGESTION_IMMUTABLE_ENDPOINT="$INGESTION_V2_QA_ORIGIN/api/immutable-archive-publish"
+          export MAX_FILES=1
+          export MAX_GEMINI_CALLS=4
+          export STATE_PATH="$RUNNER_TEMP/issue99-v2-qa-checkpoint.json"
+          npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
+            --ip 127.0.0.1 --port 8787 \
+            --var "INGESTION_TOKEN:${QA_V2_INGESTION_TOKEN}" \
+            --var "GEMINI_API_KEY:${GEMINI_API_KEY}" \
+            --var "GEMINI_MAX_CALLS_PER_INGEST_REQUEST:4" \
+            --var "INGESTION_COORDINATOR_JOB_KEY:${QA_V2_JOB_KEY}" \
+            --var "INGESTION_COORDINATOR_ENABLED:true" \
+            --var "INGESTION_GLOBAL_WRITE_GATE_ENABLED:true" \
+            --var "INGESTION_IMMUTABLE_PUBLICATION_ENABLED:true" \
+            > "$RUNNER_TEMP/issue99-v2-worker-redacted.log" 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 65); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 \
+              -X POST -H "Authorization: Bearer ${QA_V2_INGESTION_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data '{"action":"status"}' \
+              http://127.0.0.1:8787/api/drive-ingest-batch || true)
+            if [ "$code" = 200 ]; then ready=1; break; fi
+            if ! kill -0 "$worker_pid" 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [ "$ready" != 1 ]; then
+            echo "::error::QA_REAL_WORKER_NOT_READY"
+            exit 1
+          fi
+          node scripts/qa-issue99-seed-checkpoint.mjs
+          for phase in evidence raw map; do
+            echo "QA isolated phase: $phase"
+            node scripts/drive-ingest.mjs
+          done
+          node scripts/qa-issue99-attest-v2.mjs
+          echo "PASS: isolated real-Google-Drive three-layer publication and D1 attestation"
+          echo "QA_REAL_DRIVE_V2_PUBLICATION_PASS" > "$RUNNER_TEMP/qa-issue99-summary.txt"
+      - name: Upload sanitized proof (never raw credentials or worker logs)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qa-issue99-publication-${{ github.run_id }}
+          path: ${{ runner.temp }}/qa-issue99-summary.txt
+          if-no-files-found: warn
+          retention-days: 30
