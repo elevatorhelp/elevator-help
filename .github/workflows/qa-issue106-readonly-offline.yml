@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/qa-issue106-readonly-offline.yml"
       - ".github/workflows/qa-issue106-real-two-worker.yml"
+      - ".github/workflows/qa-issue106-map-only-recovery.yml"
       - "scripts/qa-issue106-*.mjs"
       - "scripts/qa-issue106-parallel-run.sh"
       - "scripts/drive-ingest.mjs"
@@ -14,6 +15,7 @@ on:
     paths:
       - ".github/workflows/qa-issue106-readonly-offline.yml"
       - ".github/workflows/qa-issue106-real-two-worker.yml"
+      - ".github/workflows/qa-issue106-map-only-recovery.yml"
       - "scripts/qa-issue106-*.mjs"
       - "scripts/qa-issue106-parallel-run.sh"
       - "scripts/drive-ingest.mjs"
@@ -40,6 +42,9 @@ jobs:
             node --check "$s"
           done
           bash -n scripts/qa-issue106-parallel-run.sh
+          bash -n scripts/qa-issue106-map-only-run.sh
+          node scripts/test-issue106-map-only-preflight.mjs
+          node scripts/test-issue106-map-only-runner.mjs
           node scripts/test-issue106-real-parallel-guard.mjs
           node scripts/test-ingestion-v2-qa-guard.mjs
           node scripts/test-ingestion-coordinator-client.mjs
