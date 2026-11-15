@@ -32,7 +32,11 @@ qa106_assert_worker_group "$pid" || {
 }
 ready=0
 for i in $(seq 1 60);do
+  # Endpoint rejects GET as 404. Use unauthenticated POST to verify that
+  # the exact ephemeral Worker responds 403 BEFORE attempting any D1 reads.
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
+    -X POST -H "Content-Type: application/json" \
+    --data '{"slot":"A"}' \
     http://127.0.0.1:8791/inspect 2>/dev/null || true)"
   if [[ "$code" == 403 ]];then ready=1;break;fi
   if ! kill -0 "$pid" 2>/dev/null;then break;fi
