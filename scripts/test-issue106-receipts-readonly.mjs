@@ -9,18 +9,20 @@ assert.match(sql,/ingestion_v2_vector_receipts/);
 assert.match(sql,/ingestion_v2_staged_evidence/);
 assert.match(sql,/ingestion_v2_document_epochs/);
 assert.match(sql,/ingestion_v2_publications/);
+assert.match(sql,/ingestion_v2_pending_map_windows/);
 assert.ok(!/DELETE\s|UPDATE\s|INSERT\s|DROP\s|ALTER\s/i.test(sql));
 
 const testRows=[
   {slot:"A",epoch_present:1,evidence_current:4,raw_current:0,
-    map_current:0,raw_all_epochs:1,published_count:0},
+    map_current:0,raw_all_epochs:1,pending_map_windows:1,published_count:0},
   {slot:"B",epoch_present:1,evidence_current:4,raw_current:2,
-    map_current:1,raw_all_epochs:2,published_count:1},
+    map_current:1,raw_all_epochs:2,pending_map_windows:1,published_count:1},
 ];
 const s=summarizeQa106Receipts(testRows);
 assert.equal(s.length,2);
 assert.equal(s[0].anyOrphanedOldRaw,true);
 assert.equal(s[0].rawReceipts,0);
+assert.equal(s[0].pendingMapWindows,1);
 assert.equal(s[1].published,true);
 assert.equal(s[1].mapReceipts,1);
 assert.ok(!JSON.stringify(s).includes("private-file-name"));

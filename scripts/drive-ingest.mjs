@@ -36,6 +36,7 @@ const TARGET_FILE_ID = process.env.TARGET_FILE_ID || "";
 const FORCE_REINGEST = process.env.FORCE_REINGEST === "true";
 const MAX_FILES = Number(process.env.MAX_FILES || "1");
 const V2_QA=process.env.INGESTION_V2_QA_MODE==="true";
+const QA106_MAP_RECOVERY_ONLY=process.env.QA106_MAP_RECOVERY_ONLY==="true";
 const IMMUTABLE_ENDPOINT=process.env.INGESTION_IMMUTABLE_ENDPOINT;
 const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/api/drive-ingest-batch";
 const DOCUMENT_MAP_ENDPOINT =
@@ -549,6 +550,7 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
 }
 
 async function callIngest(payload, token) {
+  if(QA106_MAP_RECOVERY_ONLY)throw Error("QA106_MAP_RECOVERY_NEW_RAW_DENIED");
   if (payload?.action === "upsert" || payload?.action === "stage_upsert_v2") {
     ingestionBudget.reserve(GEMINI_CALLS_PER_RAW_BATCH, "raw chunk batch");
   }
@@ -556,6 +558,7 @@ async function callIngest(payload, token) {
 }
 
 async function callDocumentMap(payload, token) {
+  if(QA106_MAP_RECOVERY_ONLY)throw Error("QA106_MAP_RECOVERY_NEW_MAP_DENIED");
   ingestionBudget.reserve(GEMINI_CALLS_PER_MAP_WINDOW, "document-map window");
   return callJsonEndpoint(DOCUMENT_MAP_ENDPOINT, payload, token, "Document-map endpoint");
 }
@@ -714,6 +717,8 @@ async function buildDocumentMap(
         console.log("PASS: recovered existing Map vectors without Gemini");
       }else if(previous.status!=="none")
         throw Error("V2_QA_INVALID_RECOVERY_STATE");
+      if(QA106_MAP_RECOVERY_ONLY && previous.status==="none")
+        throw Error("QA106_MAP_RECOVERY_INTENT_MISSING");
     }
     if(!result){
       if (ingestionBudget.snapshot().remaining < GEMINI_CALLS_PER_MAP_WINDOW) {
@@ -908,6 +913,8 @@ function nextPreferredIngestionPhase(lastSelectedPhase) {
 async function main() {
   if(V2_QA)assertManualQaV2Environment(process.env);
   const qaParallel=V2_QA?assertQa106ParallelContext(process.env):null;
+  if(QA106_MAP_RECOVERY_ONLY && !qaParallel)
+    throw Error("QA106_MAP_RECOVERY_UNAPPROVED_CONTEXT");
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
 
@@ -1024,6 +1031,8 @@ async function main() {
     V2_QA?scope.v2LastSelectedPhase:scope.lastSelectedPhase
   );
   const plan = createIngestionPlan(files,workFiles,FORCE_REINGEST,preferredPhase);
+  if(QA106_MAP_RECOVERY_ONLY && plan.phase!=="map")
+    throw Error("QA106_MAP_RECOVERY_OTHER_PHASE_DENIED");
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
   console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);

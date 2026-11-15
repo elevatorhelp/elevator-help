@@ -90,6 +90,9 @@ run_slot(){
     case "$command" in
       seed) node scripts/qa-issue106-worker-checkpoint.mjs seed;;
       ingest) node scripts/drive-ingest.mjs;;
+      recover)
+        export QA106_MAP_RECOVERY_ONLY=true
+        node scripts/drive-ingest.mjs;;
       attest) node scripts/qa-issue106-worker-checkpoint.mjs attest;;
       *) exit 2;;
     esac
@@ -123,7 +126,9 @@ phase(){
   a=$!
   run_slot B ingest > "$RUNNER_TEMP/qa106-private-$stage-B.log" 2>&1 &
   b=$!
-  if [[ "$stage" == map && ! -f "$OVERLAP" ]];then probe_overlap || true;fi
+  # Actual chosen phase can advance ahead of the runner round label.
+  # Observe lease overlap during ANY two-worker round, not only named Map.
+  if [[ ! -f "$OVERLAP" ]];then probe_overlap || true;fi
   wait "$a" || failA=$?
   wait "$b" || failB=$?
   # Do NOT dump raw private logs: expose only reviewed codes, selected phase,
@@ -140,27 +145,28 @@ phase(){
     echo "PASS: both Workers saved $stage phase"
     return 0
   fi
-  if [[ "$stage" != map ]];then
-    echo "::error::QA106_EVIDENCE_OR_RAW_FAILED";return 1
-  fi
-  # Late Vectorize readback: retry only known pending-ID states. The #104
-  # runner reconciles before GEMINI budget and never recomputes them.
+  # A round labelled 'raw' may have actually selected Map, after durable
+  # RAW checkpoints. Only known Map timeout + actual selected=map qualify.
+  # Unknown failure classes always fail closed: NO paid blind retry.
   for slot in A B;do
     local failed log
     if [[ "$slot" == A ]];then failed="$failA";else failed="$failB";fi
-    log="$RUNNER_TEMP/qa106-private-map-$slot.log"
+    log="$RUNNER_TEMP/qa106-private-$stage-$slot.log"
     if [[ "$failed" != 0 ]] &&
-      ! grep -Eq 'V2_MAP_(VECTOR_READBACK_TIMEOUT|PENDING_VECTOR_READBACK)' "$log";then
-      echo "::error::QA106_NONRECOVERABLE_MAP_$slot";return 1
+       ! node scripts/qa-issue106-map-retry-gate.mjs "$failed" "$log";then
+      echo "::error::QA106_NONRECOVERABLE_PHASE_$stage"_$slot;return 1
     fi
   done
+  echo "PASS: actual selected Map timeout is eligible for model-free receipt reconciliation"
   for retry in 1 2 3;do
     sleep 30
     for slot in A B;do
       local rc=0
       if [[ "$slot" == A && "$failA" == 0 ||
             "$slot" == B && "$failB" == 0 ]];then continue;fi
-      run_slot "$slot" ingest > "$RUNNER_TEMP/qa106-private-map-retry-$slot.log" 2>&1 || rc=$?
+      # Recovery-only mode forbids new Gemini and Workers AI work even if
+      # a missing/changed D1 pending intent is detected.
+      run_slot "$slot" recover > "$RUNNER_TEMP/qa106-private-map-retry-$slot.log" 2>&1 || rc=$?
       if [[ "$slot" == A ]];then failA="$rc";else failB="$rc";fi
       if [[ "$rc" != 0 ]] &&
         ! grep -q "V2_MAP_PENDING_VECTOR_READBACK" "$RUNNER_TEMP/qa106-private-map-retry-$slot.log";then
