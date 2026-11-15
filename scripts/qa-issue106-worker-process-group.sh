@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 # Issue106 QA only: Wrangler via npx can leave descendants alive when only
 # the npx launcher PID is killed. Keep each worker in its OWN Unix session.
+# A shell 'setsid ... &' launcher may fork and return a PID that is NOT
+# the session leader. Use Python's start_new_session to return the actual PID.
+qa106_spawn_worker_group() {
+  local logfile="${1:-}"
+  [[ -n "$logfile" && "$#" -ge 2 ]] || return 1
+  shift
+  python3 - "$logfile" "$@" <<'PY'
+import subprocess,sys
+with open(sys.argv[1],"ab",buffering=0) as logfile:
+    p=subprocess.Popen(sys.argv[2:],stdin=subprocess.DEVNULL,
+      stdout=logfile,stderr=subprocess.STDOUT,start_new_session=True)
+print(p.pid)
+PY
+}
 qa106_assert_worker_group() {
   local pid="$1" pgid
   [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1

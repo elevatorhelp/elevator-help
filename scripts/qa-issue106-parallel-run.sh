@@ -30,7 +30,8 @@ start_worker(){
   else echo "::error::QA106_INVALID_WORKER_SLOT";return 1;fi
   job="drive:$ROOT"
   job="${job}_qa_$slot"
-  setsid npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
+  pid="$(qa106_spawn_worker_group "$RUNNER_TEMP/qa106-private-worker-$slot.log" \
+    npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
     --ip 127.0.0.1 --port "$port" \
     --var "INGESTION_TOKEN:$token" \
     --var "GEMINI_API_KEY:$GEMINI_API_KEY" \
@@ -38,9 +39,7 @@ start_worker(){
     --var "INGESTION_COORDINATOR_JOB_KEY:$job" \
     --var "INGESTION_COORDINATOR_ENABLED:true" \
     --var "INGESTION_GLOBAL_WRITE_GATE_ENABLED:true" \
-    --var "INGESTION_IMMUTABLE_PUBLICATION_ENABLED:true" \
-    > "$RUNNER_TEMP/qa106-private-worker-$slot.log" 2>&1 &
-  pid=$!
+    --var "INGESTION_IMMUTABLE_PUBLICATION_ENABLED:true")"
   if ! qa106_assert_worker_group "$pid"; then
     kill "$pid" 2>/dev/null || true
     return 1

@@ -12,10 +12,8 @@ trap cleanup EXIT
 live_count() {
   ps -eo pgid=,stat= | awk -v group="$1" '$1==group && $2 !~ /^Z/ {n++} END {print n+0}'
 }
-setsid bash -c 'bash -c "sleep 60 & wait" & wait' >/dev/null 2>&1 &
-A=$!
-setsid bash -c 'bash -c "sleep 60 & wait" & wait' >/dev/null 2>&1 &
-B=$!
+A="$(qa106_spawn_worker_group /dev/null bash -c 'bash -c "sleep 60 & wait" & wait')"
+B="$(qa106_spawn_worker_group /dev/null bash -c 'bash -c "sleep 60 & wait" & wait')"
 qa106_assert_worker_group "$A"
 qa106_assert_worker_group "$B"
 sleep 0.3
