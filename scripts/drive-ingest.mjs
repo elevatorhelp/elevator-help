@@ -527,7 +527,14 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
   }
 
   if (!response.ok || data?.ok === false) {
-    if(V2_QA)throw Error("V2_QA_ENDPOINT_REJECTED");
+    // The QA API only returns preclassified safe error enums; never echo raw
+    // upstream bodies or free-form endpoint errors into CI logs.
+    if(V2_QA){
+      const code=data?.error;
+      if(typeof code==="string" && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH)$/.test(code))
+        throw Error(code);
+      throw Error("V2_QA_ENDPOINT_REJECTED");
+    }
     throw new Error(`${label} error ${response.status}: ${JSON.stringify(data)}`);
   }
 
@@ -1296,6 +1303,9 @@ async function main() {
       // State persistence failures are systemic, not document-local. Continuing
       // would incur writes/API costs that cannot be resumed safely.
       if (V2_QA || String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
+        const code=error instanceof Error?error.message:"";
+        if(V2_QA && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH)$/.test(code))
+          throw Error(code);
         throw Error(V2_QA?"V2_QA_DOCUMENT_STAGE_OR_PUBLISH_ABORTED":"INGESTION_STATE_WRITE_FAILED");
       }
       // Preserve successful checkpoints and allow other files in this bounded
@@ -1330,7 +1340,11 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    if(V2_QA)console.error("V2_QA_INGESTION_ABORTED (source details redacted)");
+    if(V2_QA){
+      const code=error instanceof Error?error.message:"";
+      const safe=/^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH)$/.test(code)?code:"V2_QA_INGESTION_ABORTED";
+      console.error(safe+" (source details redacted)");
+    }
     else console.error(error);
     process.exitCode = 1;
   });
