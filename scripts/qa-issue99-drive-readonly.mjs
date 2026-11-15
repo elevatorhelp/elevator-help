@@ -58,6 +58,27 @@ async function main(){
   assert(directMeta.id===FIXTURE&&directMeta.mimeType===EXPECTED_MIME&&
     directMeta.trashed!==true,"QA_DIRECT_PDF_NOT_VISIBLE");
   console.log("PASS: service account can read explicitly shared QA PDF metadata");
+  assert(/^[a-f0-9]{32}$/i.test(directMeta.md5Checksum||"") &&
+      Number(directMeta.size)>1000 && Number(directMeta.size)<=MAX_PDF_BYTES,
+      "QA_PDF_MISSING_OR_INVALID_METADATA");
+  const file=await http("https://www.googleapis.com/drive/v3/files/"+FIXTURE+"?alt=media",{headers});
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  assert(bytes.length===Number(directMeta.size) && bytes.length<=MAX_PDF_BYTES &&
+    createHash("md5").update(bytes).digest("hex").toLowerCase()===directMeta.md5Checksum.toLowerCase(),
+    "QA_PDF_CHECKSUM_MISMATCH");
+  console.log("PASS: restricted service account downloaded real Drive PDF with matching MD5");
+  const document=await getDocumentProxy(bytes,{maxImageSize:16_777_216});
+  const pages=await extractText(document,{mergePages:false});
+  assert(pages.totalPages===2 &&
+    Array.isArray(pages.text)&&pages.text.length===2 &&
+    pages.text[0].includes("QA-4711")&&
+    pages.text[0].includes("QA-1.2.3")&&
+    pages.text[1].includes("MOCK-DOOR-12")&&
+    pages.text[1].includes("QA-2.4.6"),
+    "QA_PDF_PAGE_OR_SOURCE_EXTRACTION_MISMATCH");
+  console.log("PASS: real uploaded Drive PDF parsed with production unpdf engine (2 exact pages)");
+  // Full runner must be able to enumerate the QA folder, not only read a
+  // single explicitly shared file. Do not weaken this acceptance criterion.
   const folder=await http("https://www.googleapis.com/drive/v3/files/"+ROOT+
     "?fields=id,mimeType,trashed",{headers});
   const folderMeta=await folder.json();
@@ -68,31 +89,14 @@ async function main(){
   listingUrl.searchParams.set("q","'"+ROOT+"' in parents and trashed = false");
   listingUrl.searchParams.set("fields","nextPageToken,files(id,mimeType,md5Checksum,size)");
   listingUrl.searchParams.set("pageSize","100");
-  let item=null;
   const listing=await http(listingUrl,{headers});
   const metadata=await listing.json();
-  item=(metadata.files||[]).find(x=>x.id===FIXTURE);
+  const item=(metadata.files||[]).find(x=>x.id===FIXTURE);
   assert(item?.mimeType===EXPECTED_MIME &&
-    /^[a-f0-9]{32}$/i.test(item.md5Checksum||"") &&
-    Number(item.size)>1000 && Number(item.size)<=MAX_PDF_BYTES,
-    "QA_PDF_MISSING_OR_INVALID_METADATA");
-  console.log("PASS: exact uploaded PDF found via real Drive folder listing and MD5 metadata");
-  const file=await http("https://www.googleapis.com/drive/v3/files/"+FIXTURE+"?alt=media",{headers});
-  const bytes=new Uint8Array(await file.arrayBuffer());
-  assert(bytes.length===Number(item.size) && bytes.length<=MAX_PDF_BYTES &&
-    createHash("md5").update(bytes).digest("hex").toLowerCase()===item.md5Checksum.toLowerCase(),
-    "QA_PDF_CHECKSUM_MISMATCH");
-  console.log("PASS: real Drive PDF downloaded and integrity-checked");
-  const document=await getDocumentProxy(bytes,{maxImageSize:16_777_216});
-  const pages=await extractText(document,{mergePages:false});
-  assert(pages.totalPages===2 &&
-    Array.isArray(pages.text)&&pages.text.length===2 &&
-    pages.text[0].includes("QA-4711")&&
-    pages.text[0].includes("QA-1.2.3")&&
-    pages.text[1].includes("MOCK-DOOR-12")&&
-    pages.text[1].includes("QA-2.4.6"),
-    "QA_PDF_PAGE_OR_SOURCE_EXTRACTION_MISMATCH");
-  console.log("PASS: real uploaded Drive PDF extracted by production unpdf engine (2 exact pages)");
+    item.md5Checksum?.toLowerCase()===directMeta.md5Checksum.toLowerCase() &&
+    Number(item.size)===Number(directMeta.size),
+    "QA_PDF_NOT_LISTED_BY_DRIVE_FOLDER");
+  console.log("PASS: exact uploaded PDF discovered by real Drive folder listing");
   console.log("QA_DRIVE_READ_ONLY_PREFLIGHT_PASS: No Cloudflare, Gemini or Production writes");
 }
 main().catch(e=>{
