@@ -95,7 +95,7 @@ export async function preflightExactMissingQa106BMap(
     "AND source_fingerprint=? AND window_key=? AND map_version=?",
     [doc,QA106_B_JOB,epoch,fp,windowKey,mapVersion]);
   if(windows.length!==1)abort("WINDOW_NOT_UNIQUE");
-  let entries:Entry[];
+  let entries:Entry[]=[];
   try{entries=JSON.parse(String(windows[0].ids_json))}
   catch{abort("WINDOW_CORRUPT")}
   if(!Array.isArray(entries)||entries.length!==2||
@@ -119,20 +119,22 @@ export async function preflightExactMissingQa106BMap(
     let left:unknown,right:unknown;
     try{[left,right]=await Promise.all(indexes.map(i=>i.getByIds([entry.stagedId])))}
     catch{abort("READBACK_UNAVAILABLE")}
-    if(!Array.isArray(left)||!Array.isArray(right)||
-       left.length>1||right.length>1)
-      abort("READBACK_INVALID");
-    if(entry.logicalId===existing.logicalId){
+    if(!Array.isArray(left)||!Array.isArray(right))
+      throw Error("QA106_B_REPAIR_READBACK_INVALID");
+    const a=left as unknown[],b=right as unknown[];
+    if(a.length>1||b.length>1)
+      throw Error("QA106_B_REPAIR_READBACK_INVALID");
+    if(entry.logicalId===existing!.logicalId){
       if(!goodVisible(left,entry.stagedId,doc,fp,epoch)||
          !goodVisible(right,entry.stagedId,doc,fp,epoch))
         abort("EXISTING_PAIR_INVALID");
     }else{
       // Half-pair would risk unsafe insert/idempotency; never overwrite it.
-      if(left.length||right.length)abort("MISSING_PAIR_CHANGED");
+      if(a.length||b.length)abort("MISSING_PAIR_CHANGED");
       missing=entry;
     }
   }
-  if(!missing)abort("MISSING_PAIR_UNKNOWN");
+  if(!missing)throw Error("QA106_B_REPAIR_MISSING_PAIR_UNKNOWN");
   return {entries,missingLogicalId:missing.logicalId,
     missingPhysicalId:missing.stagedId,documentEpoch:epoch};
 }
