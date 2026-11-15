@@ -111,6 +111,10 @@ jobs:
           node --experimental-sqlite --experimental-strip-types scripts/test-issue106-raw-recovery.ts
           node --check scripts/qa-issue106-map-retry-gate.mjs
           node scripts/test-issue106-map-retry-gate.mjs
+          node --check scripts/qa-issue106-map-only-preflight.mjs
+          node scripts/test-issue106-map-only-preflight.mjs
+          node scripts/test-issue106-map-only-runner.mjs
+          bash -n scripts/qa-issue106-map-only-run.sh
 
       - name: Build
         run: npm run build
