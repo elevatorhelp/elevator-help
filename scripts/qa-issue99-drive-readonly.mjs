@@ -20,10 +20,12 @@ async function http(url,options={},timeoutMs=18000){
   return response;
 }
 async function main(){
+  const approvedBranchPush=process.env.GITHUB_EVENT_NAME==="push" &&
+    process.env.GITHUB_REF==="refs/heads/qa/issue99-real-drive-readonly-20261115";
+  const approvedManualQa=process.env.GITHUB_EVENT_NAME==="workflow_dispatch" &&
+    process.env.GITHUB_REF==="refs/heads/main";
   assert(process.env.GITHUB_ACTIONS==="true" &&
-      process.env.GITHUB_EVENT_NAME==="push" &&
-      process.env.GITHUB_REF==="refs/heads/qa/issue99-real-drive-readonly-20261115",
-      "QA_UNAPPROVED_CONTEXT");
+    (approvedBranchPush||approvedManualQa),"QA_UNAPPROVED_CONTEXT");
   const raw=process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   assert(typeof raw==="string"&&raw.length>100,"QA_SERVICE_ACCOUNT_MISSING");
   let account;try{account=JSON.parse(raw);}catch{throw Error("QA_SERVICE_ACCOUNT_JSON_INVALID");}
@@ -91,7 +93,10 @@ async function main(){
   listingUrl.searchParams.set("pageSize","100");
   const listing=await http(listingUrl,{headers});
   const metadata=await listing.json();
-  const item=(metadata.files||[]).find(x=>x.id===FIXTURE);
+  const pdfFiles=(metadata.files||[]).filter(x=>x.mimeType===EXPECTED_MIME);
+  assert(pdfFiles.length===1 && !metadata.nextPageToken,
+    "QA_DRIVE_UNREVIEWED_PDF_IN_FIXTURE");
+  const item=pdfFiles.find(x=>x.id===FIXTURE);
   assert(item?.mimeType===EXPECTED_MIME &&
     item.md5Checksum?.toLowerCase()===directMeta.md5Checksum.toLowerCase() &&
     Number(item.size)===Number(directMeta.size),
