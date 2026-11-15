@@ -8,6 +8,10 @@ on:
       - "scripts/test-ingestion-v2-qa-guard.mjs"
       - "app/api/drive-ingest-batch/route.ts"
       - "app/api/document-map-ingest/route.ts"
+      - "app/lib/ingestion-v2-map-reconciliation.ts"
+      - "app/lib/ingestion-immutable-publication.ts"
+      - "docs/ingestion-v2-pending-map-windows-schema.sql"
+      - "scripts/test-ingestion-v2-map-reconciliation.ts"
       - ".github/workflows/qa-drive-v2-runner.yml"
   workflow_dispatch:
 permissions:
@@ -39,5 +43,6 @@ jobs:
       - name: Immutable publication revision and exact Evidence QA
         run: |
           node --experimental-strip-types scripts/test-ingestion-document-staging-epoch.ts
+          node --experimental-strip-types scripts/test-ingestion-v2-map-reconciliation.ts
           node --experimental-strip-types scripts/test-ingestion-immutable-publication.ts
           node --experimental-strip-types scripts/test-ingestion-v2-evidence-references.ts
