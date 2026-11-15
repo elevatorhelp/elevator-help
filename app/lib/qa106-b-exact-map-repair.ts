@@ -45,7 +45,10 @@ function goodVisible(value:unknown,id:string,doc:string,fp:string,epoch:number){
     Number.isSafeInteger(meta.pageEnd)&&meta.pageEnd>=meta.page;
 }
 async function allRows(db:CoordinatorDB,sql:string,params:unknown[]){
-  const result=await db.prepare(sql).bind(...params).all();
+  const query=db.prepare(sql).bind(...params) as unknown as {
+    all:()=>Promise<{results?:Array<Record<string,unknown>>}>
+  };
+  const result=await query.all();
   if(!Array.isArray(result?.results))abort("D1_UNAVAILABLE");
   return result.results as Array<Record<string,unknown>>;
 }
