@@ -87,6 +87,13 @@ jobs:
       - name: Test compact and legacy exact-evidence index
         run: node --experimental-sqlite --experimental-strip-types scripts/test-compact-evidence.mjs
 
+      - name: Test Issue106 isolated Wrangler shutdown (offline, no paid calls)
+        run: |
+          bash -n scripts/qa-issue106-parallel-run.sh
+          bash -n scripts/qa-issue106-worker-process-group.sh
+          bash -n scripts/test-issue106-worker-process-group.sh
+          bash scripts/test-issue106-worker-process-group.sh
+
       - name: Build
         run: npm run build
 
