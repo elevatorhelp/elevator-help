@@ -513,6 +513,8 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
     // Node fetch throws TypeError for transport failures. Do not expose
     // endpoint URLs, request bodies, source names or upstream error causes.
     if (error instanceof TypeError) {
+      if(V2_QA && label==="Document-map endpoint")
+        throw Error("V2_MAP_TRANSPORT_FAILURE");
       throw new Error("INGESTION_ENDPOINT_TRANSPORT_FAILURE", { cause: error });
     }
     throw error;
@@ -531,7 +533,7 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
     // upstream bodies or free-form endpoint errors into CI logs.
     if(V2_QA){
       const code=data?.error;
-      if(typeof code==="string" && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH)$/.test(code))
+      if(typeof code==="string" && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE)$/.test(code))
         throw Error(code);
       throw Error("V2_QA_ENDPOINT_REJECTED");
     }
@@ -1304,7 +1306,7 @@ async function main() {
       // would incur writes/API costs that cannot be resumed safely.
       if (V2_QA || String(error?.message || "").startsWith("INGESTION_STATE_WRITE_FAILED")) {
         const code=error instanceof Error?error.message:"";
-        if(V2_QA && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH)$/.test(code))
+        if(V2_QA && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE)$/.test(code))
           throw Error(code);
         throw Error(V2_QA?"V2_QA_DOCUMENT_STAGE_OR_PUBLISH_ABORTED":"INGESTION_STATE_WRITE_FAILED");
       }
@@ -1342,7 +1344,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main().catch((error) => {
     if(V2_QA){
       const code=error instanceof Error?error.message:"";
-      const safe=/^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH)$/.test(code)?code:"V2_QA_INGESTION_ABORTED";
+      const safe=/^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE)$/.test(code)?code:"V2_QA_INGESTION_ABORTED";
       console.error(safe+" (source details redacted)");
     }
     else console.error(error);
