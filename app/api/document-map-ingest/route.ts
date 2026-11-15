@@ -1,5 +1,8 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {stageImmutableVectorPair} from "../../lib/ingestion-immutable-publication";
+import {
+  immutableMapWindowKey,registerPendingMapWindow,reconcilePendingMapWindow
+} from "../../lib/ingestion-v2-map-reconciliation";
 import {claimDocumentStagingEpoch} from "../../lib/ingestion-document-staging-epoch";
 import type {CoordinatorDB,ArchiveLease} from "../../lib/ingestion-global-coordinator";
 import { NextRequest, NextResponse } from "next/server";
@@ -284,7 +287,8 @@ export async function POST(request: NextRequest) {
       return unauthorized();
 
     const body: any = await request.json();
-    qaStageRequest=body?.action==="stage_map_v2";
+    qaStageRequest=body?.action==="stage_map_v2"||
+      body?.action==="reconcile_map_v2";
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
 
@@ -345,6 +349,39 @@ export async function POST(request: NextRequest) {
     const ai = (env as any).AI;
     const vectorize = (env as any).VECTORIZE;
     const vectorizeV2 = (env as any).VECTORIZE_V2;
+    let qaEpoch:number|undefined;
+    let qaWindowKey:string|undefined;
+    if(qaStageRequest){
+      const lease=body?.globalArchiveLease as ArchiveLease|undefined;
+      const fp=document.sourceFingerprint;
+      const doc=document.sourceFileId;
+      if(typeof fp!=="string"||!fp)
+        return NextResponse.json({ok:false,error:"V2_DOCUMENT_FINGERPRINT_REQUIRED"},{status:400});
+      if(!vectorize?.getByIds||!vectorizeV2?.getByIds)
+        return NextResponse.json({ok:false,error:"V2_MAP_DUAL_INDEX_REQUIRED"},{status:503});
+      const db=(env as any).CORTEX_DB as CoordinatorDB;
+      await guardArchiveWrite();
+      qaEpoch=await claimDocumentStagingEpoch(db,lease!,doc,fp)??undefined;
+      if(!qaEpoch)
+        return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
+      qaWindowKey=immutableMapWindowKey(doc,fp,mapVersion,pages);
+      const recovered=await reconcilePendingMapWindow(db,lease!,doc,fp,
+        qaEpoch,qaWindowKey,mapVersion,[vectorize,vectorizeV2]);
+      if(recovered.status==="complete")
+        return NextResponse.json({
+          ok:true,status:"complete",recovered:true,staged:true,published:false,
+          mapCount:recovered.mapCount,documentEpoch:qaEpoch,
+          stagedIds:recovered.stagedIds,mapVersion,
+        });
+      if(recovered.status==="pending")
+        return NextResponse.json({
+          ok:true,status:"pending",pending:true,published:false,
+          mapCount:recovered.mapCount,documentEpoch:qaEpoch,mapVersion,
+        });
+      if(body?.action==="reconcile_map_v2")
+        return NextResponse.json({ok:true,status:"none",recovered:false,
+          documentEpoch:qaEpoch,mapVersion});
+    }
     if (!apiKey || !ai || !vectorize || !vectorizeV2) {
       throw new Error("Document-map dependencies are not configured");
     }
@@ -457,9 +494,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ok:false,error:"V2_DOCUMENT_FINGERPRINT_REQUIRED"},{status:400});
       const db=(env as any).CORTEX_DB as CoordinatorDB;
       await guardArchiveWrite();
-      const epoch=await claimDocumentStagingEpoch(db,lease!,doc,fp);
-      if(epoch===null)
+      const epoch=qaEpoch;
+      if(!epoch||!qaWindowKey)
         return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
+      // Persist the COMPLETE exact physical ID set before any external write.
+      // If readback is late, a later run can reconcile WITHOUT calling Gemini.
+      await registerPendingMapWindow(db,lease!,doc,fp,epoch,
+        qaWindowKey,mapVersion,vectors.map(v=>v.id));
       const stagedIds:string[]=[];
       for(const {id,metadata,index} of vectors){
         await guardArchiveWrite();
@@ -497,6 +538,10 @@ export async function POST(request: NextRequest) {
       else if (detail==="STAGED_DUAL_VECTOR_READBACK_NOT_READY") code="V2_MAP_VECTOR_READBACK_TIMEOUT";
       else if (detail==="IMMUTABLE_STAGE_LEASE_STALE") code="V2_MAP_LEASE_STALE";
       else if (detail==="STAGED_VECTOR_RECEIPT_DENIED") code="V2_MAP_VECTOR_RECEIPT_DENIED";
+      else if (detail==="V2_MAP_PENDING_INTENT_DENIED") code="V2_MAP_PENDING_INTENT_DENIED";
+      else if (detail==="V2_MAP_PENDING_INTENT_CORRUPT") code="V2_MAP_PENDING_INTENT_CORRUPT";
+      else if (detail==="V2_MAP_PENDING_VECTOR_METADATA_MISMATCH")
+        code="V2_MAP_PENDING_VECTOR_METADATA_MISMATCH";
       else if (detail.startsWith("Gemini document-map error: 429")) code="V2_MAP_GEMINI_RATE_LIMITED";
       else if (detail.startsWith("Gemini document-map error: 403")) code="V2_MAP_GEMINI_PERMISSION_DENIED";
       else if (detail.startsWith("Gemini document-map error:")) code="V2_MAP_GEMINI_GENERATION_REJECTED";
