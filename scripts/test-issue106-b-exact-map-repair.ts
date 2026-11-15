@@ -4,6 +4,7 @@ import {
  preflightExactMissingQa106BMap,assertExactQa106BRegeneration
 } from "../app/lib/qa106-b-exact-map-repair.ts";
 import {immutableVectorId} from "../app/lib/ingestion-immutable-publication.ts";
+import type {CoordinatorDB} from "../app/lib/ingestion-global-coordinator.ts";
 
 const fp="a".repeat(64),windowKey="b".repeat(64),epoch=2,mapVersion=4;
 const lease={jobKey:QA106_B_JOB,owner:"gh-43768455056-"+"c".repeat(24),generation:18};
@@ -14,16 +15,21 @@ const metadata={sourceFileId:QA106_B_PDF_ID,sourceFingerprint:fp,
  stagedGeneration:epoch,stagedLayer:"map",contentType:"document-map",
  status:"active",text:"synthetic source-grounded test text",
  fileName:"fixture.pdf",sourcePath:"qa/fixture.pdf",page:1,pageEnd:2};
-function mock(overrides={}){
- const state={aPublished:true,bPublished:false,evidence:2,raw:2,
+type FakeState={
+ aPublished:boolean;bPublished:boolean;evidence:number;raw:number;
+ receipt:{logical_id:string;staged_id:string;source_fingerprint:string}|null;
+ allIndexes:boolean[];badMetadata:boolean;halfMissing:boolean;
+};
+function mock(overrides:Partial<FakeState>={}){
+ const state:FakeState={aPublished:true,bPublished:false,evidence:2,raw:2,
    receipt:{logical_id:logical[0],staged_id:entries[0].stagedId,
      source_fingerprint:fp},
    allIndexes:[true,true],badMetadata:false,halfMissing:false,...overrides};
  let writes=0,reads=0,dbCalls=0;
- const db={prepare:sql=>{
+ const db={prepare:(sql:string)=>{
    assert.match(sql,/^SELECT /);
    dbCalls++;
-   return {bind:(...params)=>({
+   return {bind:(...params:unknown[])=>({
      first:async()=>{
        if(sql.includes("ingestion_v2_document_epochs"))
          return {staging_epoch:epoch,source_fingerprint:fp};
@@ -47,9 +53,10 @@ function mock(overrides={}){
        throw Error("unexpected SELECT all");
      }
    })};
- }};
- const vector=(i)=>({
-   getByIds:async ids=>{
+ }} as unknown as CoordinatorDB;
+ const vector=(i:number)=>({
+   insert:async()=>{writes++;throw Error("QA106_TEST_VECTOR_WRITES_DENIED")},
+   getByIds:async (ids:string[])=>{
      reads++;
      const id=ids[0],pos=entries.findIndex(e=>e.stagedId===id);
      if(pos===0||pos===1&&state.allIndexes[i]){
@@ -60,7 +67,7 @@ function mock(overrides={}){
      return [];
    }
  });
- return {db,indices:[vector(0),vector(1)],counts:()=>({writes,reads,dbCalls})};
+ return {db,indices:[vector(0),vector(1)] as const,counts:()=>({writes,reads,dbCalls})};
 }
 const original=mock({allIndexes:[false,false]});
 const plan=await preflightExactMissingQa106BMap(
@@ -77,7 +84,7 @@ assert.throws(()=>assertExactQa106BRegeneration(plan,[logical[0]]),
  /REGENERATION_MISMATCH/);
 assert.throws(()=>assertExactQa106BRegeneration(plan,[logical[0],logical[0]]),
  /REGENERATION_MISMATCH/);
-const tryBad=async(state,pattern)=>assert.rejects(
+const tryBad=async(state:ReturnType<typeof mock>,pattern:RegExp)=>assert.rejects(
  preflightExactMissingQa106BMap(state.db,lease,QA106_B_PDF_ID,fp,
    epoch,windowKey,mapVersion,state.indices),pattern);
 await tryBad(mock({aPublished:false}),/A_NOT_PUBLISHED/);
