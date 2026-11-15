@@ -1,0 +1,33 @@
+name: Issue106 READ-ONLY isolated D1 checkpoint diagnostics (no model calls)
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/qa-issue106-diagnose-readonly.yml"
+      - "scripts/qa-issue106-d1-readonly-diagnostic.mjs"
+permissions:
+  contents: read
+jobs:
+  d1-state-only:
+    if: github.repository == 'elevatorhelp/elevator-help'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Locked dependencies
+        run: npm ci
+      - name: Run read-only QA D1 diagnostic without Production, Vectorize or Gemini
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          node scripts/qa-issue106-d1-readonly-diagnostic.mjs
