@@ -15,6 +15,7 @@ import {
  type CoordinatorDB
 } from "../app/lib/ingestion-global-coordinator.ts";
 import {claimDocumentStagingEpoch} from "../app/lib/ingestion-document-staging-epoch.ts";
+// @ts-expect-error existing JavaScript shard helper has no TypeScript declarations
 import {shardForDocumentId} from "./archive-sharding.mjs";
 const root="1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC";
 const jobA="drive:"+root+"_qa_shard0";
@@ -43,6 +44,20 @@ const state=(index:number,documentId:string)=>({
  version:3,qaShard:{index,count:2,rootId:root},
  scopes:{[root]:{files:{[documentId]:{}},v2Files:{}}}
 });
+function checkedShardSnapshot(snapshot:{state:Record<string,unknown>}|null){
+ assert.ok(snapshot,"D1 checkpoint required");
+ const shard=snapshot.state.qaShard;
+ assert.ok(shard && typeof shard==="object" && !Array.isArray(shard)
+   && "index" in shard && typeof shard.index==="number",
+   "checkpoint must contain a valid shard index");
+ const scopes=snapshot.state.scopes;
+ assert.ok(scopes && typeof scopes==="object" && !Array.isArray(scopes));
+ const scope=(scopes as Record<string,unknown>)[root];
+ assert.ok(scope && typeof scope==="object" && !Array.isArray(scope));
+ const files=(scope as Record<string,unknown>).files;
+ assert.ok(files && typeof files==="object" && !Array.isArray(files));
+ return {index:shard.index,fileIds:Object.keys(files)};
+}
 try{
  const [a,b]=await Promise.all([
   claimGlobalArchiveLease(db,jobA,ownerA),
@@ -69,10 +84,12 @@ try{
   readDurableArchiveCheckpoint(db,a),
   readDurableArchiveCheckpoint(db,b)
  ]);
- assert.equal(snapshots[0]?.state.qaShard?.index,0);
- assert.equal(snapshots[1]?.state.qaShard?.index,1);
- assert.deepEqual(Object.keys(snapshots[0]!.state.scopes[root].files),[docA]);
- assert.deepEqual(Object.keys(snapshots[1]!.state.scopes[root].files),[docB]);
+ const shardA=checkedShardSnapshot(snapshots[0]);
+ const shardB=checkedShardSnapshot(snapshots[1]);
+ assert.equal(shardA.index,0);
+ assert.equal(shardB.index,1);
+ assert.deepEqual(shardA.fileIds,[docA]);
+ assert.deepEqual(shardB.fileIds,[docB]);
  assert.equal(await releaseGlobalArchiveLease(db,a),true);
  const a2=await claimGlobalArchiveLease(db,jobA,ownerC);
  assert.ok(a2&&a2.generation>a.generation);
@@ -82,14 +99,14 @@ try{
    "stale owner cannot alter document revision");
  const recovery=await readDurableArchiveCheckpoint(db,a2);
  assert.equal(recovery?.version,1);
- assert.equal(recovery?.state.qaShard?.index,0);
+ assert.equal(checkedShardSnapshot(recovery).index,0);
  assert.equal(await claimDocumentStagingEpoch(db,a2,docA!,"a".repeat(64)),1,
    "same document revision survives owner rotation");
  assert.equal(await claimDocumentStagingEpoch(db,a2,docA!,"c".repeat(64)),2,
    "replaced document revision is epoch-fenced and monotonic");
  const stillB=await readDurableArchiveCheckpoint(db,b);
  assert.equal(stillB?.version,1);
- assert.equal(stillB?.state.qaShard?.index,1,
+ assert.equal(checkedShardSnapshot(stillB).index,1,
    "second worker checkpoint unaffected by first worker takeover");
  assert.equal(await claimDocumentStagingEpoch(db,b,docB!,"b".repeat(64)),1,
    "second worker continues its original document epoch");
