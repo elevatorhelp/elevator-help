@@ -1,0 +1,60 @@
+name: Issue99 isolated QA D1 export and offline restore
+run-name: Issue99 verify real QA D1 remote export and SQLite restore without Production
+on:
+  push:
+    branches: [qa/issue99-real-drive-readonly-20261115]
+    paths:
+      - ".github/workflows/qa-issue99-d1-backup.yml"
+permissions:
+  contents: read
+jobs:
+  qa-d1-backup:
+    if: github.repository == 'elevatorhelp/elevator-help'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked Wrangler and dependencies
+        run: npm ci
+      - name: Export ONLY QA D1 to ephemeral private runner disk
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx wrangler d1 export elevator-help-lease-test-01 --remote \
+            --config wrangler.qa-pr100-v2.json \
+            --output "$RUNNER_TEMP/issue99-qa-d1-export.sql" > /dev/null
+          test -s "$RUNNER_TEMP/issue99-qa-d1-export.sql"
+          echo "PASS: exported remote isolated QA D1 without writing Production"
+      - name: Restore export into completely local disposable SQLite and check integrity
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, sqlite3, pathlib
+          source=pathlib.Path(os.environ["RUNNER_TEMP"])/"issue99-qa-d1-export.sql"
+          destination=pathlib.Path(os.environ["RUNNER_TEMP"])/"issue99-offline-restored.sqlite"
+          text=source.read_text(encoding="utf-8")
+          if not text or len(text)>25_000_000:
+              raise SystemExit("QA_BACKUP_SIZE_OR_EMPTY")
+          with sqlite3.connect(destination) as db:
+              db.executescript(text)
+              result=db.execute("PRAGMA integrity_check").fetchone()
+              if result!=("ok",):
+                  raise SystemExit("QA_SQLITE_RESTORE_INTEGRITY_FAIL")
+              expected={"ingestion_global_leases","ingestion_worker_checkpoints",
+                  "ingestion_v2_document_epochs","ingestion_v2_staged_evidence",
+                  "ingestion_v2_vector_receipts","ingestion_v2_publications"}
+              actual={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+              if not expected.issubset(actual):
+                  raise SystemExit("QA_SQLITE_RESTORE_MISSING_V2_TABLE")
+              print("PASS: QA D1 SQL export restored to isolated local SQLite with integrity and V2 table validation")
+          PY
+          rm -f "$RUNNER_TEMP/issue99-qa-d1-export.sql" "$RUNNER_TEMP/issue99-offline-restored.sqlite"
+      # Never publish real QA D1 SQL or customer source material as artifacts.
