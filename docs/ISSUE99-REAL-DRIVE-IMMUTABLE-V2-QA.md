@@ -33,7 +33,7 @@ The dedicated `qa-drive-v2-runner.yml` workflow tests fail-closed origin/root/qu
 - Two permanent independent writers still require per-shard owner fencing/coordination and a shared Gemini budget.
 - No Production D1 migration/backup/restore, no V2 feature flags or Worker deploy, no scheduled second indexer, no Production rollback proof.
 
-**Release decision:** do not enable on Production. PR #100 must remain Draft until complete remote QA evidence and review.
+**Release decision:** do not enable V2 on Production. PR #100 was merged code-only on 2026-11-09; full real Drive E2E and two-worker release gates remain open.
 
 ## Verified physical HTTP evidence — 2026-11-09
 
@@ -47,3 +47,12 @@ The dedicated `qa-drive-v2-runner.yml` workflow tests fail-closed origin/root/qu
 - A green Build and complete isolated synthetic PDF HTTP proof allow a **code-only merge behind disabled-by-default V2 flags**, provided exact-head CI remains green. This is not an authorization to deploy or enable V2 on Production.
 - Keep [Issue #99](https://github.com/elevatorhelp/elevator-help/issues/99) open for a separate owner-reviewed Drive QA fixture (dedicated test-only folder + authorized service account), manual bounded ingestion, authenticated real source-page citation, D1 backup/restore, deletion tombstone publication, per-document durable checkpoint scale, production rollback and two-worker coordination.
 - The current serial scheduled ingestion path remains the only allowed Production writer until those gates pass.
+
+## 2026-11-15 — actual Google Drive fixture and isolated D1 restore
+
+- Created owner-controlled [separate QA Google Drive folder](https://drive.google.com/drive/folders/1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC). It contains only a reviewed [two-page original synthetic PDF](https://drive.google.com/file/d/1ZpJMQSX3jYv8LDpaFA9Uu7iabFHuMgwz/view?usp=drivesdk) plus its editable source. No genuine manufacturer documentation, customer records or production standard are copied.
+- Owner shared only this QA folder with the existing Google service account as **Viewer**. [Actual Google Actions read-only probe #43732548249, retry 2](https://github.com/elevatorhelp/elevator-help/actions/runs/43732548249) passed real Google OAuth, folder enumeration, exact PDF metadata, remote bytes retrieval, verified MD5 and true two-page source extraction. Source-level IDs QA-4711 and MOCK-DOOR-12 were verified on their respective pages.
+- [Remote Cloudflare QA D1 export + local SQLite restore #43734059655](https://github.com/elevatorhelp/elevator-help/actions/runs/43734059655): **PASS**, schema and integrity verified. No SQL dump was published, and no production database was accessed. This is NOT yet proof of restoring into a replacement remote D1 database.
+- New [PR #101](https://github.com/elevatorhelp/elevator-help/pull/101) adds an explicit **manual-only**, exact-confirmation QA workflow (`qa-issue99-v2-real-drive.yml`). It prechecks the exact QA PDF and service account, builds an isolated QA Worker bound to the known QA D1 and two Vectorize indexes, seeds only an absent QA-root checkpoint through D1 CAS with global lease, runs three bounded phases Evidence → RAW → Map using the **actual Drive runner**, then independently attests the exact V2 physical manifest from authoritative D1. Input `QA_ONLY_ONE_PDF_MAX_12_GEMINI_CALLS` is required. The maximum per phase is four reserved Gemini calls (12 max across 3 runs); `MAX_FILES=1`, root and file IDs are pinned. It never schedules paid calls or modifies Production.
+- The V2 staging readback now polls the **same** physically inserted immutable ID under the live lease until dual Vectorize readback arrives, without rerunning a paid Gemini request; no physical readback means no receipt and no publish.
+- **Not yet executed:** manual `qa-issue99-v2-real-drive.yml` paid E2E, remote replacement D1 restore, authenticated `/api/ask` citation, 2 concurrently active V2 writer owners, deletion/tombstone lifecycle, production rollout. Do not close Issue #99 until independently confirmed.
