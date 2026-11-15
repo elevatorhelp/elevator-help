@@ -62,7 +62,8 @@ jobs:
             docs/ingestion-global-coordinator-schema.sql \
             docs/ingestion-immutable-publication-schema.sql \
             docs/ingestion-v2-document-epoch-schema.sql \
-            docs/ingestion-v2-evidence-reference-schema.sql; do
+            docs/ingestion-v2-evidence-reference-schema.sql \
+            docs/ingestion-v2-pending-map-windows-schema.sql; do
             npx wrangler d1 execute elevator-help-lease-test-01 --remote \
               --config wrangler.qa-pr100-v2.json --file "$schema" > /dev/null
           done
