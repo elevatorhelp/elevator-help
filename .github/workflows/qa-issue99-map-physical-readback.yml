@@ -5,6 +5,7 @@ on:
       - qa/issue99-map-dual-index-readback-forensics-20261115
     paths:
       - scripts/qa-issue99-map-physical-readback.mjs
+      - scripts/qa-issue99-map-wrangler-inspect.py
       - .github/workflows/qa-issue99-map-physical-readback.yml
 permissions:
   contents: read
