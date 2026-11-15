@@ -18,11 +18,36 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
-      - name: Read-only remote QA Vectorize Map physical metadata diagnosis
+      - name: Read-only two isolated Vectorize indexes via Wrangler
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
         run: |
-          node --check scripts/qa-issue99-map-physical-readback.mjs
-          node scripts/qa-issue99-map-physical-readback.mjs
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npm ci > /dev/null
+          npx wrangler vectorize list-vectors elevator-help-staging-test --count=1000 --json > "$RUNNER_TEMP/qa-index-legacy.json"
+          npx wrangler vectorize list-vectors elevator-help-staging-test-v2 --count=1000 --json > "$RUNNER_TEMP/qa-index-multilingual.json"
+          python3 - <<'PY'
+          import json,os,pathlib
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          sets=[]
+          for kind in ("legacy","multilingual"):
+              data=json.loads((root/("qa-index-"+kind+".json")).read_text())
+              if isinstance(data,dict) and isinstance(data.get("result"),dict):
+                  data=data["result"]
+              if not isinstance(data,dict) or not isinstance(data.get("vectors"),list):
+                  raise SystemExit("QA_WRANGLER_VECTOR_LIST_SHAPE_UNSUPPORTED")
+              ids=[v["id"] for v in data["vectors"] if isinstance(v,dict) and
+                   isinstance(v.get("id"),str) and v["id"].startswith("v2m-")]
+              sets.append(set(ids))
+              print("QA_ONLY_"+kind+"_map_physical_ids_listed="+str(len(ids)))
+              if data.get("isTruncated"):
+                  print("QA_ONLY_LIST_TRUNCATED: requires paging; no completeness claim")
+              (root/("qa-index-"+kind+".json")).unlink()
+          print("QA_ONLY_MAP_PHYSICAL_IDS_COMMON="+str(len(sets[0]&sets[1])))
+          print("QA_ONLY_NO_GEMINI_NO_WRITES")
+          PY
       # No migrations, vector writes, source export, or Gemini calls.
