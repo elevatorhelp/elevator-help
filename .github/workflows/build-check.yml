@@ -105,6 +105,8 @@ jobs:
           node --check scripts/qa-issue106-d1-readonly-diagnostic.mjs
           node scripts/test-issue106-safe-worker-error.mjs
           node scripts/test-issue106-d1-readonly-diagnostic.mjs
+          node --check scripts/qa-issue106-receipts-readonly.mjs
+          node scripts/test-issue106-receipts-readonly.mjs
           node --experimental-strip-types scripts/test-issue106-raw-error-enums.mjs
 
       - name: Build

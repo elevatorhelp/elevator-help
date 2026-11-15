@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/qa-issue106-diagnose-readonly.yml"
       - "scripts/qa-issue106-d1-readonly-diagnostic.mjs"
+      - "scripts/qa-issue106-receipts-readonly.mjs"
 permissions:
   contents: read
 jobs:
@@ -31,3 +32,4 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           node scripts/qa-issue106-d1-readonly-diagnostic.mjs
+          node scripts/qa-issue106-receipts-readonly.mjs
