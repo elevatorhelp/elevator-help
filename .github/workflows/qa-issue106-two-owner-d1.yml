@@ -1,0 +1,23 @@
+name: Issue106 two independent D1 writer ownership offline gate
+on:
+  push:
+    branches:
+      - qa/issue106-two-owner-d1-isolation-20261115
+    paths:
+      - scripts/test-issue106-two-owner-d1-isolation.ts
+      - .github/workflows/qa-issue106-two-owner-d1.yml
+permissions:
+  contents: read
+jobs:
+  two-owners:
+    if: github.repository == 'elevatorhelp/elevator-help'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+      - name: Two concurrent D1 leases, separate checkpoints and stale fencing
+        run: node --experimental-strip-types scripts/test-issue106-two-owner-d1-isolation.ts
+      # No Cloudflare API, Gemini, Google Drive or Production secrets.
