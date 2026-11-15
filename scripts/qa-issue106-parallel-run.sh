@@ -25,7 +25,8 @@ trap cleanup EXIT
 start_worker(){
   local slot="$1" port token pid job code ready=0
   if [[ "$slot" == A ]];then port=8787;token="$TOKEN_A"
-  else port=8788;token="$TOKEN_B";fi
+  elif [[ "$slot" == B ]];then port=8788;token="$TOKEN_B"
+  else echo "::error::QA106_INVALID_WORKER_SLOT";return 1;fi
   job="drive:$ROOT"
   job="${job}_qa_$slot"
   npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
@@ -56,8 +57,9 @@ run_slot(){
   local slot="$1" command="$2" port token pdf
   if [[ "$slot" == A ]];then
     port=8787;token="$TOKEN_A";pdf="1cT2iBMx7pFDr_JKfZFBSG9xVFu3WZu3v"
-  else
+  elif [[ "$slot" == B ]];then
     port=8788;token="$TOKEN_B";pdf="1iybMaW8SaB3QfBLfdFJO5ymefVDdjmFn"
+  else echo "::error::QA106_INVALID_WORKER_SLOT";return 1
   fi
   (
     export QA_V2_INGESTION_TOKEN="$token"
