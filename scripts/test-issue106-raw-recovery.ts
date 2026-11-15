@@ -18,8 +18,7 @@ const temp=mkdtempSync(join(tmpdir(),"qa106-raw-reconcile-"));
 const sqlite=new DatabaseSync(join(temp,"qa.sqlite"));
 const db:CoordinatorDB={prepare:(sql:string)=>({
  bind:(...args:unknown[])=>({
-   first:async()=> (sqlite.prepare(sql).get(...(args as any[]))
-     as Record<string,unknown>|undefined) ?? null,
+   first:async()=> ((sqlite.prepare(sql).get(...(args as any[])) as Record<string,unknown>|undefined) ?? null),
    bind:()=>{throw Error("REBIND_DENIED");},
  }),
  first:async()=>{throw Error("BIND_REQUIRED");},
