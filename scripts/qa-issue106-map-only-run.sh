@@ -98,8 +98,14 @@ start_worker A
 start_worker B
 for attempt in 1 2 3;do
   a=0 b=0
-  run_slot A recover > "$RUNNER_TEMP/qa106-map-only-private-A.log" 2>&1 || a=$?
-  run_slot B recover > "$RUNNER_TEMP/qa106-map-only-private-B.log" 2>&1 || b=$?
+  # Both independent D1 owners advance concurrently, never serialise the
+  # recovery calls in the name of avoiding model costs.
+  run_slot A recover > "$RUNNER_TEMP/qa106-map-only-private-A.log" 2>&1 &
+  pa=$!
+  run_slot B recover > "$RUNNER_TEMP/qa106-map-only-private-B.log" 2>&1 &
+  pb=$!
+  wait "$pa" || a=$?
+  wait "$pb" || b=$?
   if [[ "$a" == 0 && "$b" == 0 ]];then
     echo "PASS: both pending Map windows recovered without Gemini"
     run_slot A attest
