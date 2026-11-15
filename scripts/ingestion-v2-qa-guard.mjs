@@ -1,3 +1,4 @@
+import {assertQa106ParallelContext} from "./qa-issue106-parallel-guard.mjs";
 /**
  * Safety/manifest contracts for the real Google Drive immutable V2 QA path.
  * Pure helpers: no access to Google, Gemini, D1, Vectorize or Production.
@@ -64,6 +65,7 @@ export function assertManualQaV2Environment(env){
   if(!Number.isSafeInteger(Number(env.MAX_GEMINI_CALLS))||
      Number(env.MAX_GEMINI_CALLS)<1||Number(env.MAX_GEMINI_CALLS)>12)
     throw Error("V2_QA_UNBOUNDED_GEMINI");
+  assertQa106ParallelContext(env);
   return origin;
 }
 

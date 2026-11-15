@@ -1,0 +1,52 @@
+name: Issue106 real two-PDF Drive readonly QA and offline guard
+on:
+  push:
+    branches: [feature/issue106-real-two-worker-qa-only-20261115]
+    paths:
+      - ".github/workflows/qa-issue106-readonly-offline.yml"
+      - ".github/workflows/qa-issue106-real-two-worker.yml"
+      - "scripts/qa-issue106-*.mjs"
+      - "scripts/qa-issue106-parallel-run.sh"
+      - "scripts/drive-ingest.mjs"
+      - "scripts/ingestion-coordinator-client.mjs"
+      - "scripts/ingestion-v2-qa-guard.mjs"
+  pull_request:
+    paths:
+      - ".github/workflows/qa-issue106-readonly-offline.yml"
+      - ".github/workflows/qa-issue106-real-two-worker.yml"
+      - "scripts/qa-issue106-*.mjs"
+      - "scripts/qa-issue106-parallel-run.sh"
+      - "scripts/drive-ingest.mjs"
+      - "scripts/ingestion-coordinator-client.mjs"
+      - "scripts/ingestion-v2-qa-guard.mjs"
+permissions:
+  contents: read
+jobs:
+  safety:
+    if: github.repository == 'elevatorhelp/elevator-help'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Fail-closed parallel context, independent job IDs and script syntax
+        run: |
+          set -euo pipefail
+          for s in scripts/qa-issue106-drive-readonly.mjs scripts/qa-issue106-worker-checkpoint.mjs scripts/qa-issue106-parallel-guard.mjs scripts/test-issue106-real-parallel-guard.mjs scripts/drive-ingest.mjs scripts/ingestion-coordinator-client.mjs; do
+            node --check "$s"
+          done
+          bash -n scripts/qa-issue106-parallel-run.sh
+          node scripts/test-issue106-real-parallel-guard.mjs
+          node scripts/test-ingestion-v2-qa-guard.mjs
+          node scripts/test-ingestion-coordinator-client.mjs
+      - name: Verify real service account reads BOTH reviewed PDFs at the exact Google Drive QA folder
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/issue106-real-two-worker-qa-only-20261115'
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          QA106_CONFIRMATION: QA_ONLY_TWO_PDFS_MAX_24_GEMINI_CALLS
+        run: node scripts/qa-issue106-drive-readonly.mjs
+      # Zero Gemini calls, zero D1 writes, zero Vectorize writes.
