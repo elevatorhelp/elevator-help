@@ -114,6 +114,9 @@ jobs:
           node --check scripts/qa-issue106-map-only-preflight.mjs
           node scripts/test-issue106-map-only-preflight.mjs
           node scripts/test-issue106-map-only-runner.mjs
+          node --check scripts/qa-issue106-vector-status-worker.mjs
+          node scripts/test-issue106-vector-status.mjs
+          bash -n scripts/qa-issue106-vector-status-run.sh
           bash -n scripts/qa-issue106-map-only-run.sh
 
       - name: Build

@@ -1,0 +1,47 @@
+name: Issue106 one-shot READ-ONLY two-Vectorize-index diagnosis (NO Gemini)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/qa-issue106-vector-index-readonly.yml"
+      - "scripts/qa-issue106-vector-status-worker.mjs"
+      - "scripts/qa-issue106-vector-status-report.mjs"
+      - "scripts/qa-issue106-vector-status-run.sh"
+      - "scripts/test-issue106-vector-status.mjs"
+      - "wrangler.qa106-vector-readonly.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue106-vector-index-readonly-inspection
+  cancel-in-progress: false
+
+jobs:
+  index-diagnostics:
+    if: github.repository == 'elevatorhelp/elevator-help'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Locked dependencies
+        run: npm ci
+      - name: Offline test of strictly read-only aggregate summary
+        run: |
+          set -euo pipefail
+          node --check scripts/qa-issue106-vector-status-worker.mjs
+          node --check scripts/qa-issue106-vector-status-report.mjs
+          bash -n scripts/qa-issue106-vector-status-run.sh
+          node scripts/test-issue106-vector-status.mjs
+      - name: Inspect both exact QA Map windows and physical indexes with NO Gemini
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bash scripts/qa-issue106-vector-status-run.sh

@@ -6,6 +6,7 @@ on:
       - ".github/workflows/qa-issue106-diagnose-readonly.yml"
       - "scripts/qa-issue106-d1-readonly-diagnostic.mjs"
       - "scripts/qa-issue106-receipts-readonly.mjs"
+      - "scripts/qa-issue106-vector-status-worker.mjs"
 permissions:
   contents: read
 jobs:
