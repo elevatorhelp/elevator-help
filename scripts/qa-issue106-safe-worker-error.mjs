@@ -28,7 +28,7 @@ const markers=new Set([
 ]);
 export function redactQa106WorkerLog(log){
  const text=String(log||"");
- const rawCode=/^V2_RAW_(?:VALIDATION|LEASE_GUARD|GEMINI_ENRICHMENT|WORKERS_AI_EMBEDDING|GEMINI_EMBEDDING|EPOCH_CLAIM|VECTOR_STAGING)_(?:FAILED|RATE_LIMITED|DENIED)$/;
+ const rawCode=/^(?:V2_RAW_(?:VALIDATION|LEASE_GUARD|GEMINI_ENRICHMENT|WORKERS_AI_EMBEDDING|GEMINI_EMBEDDING|EPOCH_CLAIM|VECTOR_STAGING)_(?:FAILED|RATE_LIMITED|DENIED)|V2_RAW_RECOVERY_(?:DUPLICATE_OR_INVALID_BATCH|INDEX_UNAVAILABLE|INVALID_VECTOR_READBACK|D1_UNAVAILABLE|RECEIPT_MISMATCH|INCOMPLETE_PAIR|RECEIPT_VECTOR_MISSING|ATTESTATION_DENIED|LATE_READBACK|INCOMPLETE_BATCH))$/;
  const chosen=(text.match(/\b[A-Z][A-Z0-9_]{6,85}\b/g)||[]).filter(x=>markers.has(x)||rawCode.test(x));
  const actualPhase=[...text.matchAll(/Ingestion phase preference: (?:evidence|raw|map); selected: (evidence|raw|map)/g)]
    .map(m=>m[1]).slice(-1)[0]||"unknown";
