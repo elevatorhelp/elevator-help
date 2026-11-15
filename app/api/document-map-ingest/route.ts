@@ -238,10 +238,15 @@ ${JSON.stringify(pages)}
       break;
     } catch (error) {
       lastError = error;
-      console.error(
-        `Document-map Gemini attempt ${attempt + 1} failed:`,
-        error,
-      );
+      if(process.env.QA106_B_MAP_REPAIR_ENABLED==="true"){
+        // QA repair output/provider errors can contain document content.
+        console.error("QA106_B_REPAIR_GEMINI_GENERATION_FAILED");
+      }else{
+        console.error(
+          `Document-map Gemini attempt ${attempt + 1} failed:`,
+          error,
+        );
+      }
     }
   }
 
