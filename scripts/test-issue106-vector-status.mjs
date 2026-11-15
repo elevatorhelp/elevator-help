@@ -23,7 +23,8 @@ const fakeEnv=(slot,{legacy=true,v2=true,invalid=false}={})=>{
  const db={prepare:(sql)=>{
    assert.match(sql,/^SELECT /);
    return {bind:(...args)=>{
-     assert.equal(args[0],id);assert.equal(args[1],job);
+     assert.equal(args[0],id);
+     assert.equal(args[1],sql.includes("ingestion_v2_vector_receipts")?epoch:job);
      return {
        first:async()=>{
          assert.match(sql,/ingestion_v2_document_epochs/);
