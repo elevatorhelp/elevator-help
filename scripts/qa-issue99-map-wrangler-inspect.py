@@ -3,7 +3,7 @@
 The full Wrangler output (which can include embeddings and source text) is
 captured solely in process memory, never printed, uploaded or saved.
 """
-import json, os, pathlib, re, subprocess, sys
+import hashlib, json, os, pathlib, re, subprocess, sys
 TARGET="1ZpJMQSX3jYv8LDpaFA9Uu7iabFHuMgwz"
 INDICES={
     "legacy":"elevator-help-staging-test",
@@ -64,12 +64,34 @@ def main():
         target=[d for d in docs if isinstance(d,dict) and d.get("metadata",{}).get("sourceFileId")==TARGET]
         failures={}
         valid=0
+        recovered=0
         for d in target:
-            missing=field_invalid(d.get("metadata"))
-            if not missing:valid+=1
+            m=d.get("metadata")
+            missing=field_invalid(m)
+            if not missing:
+                valid+=1
+                # Recover exact map logical ID from the persisted node metadata.
+                # This uses the same U+001F separator and SHA-256 map stableId
+                # recipe as app/api/document-map-ingest/route.ts.
+                summary=m["text"].split("Summary: ",1)[-1]
+                parts=[TARGET,str(m["mapVersion"]),m.get("modifiedTime") or "",
+                    str(m["page"]),str(m["pageEnd"]),m["mapNodeType"],
+                    m.get("sectionId") or "",m.get("sectionTitle") or "",summary]
+                digest=hashlib.sha256("\\u001f".join(parts).encode()).hexdigest()
+                logical="map-"+digest[:40]
+                epoch=m["stagedGeneration"]
+                chars="0123456789abcdefghijklmnopqrstuvwxyz"
+                number=epoch; base36=""
+                while number:
+                    number,rem=divmod(number,36)
+                    base36=chars[rem]+base36
+                packed=json.dumps(["drive:1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC",epoch,TARGET,"map",logical,m["sourceFingerprint"]],
+                    separators=(",",":"),ensure_ascii=False)
+                expected="v2m-"+base36+"-"+hashlib.sha256(packed.encode()).hexdigest()[:40]
+                if d["id"]==expected:recovered+=1
             for field in missing:failures[field]=failures.get(field,0)+1
         rows[kind]={d["id"] for d in target}
-        print(f"QA_ONLY_{kind}_synthetic_map_ids_visible={len(target)} valid_metadata={valid} field_failures={json.dumps(failures,sort_keys=True)}")
+        print(f"QA_ONLY_{kind}_synthetic_map_ids_visible={len(target)} valid_metadata={valid} reproducible_physical_id={recovered} field_failures={json.dumps(failures,sort_keys=True)}")
     print("QA_ONLY_SYNTHETIC_MAP_IDS_IN_BOTH_INDICES="+str(len(rows["legacy"]&rows["multilingual"])))
     print("QA_ONLY_NO_GEMINI_NO_WRITES")
 try:main()
