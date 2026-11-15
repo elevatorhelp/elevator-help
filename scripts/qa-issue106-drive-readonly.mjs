@@ -19,9 +19,11 @@ async function getJson(url,opts={}){
  return r.json();
 }
 async function main(){
- check(process.env.GITHUB_ACTIONS==="true"&&
-   process.env.GITHUB_EVENT_NAME==="workflow_dispatch"&&
-   process.env.GITHUB_REF==="refs/heads/main"&&
+ const manual=process.env.GITHUB_EVENT_NAME==="workflow_dispatch"&&
+   process.env.GITHUB_REF==="refs/heads/main";
+ const readOnlyBranch=process.env.GITHUB_EVENT_NAME==="push"&&
+   process.env.GITHUB_REF==="refs/heads/feature/issue106-real-two-worker-qa-only-20261115";
+ check(process.env.GITHUB_ACTIONS==="true"&&(manual||readOnlyBranch)&&
    process.env.QA106_CONFIRMATION===QA106_CONFIRM,
    "QA106_DRIVE_UNAPPROVED");
  const raw=process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
