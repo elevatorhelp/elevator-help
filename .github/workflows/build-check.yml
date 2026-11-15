@@ -94,6 +94,11 @@ jobs:
           bash -n scripts/test-issue106-worker-process-group.sh
           bash scripts/test-issue106-worker-process-group.sh
 
+      - name: Test Issue106 read-only resumed Evidence/checkpoint guards
+        run: |
+          node --check scripts/qa-issue106-resume-readonly.mjs
+          node scripts/test-issue106-resume-readonly.mjs
+
       - name: Build
         run: npm run build
 
