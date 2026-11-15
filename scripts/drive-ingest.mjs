@@ -37,6 +37,7 @@ const FORCE_REINGEST = process.env.FORCE_REINGEST === "true";
 const MAX_FILES = Number(process.env.MAX_FILES || "1");
 const V2_QA=process.env.INGESTION_V2_QA_MODE==="true";
 const QA106_MAP_RECOVERY_ONLY=process.env.QA106_MAP_RECOVERY_ONLY==="true";
+const QA106_B_MAP_REPAIR_ONLY=process.env.QA106_B_MAP_REPAIR_ONLY==="true";
 const IMMUTABLE_ENDPOINT=process.env.INGESTION_IMMUTABLE_ENDPOINT;
 const INGEST_ENDPOINT = process.env.INGEST_ENDPOINT || "https://elevator.help/api/drive-ingest-batch";
 const DOCUMENT_MAP_ENDPOINT =
@@ -539,6 +540,8 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
       const code=data?.error;
       if(typeof code==="string" && SAFE_QA_RAW_FAILURE.test(code))
         throw Error(code);
+      if(typeof code==="string" && /^QA106_B_REPAIR_[A-Z0-9_]+$/.test(code))
+        throw Error(code);
       if(typeof code==="string" && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE|PENDING_VECTOR_READBACK|PENDING_INTENT_DENIED|PENDING_INTENT_CORRUPT|PENDING_VECTOR_METADATA_MISMATCH)$/.test(code))
         throw Error(code);
       throw Error("V2_QA_ENDPOINT_REJECTED");
@@ -559,7 +562,9 @@ async function callIngest(payload, token) {
 
 async function callDocumentMap(payload, token) {
   if(QA106_MAP_RECOVERY_ONLY)throw Error("QA106_MAP_RECOVERY_NEW_MAP_DENIED");
-  ingestionBudget.reserve(GEMINI_CALLS_PER_MAP_WINDOW, "document-map window");
+  ingestionBudget.reserve(
+    QA106_B_MAP_REPAIR_ONLY?4:GEMINI_CALLS_PER_MAP_WINDOW,
+    QA106_B_MAP_REPAIR_ONLY?"single exact B Map repair":"document-map window");
   return callJsonEndpoint(DOCUMENT_MAP_ENDPOINT, payload, token, "Document-map endpoint");
 }
 
@@ -708,17 +713,31 @@ async function buildDocumentMap(
       const previous=await callJsonEndpoint(DOCUMENT_MAP_ENDPOINT,{
         action:"reconcile_map_v2",document,pages:window,
       },ingestToken,"Document-map reconciliation");
-      if(previous.status==="pending")
-        throw Error("V2_MAP_PENDING_VECTOR_READBACK");
+      if(previous.status==="pending"){
+        if(QA106_B_MAP_REPAIR_ONLY){
+          // A single bounded model request may reconstruct only the missing
+          // original map node; server compares ALL regenerated semantic IDs.
+          if(ingestionBudget.snapshot().reserved!==0)
+            throw Error("QA106_B_REPAIR_REPEAT_DENIED");
+          result=await callDocumentMap({
+            action:"repair_missing_map_b_v2",document,pages:window,
+          },ingestToken);
+          if(result?.repaired!==true||result?.status!=="complete"||
+             !Array.isArray(result.stagedIds)||result.stagedIds.length!==2)
+            throw Error("QA106_B_REPAIR_RESULT_UNVERIFIED");
+        }else throw Error("V2_MAP_PENDING_VECTOR_READBACK");
+      }
       if(previous.status==="complete"){
         if(previous.recovered!==true||previous.staged!==true)
           throw Error("V2_QA_INVALID_RECOVERED_MAP");
         result=previous;
         console.log("PASS: recovered existing Map vectors without Gemini");
-      }else if(previous.status!=="none")
+      }else if(previous.status!=="none"&&previous.status!=="pending")
         throw Error("V2_QA_INVALID_RECOVERY_STATE");
       if(QA106_MAP_RECOVERY_ONLY && previous.status==="none")
         throw Error("QA106_MAP_RECOVERY_INTENT_MISSING");
+      if(QA106_B_MAP_REPAIR_ONLY && previous.status==="none")
+        throw Error("QA106_B_REPAIR_INTENT_MISSING");
     }
     if(!result){
       if (ingestionBudget.snapshot().remaining < GEMINI_CALLS_PER_MAP_WINDOW) {
@@ -915,6 +934,11 @@ async function main() {
   const qaParallel=V2_QA?assertQa106ParallelContext(process.env):null;
   if(QA106_MAP_RECOVERY_ONLY && !qaParallel)
     throw Error("QA106_MAP_RECOVERY_UNAPPROVED_CONTEXT");
+  if(QA106_B_MAP_REPAIR_ONLY && (
+     qaParallel?.slot!=="B"||QA106_MAP_RECOVERY_ONLY||
+     process.env.QA106_B_MAP_REPAIR_CONFIRMATION!=="QA106_B_ONLY_MAX_4_GEMINI_CALLS"||
+     MAX_GEMINI_CALLS!==4))
+    throw Error("QA106_B_REPAIR_UNAPPROVED_CONTEXT");
   const serviceAccountRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const ingestToken = process.env.ELEVATOR_INGESTION_TOKEN;
 
@@ -1033,6 +1057,9 @@ async function main() {
   const plan = createIngestionPlan(files,workFiles,FORCE_REINGEST,preferredPhase);
   if(QA106_MAP_RECOVERY_ONLY && plan.phase!=="map")
     throw Error("QA106_MAP_RECOVERY_OTHER_PHASE_DENIED");
+  if(QA106_B_MAP_REPAIR_ONLY && (plan.phase!=="map"||
+      plan.files.length!==1||plan.files[0].id!==QA106_PDFS.B))
+    throw Error("QA106_B_REPAIR_OTHER_PHASE_DENIED");
   console.log(`Ingestion phase preference: ${preferredPhase}; selected: ${plan.phase}`);
   console.log(`Archive backlog (all pending): evidence=${plan.pendingCounts.evidence}, raw=${plan.pendingCounts.raw}, map=${plan.pendingCounts.map}`);
   console.log(`Archive eligible queues: evidence=${plan.readyCounts.evidence}, raw=${plan.readyCounts.raw}, map=${plan.readyCounts.map}`);
@@ -1358,6 +1385,8 @@ async function main() {
         const code=error instanceof Error?error.message:"";
         if(V2_QA && SAFE_QA_RAW_FAILURE.test(code))
           throw Error(code);
+        if(V2_QA && /^QA106_B_REPAIR_[A-Z0-9_]+$/.test(code))
+          throw Error(code);
         if(V2_QA && /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE|PENDING_VECTOR_READBACK|PENDING_INTENT_DENIED|PENDING_INTENT_CORRUPT|PENDING_VECTOR_METADATA_MISMATCH)$/.test(code))
           throw Error(code);
         throw Error(V2_QA?"V2_QA_DOCUMENT_STAGE_OR_PUBLISH_ABORTED":"INGESTION_STATE_WRITE_FAILED");
@@ -1397,6 +1426,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if(V2_QA){
       const code=error instanceof Error?error.message:"";
       const safe=SAFE_QA_RAW_FAILURE.test(code)?code:
+        /^QA106_B_REPAIR_[A-Z0-9_]+$/.test(code)?code:
         /^V2_MAP_(?:NO_GROUNDED_NODES|STAGING_NOT_VERIFIED|LEASE_DENIED|LEASE_STALE|VECTOR_READBACK_TIMEOUT|VECTOR_RECEIPT_DENIED|GEMINI_RATE_LIMITED|GEMINI_PERMISSION_DENIED|GEMINI_GENERATION_REJECTED|GEMINI_EMBEDDING_REJECTED|GEMINI_BUDGET_EXCEEDED|EMBEDDING_COUNT_MISMATCH|TRANSPORT_FAILURE|PENDING_VECTOR_READBACK|PENDING_INTENT_DENIED|PENDING_INTENT_CORRUPT|PENDING_VECTOR_METADATA_MISMATCH)$/.test(code)?code:"V2_QA_INGESTION_ABORTED";
       console.error(safe+" (source details redacted)");
     }

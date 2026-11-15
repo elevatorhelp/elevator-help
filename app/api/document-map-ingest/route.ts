@@ -1,6 +1,11 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {stageImmutableVectorPair} from "../../lib/ingestion-immutable-publication";
 import {
+  QA106_B_JOB,QA106_B_PDF_ID,
+  preflightExactMissingQa106BMap,assertExactQa106BRegeneration,
+  type ExactRepairPlan,
+} from "../../lib/qa106-b-exact-map-repair";
+import {
   immutableMapWindowKey,registerPendingMapWindow,reconcilePendingMapWindow
 } from "../../lib/ingestion-v2-map-reconciliation";
 import {claimDocumentStagingEpoch} from "../../lib/ingestion-document-staging-epoch";
@@ -233,10 +238,15 @@ ${JSON.stringify(pages)}
       break;
     } catch (error) {
       lastError = error;
-      console.error(
-        `Document-map Gemini attempt ${attempt + 1} failed:`,
-        error,
-      );
+      if(process.env.QA106_B_MAP_REPAIR_ENABLED==="true"){
+        // QA repair output/provider errors can contain document content.
+        console.error("QA106_B_REPAIR_GEMINI_GENERATION_FAILED");
+      }else{
+        console.error(
+          `Document-map Gemini attempt ${attempt + 1} failed:`,
+          error,
+        );
+      }
     }
   }
 
@@ -287,8 +297,9 @@ export async function POST(request: NextRequest) {
       return unauthorized();
 
     const body: any = await request.json();
+    const bExactRepair=body?.action==="repair_missing_map_b_v2";
     qaStageRequest=body?.action==="stage_map_v2"||
-      body?.action==="reconcile_map_v2";
+      body?.action==="reconcile_map_v2"||bExactRepair;
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
 
@@ -335,6 +346,14 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     const { env } = getCloudflareContext();
+    if(bExactRepair && (
+      process.env.QA106_B_MAP_REPAIR_ENABLED!=="true" ||
+      (env as any).INGESTION_COORDINATOR_JOB_KEY!==QA106_B_JOB ||
+      document.sourceFileId!==QA106_B_PDF_ID ||
+      body?.globalArchiveLease?.jobKey!==QA106_B_JOB ||
+      (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST!=="4"
+    ))return NextResponse.json(
+      {ok:false,error:"V2_MAP_B_EXACT_REPAIR_DENIED"},{status:403});
     if(qaStageRequest && (
        (env as any).INGESTION_IMMUTABLE_PUBLICATION_ENABLED!=="true" ||
        (env as any).INGESTION_COORDINATOR_ENABLED!=="true" ||
@@ -351,6 +370,7 @@ export async function POST(request: NextRequest) {
     const vectorizeV2 = (env as any).VECTORIZE_V2;
     let qaEpoch:number|undefined;
     let qaWindowKey:string|undefined;
+    let bRepairPlan:ExactRepairPlan|undefined;
     if(qaStageRequest){
       const lease=body?.globalArchiveLease as ArchiveLease|undefined;
       const fp=document.sourceFingerprint;
@@ -373,11 +393,22 @@ export async function POST(request: NextRequest) {
           mapCount:recovered.mapCount,documentEpoch:qaEpoch,
           stagedIds:recovered.stagedIds,mapVersion,
         });
-      if(recovered.status==="pending")
+      if(recovered.status==="pending"&&!bExactRepair)
         return NextResponse.json({
           ok:true,status:"pending",pending:true,published:false,
           mapCount:recovered.mapCount,documentEpoch:qaEpoch,mapVersion,
         });
+      if(bExactRepair){
+        if(recovered.status!=="pending")
+          return NextResponse.json(
+            {ok:false,error:"V2_MAP_B_EXACT_PENDING_REQUIRED"},{status:409});
+        // Check A is already published, B is still not published, both B
+        // RAW/Evidence layers complete, and exactly ONE immutable Map pair
+        // is absent from BOTH indexes. No model call until this succeeds.
+        bRepairPlan=await preflightExactMissingQa106BMap(
+          db,lease!,doc,fp,qaEpoch,qaWindowKey,mapVersion,
+          [vectorize,vectorizeV2]);
+      }
       if(body?.action==="reconcile_map_v2")
         return NextResponse.json({ok:true,status:"none",recovered:false,
           documentEpoch:qaEpoch,mapVersion});
@@ -389,12 +420,26 @@ export async function POST(request: NextRequest) {
     const geminiBudget = createGeminiCallBudget(
       (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST ?? 3,
     );
-    const nodes = await analyzeDocumentWindow(
+    let nodes = await analyzeDocumentWindow(
       document,
       pages,
       apiKey,
       geminiBudget.fetch,
     );
+    if(bExactRepair){
+      if(!bRepairPlan)throw Error("QA106_B_REPAIR_PLAN_MISSING");
+      // Stable IDs include the original Gemini summary. The lost source
+      // cannot be guessed from its hash; require exact reproduction of the
+      // complete original Map set BEFORE paying for embeddings.
+      const regeneratedIds=await Promise.all(nodes.map(node=>stableId([
+        document.sourceFileId,String(mapVersion),
+        document.modifiedTime||"",String(node.pageStart),String(node.pageEnd),
+        node.nodeType,node.sectionId||"",node.title||"",node.summary,
+      ])));
+      const missingIndex=assertExactQa106BRegeneration(
+        bRepairPlan,regeneratedIds);
+      nodes=[nodes[missingIndex]];
+    }
     if (!nodes.length) {
       if (qaStageRequest)
         return NextResponse.json({ok:false,error:"V2_MAP_NO_GROUNDED_NODES"},{status:422});
@@ -497,6 +542,32 @@ export async function POST(request: NextRequest) {
       const epoch=qaEpoch;
       if(!epoch||!qaWindowKey)
         return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
+      if(bExactRepair){
+        if(!bRepairPlan||vectors.length!==1||
+           vectors[0].id!==bRepairPlan.missingLogicalId)
+          throw Error("QA106_B_REPAIR_REGENERATION_MISMATCH");
+        const item=vectors[0];
+        await guardArchiveWrite();
+        const staged=await stageImmutableVectorPair(
+          db,lease!,doc,"map",{
+            logicalId:item.id,sourceFingerprint:fp,metadata:item.metadata,
+            legacyValues:embeddings[0],multilingualValues:multilingualEmbeddings[0],
+          },[vectorize,vectorizeV2],Date.now(),epoch);
+        if(staged!==bRepairPlan.missingPhysicalId)
+          throw Error("QA106_B_REPAIR_PHYSICAL_ID_MISMATCH");
+        const complete=await reconcilePendingMapWindow(
+          db,lease!,doc,fp,epoch,qaWindowKey,mapVersion,
+          [vectorize,vectorizeV2]);
+        if(complete.status!=="complete"||
+           complete.stagedIds.length!==bRepairPlan.entries.length||
+           complete.stagedIds.some((id,i)=>id!==bRepairPlan.entries[i].stagedId))
+          throw Error("QA106_B_REPAIR_FINAL_ATTESTATION_DENIED");
+        return NextResponse.json({
+          ok:true,staged:true,published:false,repaired:true,status:"complete",
+          documentEpoch:epoch,stagedIds:complete.stagedIds,
+          mapCount:complete.mapCount,mapVersion,
+        });
+      }
       // Persist the COMPLETE exact physical ID set before any external write.
       // If readback is late, a later run can reconcile WITHOUT calling Gemini.
       await registerPendingMapWindow(db,lease!,doc,fp,epoch,
@@ -542,6 +613,8 @@ export async function POST(request: NextRequest) {
       else if (detail==="V2_MAP_PENDING_INTENT_CORRUPT") code="V2_MAP_PENDING_INTENT_CORRUPT";
       else if (detail==="V2_MAP_PENDING_VECTOR_METADATA_MISMATCH")
         code="V2_MAP_PENDING_VECTOR_METADATA_MISMATCH";
+      else if (/^QA106_B_REPAIR_[A-Z0-9_]+$/.test(detail))
+        code=detail;
       else if (detail.startsWith("Gemini document-map error: 429")) code="V2_MAP_GEMINI_RATE_LIMITED";
       else if (detail.startsWith("Gemini document-map error: 403")) code="V2_MAP_GEMINI_PERMISSION_DENIED";
       else if (detail.startsWith("Gemini document-map error:")) code="V2_MAP_GEMINI_GENERATION_REJECTED";
