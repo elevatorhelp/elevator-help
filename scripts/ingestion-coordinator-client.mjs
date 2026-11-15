@@ -1,3 +1,4 @@
+import {assertQa106ParallelContext} from "./qa-issue106-parallel-guard.mjs";
 import {createHash} from "node:crypto";
 
 // Opt-in coordinator client for the existing serial ingestion runner.
@@ -24,7 +25,7 @@ export function validateCoordinatorState(state,rootId,{qaOnly=false}={}){
 export async function createIngestionCoordinatorSession({
   token,rootId,runId,runAttempt="1",legacyState,bootstrapApproved=false,
   fetchImpl=fetch,setTimer=setInterval,clearTimer=clearInterval,
-  endpoint=COORDINATOR_ENDPOINT,qaOnly=false,
+  endpoint=COORDINATOR_ENDPOINT,qaOnly=false,qaJobKey=null,
 }){
   const qaEndpointAllowed=qaOnly===true &&
     process.env.INGESTION_V2_QA_MODE==="true" &&
@@ -39,7 +40,13 @@ export async function createIngestionCoordinatorSession({
     !/^[1-9][0-9]{0,5}$/.test(String(runAttempt)))
     throw Error("D1_COORDINATOR_INVALID_EXECUTION_CONTEXT");
   if(!qaOnly)validateCoordinatorState(legacyState,rootId);
-  const jobKey="drive:"+rootId;
+  const parallel=qaOnly?assertQa106ParallelContext(process.env):null;
+  if(qaJobKey!==null && (!parallel||qaJobKey!==parallel.jobKey||
+     parallel.documentId!==process.env.INGESTION_V2_QA_PARALLEL_FILE_ID))
+    throw Error("QA106_COORDINATOR_JOB_SCOPE_DENIED");
+  if(parallel && qaJobKey!==parallel.jobKey)
+    throw Error("QA106_COORDINATOR_JOB_REQUIRED");
+  const jobKey=qaJobKey??"drive:"+rootId;
   const unique=createHash("sha256").update(runId+":"+runAttempt).digest("hex").slice(0,24);
   const owner=`gh-${runId}-${unique}`;
   let lease=null,checkpointVersion=0,heartbeat=null,lost=false,closed=false;
