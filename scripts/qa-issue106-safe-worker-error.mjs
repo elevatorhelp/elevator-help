@@ -1,0 +1,46 @@
+/** Safe, allowlisted classification of private QA worker logs.
+ * Never print raw log lines: those may contain source text, URL tokens or secrets.
+ */
+import {readFileSync} from "node:fs";
+import {pathToFileURL} from "node:url";
+
+const markers=new Set([
+ "V2_QA_INGESTION_ABORTED","V2_QA_DOCUMENT_STAGE_OR_PUBLISH_ABORTED",
+ "QA106_CROSS_WORKER_CHECKPOINT_DENIED",
+ "QA106_UNAPPROVED_PARALLEL_EXECUTION","QA106_COORDINATOR_JOB_SCOPE_DENIED",
+ "QA106_COORDINATOR_JOB_REQUIRED","QA106_UNAPPROVED_PARALLEL_FLAGS",
+ "D1_COORDINATOR_LEASE_LOST","D1_COORDINATOR_CHECKPOINT_CAS_FAILED",
+ "D1_COORDINATOR_CHECKPOINT_INTEGRITY_FAILED","D1_COORDINATOR_INVALID_STATE",
+ "D1_COORDINATOR_INVALID_CLAIM","D1_COORDINATOR_INVALID_CHECKPOINT_SNAPSHOT",
+ "D1_COORDINATOR_INSUFFICIENT_SCOPE_CHECKPOINT",
+ "D1_COORDINATOR_TRANSPORT_FAILURE","D1_COORDINATOR_INVALID_RESPONSE",
+ "D1_COORDINATOR_REJECTED","D1_COORDINATOR_INVALID_EXECUTION_CONTEXT",
+ "INGESTION_STATE_WRITE_FAILED","INGESTION_GEMINI_BUDGET_EXCEEDED",
+ "V2_MAP_NO_GROUNDED_NODES","V2_MAP_STAGING_NOT_VERIFIED",
+ "V2_MAP_LEASE_DENIED","V2_MAP_LEASE_STALE",
+ "V2_MAP_VECTOR_READBACK_TIMEOUT","V2_MAP_VECTOR_RECEIPT_DENIED",
+ "V2_MAP_GEMINI_RATE_LIMITED","V2_MAP_GEMINI_PERMISSION_DENIED",
+ "V2_MAP_GEMINI_GENERATION_REJECTED","V2_MAP_GEMINI_EMBEDDING_REJECTED",
+ "V2_MAP_GEMINI_BUDGET_EXCEEDED","V2_MAP_EMBEDDING_COUNT_MISMATCH",
+ "V2_MAP_TRANSPORT_FAILURE","V2_MAP_PENDING_VECTOR_READBACK",
+ "V2_MAP_PENDING_INTENT_DENIED","V2_MAP_PENDING_INTENT_CORRUPT",
+ "V2_MAP_PENDING_VECTOR_METADATA_MISMATCH"
+]);
+export function redactQa106WorkerLog(log){
+ const text=String(log||"");
+ const chosen=(text.match(/\b[A-Z][A-Z0-9_]{6,85}\b/g)||[]).filter(x=>markers.has(x));
+ const actualPhase=[...text.matchAll(/Ingestion phase preference: (?:evidence|raw|map); selected: (evidence|raw|map)/g)]
+   .map(m=>m[1]).slice(-1)[0]||"unknown";
+ const budget=[...text.matchAll(/Gemini calls reserved: (\d{1,3})\/(\d{1,3})/g)]
+   .map(m=>({reserved:Number(m[1]),limit:Number(m[2])})).slice(-1)[0]||null;
+ const matched=[...new Set(chosen)].slice(0,8);
+ const status=budget && budget.limit===4 && budget.reserved<=4
+   ? "reserved="+budget.reserved+"/4" : "reserved=unknown";
+ return ["selected="+actualPhase,status,"markers="+(matched.length?matched.join(","):"NONE_ALLOWLISTED")].join(" ");
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
+ const file=process.argv[2]||"";
+ let log="";
+ try{log=readFileSync(file,"utf8");}catch{}
+ console.log(redactQa106WorkerLog(log));
+}
