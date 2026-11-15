@@ -7,6 +7,9 @@ on:
       - "scripts/qa-issue99-*.mjs"
       - "scripts/ingestion-v2-qa-guard.mjs"
       - "app/lib/ingestion-immutable-publication.ts"
+      - "app/lib/ingestion-v2-map-reconciliation.ts"
+      - "docs/ingestion-v2-pending-map-windows-schema.sql"
+      - "scripts/test-ingestion-v2-map-reconciliation.ts"
   push:
     branches: [qa/issue99-real-drive-readonly-20261115]
     paths:
@@ -48,4 +51,5 @@ jobs:
           node scripts/test-ingestion-v2-qa-guard.mjs
           node --experimental-strip-types scripts/test-ingestion-immutable-publication.ts
           node --experimental-strip-types scripts/test-ingestion-document-staging-epoch.ts
+          node --experimental-strip-types scripts/test-ingestion-v2-map-reconciliation.ts
           echo "PASS: offline manual-runner guards, publication IDs, and staging epochs"
