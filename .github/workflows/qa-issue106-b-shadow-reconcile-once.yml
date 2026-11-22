@@ -45,3 +45,5 @@ jobs:
         run: bash scripts/qa-issue106-b-shadow-reconcile-run.sh
 
 # No provider credentials: model-free retry after strict TypeScript fix.
+
+# Model-free resume: avoid importing the billable ingestion runner on zero-call QA.
