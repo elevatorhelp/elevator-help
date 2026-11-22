@@ -7,7 +7,12 @@
  */
 import {createSign,createHash} from "node:crypto";
 import {getDocumentProxy,extractText} from "unpdf";
-import {fingerprint} from "./drive-ingest.mjs";
+// Do NOT import drive-ingest.mjs here: its normal ingestion budget requires
+// positive MAX_GEMINI_CALLS. This recovery has a hard zero-provider budget.
+const fingerprint=file=>createHash("sha256").update(JSON.stringify([
+  file.md5Checksum || (String(file.modifiedTime||"")+":"+String(file.size||"")),
+  file.name||"",file.sourcePath||"",3,4,3,"v2-immutable-drive-pdf",
+])).digest("hex");
 import {QA106_ROOT,QA106_PDFS,QA106_CONFIRM,qa106JobKey}
  from "./qa-issue106-parallel-guard.mjs";
 
