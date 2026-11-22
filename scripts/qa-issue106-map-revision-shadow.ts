@@ -144,7 +144,7 @@ async function load(db:CoordinatorDB,lease:ArchiveLease,s:RevisionScope){
    WHERE document_id=? AND staging_epoch=? AND revision=?
     AND job_key=? AND source_fingerprint=? AND supersedes_window_key=?`,
    [...point(s),s.jobKey,s.fingerprint,s.supersedesWindowKey]);
- if(!row)abort("REVISION_MISSING_OR_CHANGED");
+ if(row===null)throw Error("QA106_MAP_REVISION_REVISION_MISSING_OR_CHANGED");
  return row;
 }
 /** Idempotently declare B's shadow replacement; no Gemini call, no D1 old-table mutation. */
@@ -278,12 +278,12 @@ export async function reconcileShadowMapRevision(
  for(const entry of payload.entries){
    const x=byId.get(entry.logicalId);
    if(!x||!vectorsOk(x.legacy)||!vectorsOk(x.multilingual))
-     abort("EMBEDDINGS_CORRUPT");
+     throw Error("QA106_MAP_REVISION_EMBEDDINGS_CORRUPT");
    const current=await rowFirst(db,`SELECT staged_id FROM qa106_map_revision_receipts
      WHERE document_id=? AND staging_epoch=? AND revision=? AND logical_id=?`,
      [...point(s),entry.logicalId]);
    if(current&&current.staged_id!==entry.stagedId)abort("RECEIPT_ID_CONFLICT");
-   let hits:unknown[];
+   let hits:unknown[]=[];
    try{hits=await Promise.all(indexes.map(i=>i.getByIds([entry.stagedId])))}
    catch{abort("VECTOR_READ_FAILED")}
    if(!hits.every(Array.isArray))abort("VECTOR_READ_INVALID");
