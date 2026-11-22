@@ -31,6 +31,8 @@ import {revisionReadGatePreview}
  from "./qa-issue106-revision-reader-flag-preview.ts";
 import {publishedArchiveEnv}
  from "../app/lib/ingestion-published-reader.ts";
+import {searchPublishedRevisionEvidence}
+ from "../app/lib/ingestion-map-revision-evidence.ts";
 
 const fp="a".repeat(64),key="b".repeat(64);
 const temp=mkdtempSync(join(tmpdir(),"qa106-map-revision-offline-"));
@@ -39,6 +41,7 @@ const files=[
  "../docs/ingestion-immutable-publication-schema.sql",
  "../docs/ingestion-v2-document-epoch-schema.sql",
  "../docs/ingestion-v2-pending-map-windows-schema.sql",
+ "../docs/ingestion-v2-evidence-reference-schema.sql",
  "../docs/qa106-map-revision-shadow-schema.sql",
  "../docs/qa106-generic-map-revision-preview-schema.sql",
 ];
@@ -444,7 +447,23 @@ try{
   "missing D1 or one index must fail closed, never fall back to unfiltered data");
  assert.deepEqual(await unavailable.VECTORIZE.getByIds([aHit.id]),[]);
  assert.deepEqual(await unavailable.readExactEvidence(QA106_B_PDF_ID),[]);
-  const bCitations=await readGenericPublishedEvidencePreview(
+  // Exact published clause citations must be from B's active revision,
+ // not merely from its historical staged Evidence or the old index.
+ const refs=[{key:"EN8120",label:"EN 81-20",structured:true}];
+ for(let i=0;i<2;i++){
+   f.sqlite.prepare(`INSERT INTO ingestion_v2_evidence_terms
+      (document_id,generation,logical_id,source_fingerprint,kind,
+       term_key,label,created_at_ms) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(QA106_B_PDF_ID,f.scope.documentEpoch,
+       "evidence-"+i,fp,"reference",refs[0].key,refs[0].label,Date.now());
+ }
+ const cited=await searchPublishedRevisionEvidence(f.db,refs,[],ix,60);
+ assert.deepEqual(cited.map(v=>v.page),[1,2],
+   "active B source pages must be citeable after revision activation");
+ assert.deepEqual(await searchPublishedRevisionEvidence(f.db,[
+   {key:"UNKNOWN",label:"Unknown",structured:false}],[],ix,60),[],
+   "unrelated reference cannot become an authoritative B citation");
+ const bCitations=await readGenericPublishedEvidencePreview(
    f.db,QA106_B_PDF_ID,ix);
  assert.equal(bCitations.length,2);
  assert.deepEqual(bCitations.map(x=>x.page),[1,2]);
@@ -494,6 +513,8 @@ try{
    "real code's default-off revision adapter must suppress B during rollback");
 
  assert.deepEqual(await withFlag.readExactEvidence(QA106_B_PDF_ID),[]);
+ assert.deepEqual(await searchPublishedRevisionEvidence(f.db,refs,[],ix,60),[],
+   "rollback of active revision must also revoke B identifier citations");
  
  assert.equal(await activateGenericMapRevisionPreview(
    f.db,f.lease,previewScope,ix),true,
