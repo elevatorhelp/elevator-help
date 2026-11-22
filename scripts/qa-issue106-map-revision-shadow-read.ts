@@ -118,7 +118,7 @@ const selectActive=`
 
 async function verifyActive(
  db:CoordinatorDB,indexes:readonly [ImmutableIndex,ImmutableIndex],
-):Promise<RevisionEntry[]|null>{
+):Promise<{entries:RevisionEntry[];active:PublishedRow}|null>{
  const active=await rowFirst(db,selectActive,[QA106_B_PDF_ID,QA106_B_JOB]);
  if(!active)return null;
  const entries=parseActive(active);
@@ -136,7 +136,7 @@ async function verifyActive(
    const pair=await Promise.all(indexes.map(i=>i.getByIds([entry.stagedId])));
    if(!pair.every(x=>validVector(x,entry,active)))return null;
  }
- return entries;
+ return {entries,active};
 }
 /** All visible Map candidates must be members of the exact active revision.
  * Source-epoch/legacy-receipt matches alone NEVER grant visibility here.
@@ -150,20 +150,17 @@ export async function filterShadowVisibleMapVectors<T extends VectorMatch>(
     indexes.length!==2||indexes.some(i=>typeof i?.getByIds!=="function"))
    return [];
  try{
-   const entries=await verifyActive(db,indexes);
-   if(!entries)return [];
-   const allowed=new Map(entries.map(e=>[e.stagedId,e]));
+   const resolved=await verifyActive(db,indexes);
+   if(!resolved)return [];
+   const allowed=new Map(resolved.entries.map(e=>[e.stagedId,e]));
    const visible:T[]=[],seen=new Set<string>();
    for(const match of matches){
      if(!match||typeof match.id!=="string"||seen.has(match.id))continue;
      const entry=allowed.get(match.id);
      if(!entry)continue; // old incomplete B Map and unrelated docs excluded
      const meta=match.metadata;
-     if(!validVector([{id:match.id,metadata:meta}],entry,{
-       staging_epoch:meta?.stagedGeneration,
-       revision:meta?.mapRevision,
-       source_fingerprint:meta?.sourceFingerprint,
-     }))continue;
+     if(!validVector([{id:match.id,metadata:meta}],entry,
+       resolved.active))continue;
      seen.add(match.id);visible.push(match);
    }
    return visible;
