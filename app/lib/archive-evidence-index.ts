@@ -1,5 +1,6 @@
 import type { ReferenceIdentifier } from "./reference-identifiers.ts";
 import {searchPublishedImmutableEvidence} from "./ingestion-v2-evidence-references.ts";
+import {searchPublishedRevisionEvidence} from "./ingestion-map-revision-evidence.ts";
 
 export type ArchiveEvidenceRow = {
   id: string;
@@ -77,7 +78,35 @@ async function mergePublishedEvidenceRows(
     // which source pages are current. Fail closed for the entire result.
     return [];
   }
-  return [...published,...legacy]
+  // In the NEW opt-in revision gate, a candidate is a deny-fallback
+  // marker not only for archive_chunks, but ALSO for any previously published
+  // exact Evidence from the old immutable search. Every new B citation must
+  // be attested against its activated revision + BOTH Vectorize indexes.
+  let acceptedPublished=published;
+  let revised:ArchiveEvidenceRow[]=[];
+  if(db?.__mapRevisionReadGate===true){
+    const pair=db?.__mapRevisionIndexes;
+    if(!Array.isArray(pair)||pair.length!==2||
+       pair.some((x:any)=>typeof x?.getByIds!=="function"))return [];
+    try{
+      const candidateByDoc=new Map<string,Promise<any>>();
+      const safe:ArchiveEvidenceRow[]=[];
+      for(const row of published){
+        let marker=candidateByDoc.get(row.source_file_id);
+        if(!marker){
+          marker=Promise.resolve().then(()=>db.prepare(
+            "SELECT 1 AS present FROM ingestion_v2_map_revision_candidates WHERE document_id=? LIMIT 1"
+          ).bind(row.source_file_id).first());
+          candidateByDoc.set(row.source_file_id,marker);
+        }
+        if(!(await marker))safe.push(row);
+      }
+      acceptedPublished=safe;
+      revised=await searchPublishedRevisionEvidence(
+        db,identifiers,clauses,pair,Math.max(1,Math.min(100,limit)));
+    }catch{return []}
+  }
+  return [...revised,...acceptedPublished,...legacy]
     .sort((a,b)=>(Number(b.matched_identifiers)||0)-(Number(a.matched_identifiers)||0)||
       Number(a.page)-Number(b.page))
     .slice(0,Math.max(1,Math.min(100,limit)));
