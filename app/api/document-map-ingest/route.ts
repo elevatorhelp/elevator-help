@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {stageImmutableVectorPair} from "../../lib/ingestion-immutable-publication";
 import {advanceShadowMapRevisionWithProviders,
+  readDurableShadowRevision,publishShadowMapRevision,
   type RevisionScope,type RevisionNode,
 } from "../../../scripts/qa-issue106-map-revision-shadow";
 import {
@@ -305,8 +306,9 @@ export async function POST(request: NextRequest) {
     const body: any = await request.json();
     const bExactRepair=body?.action==="repair_missing_map_b_v2";
     const bShadow=body?.action==="stage_qa106_shadow_map_b_v2";
+    const bShadowRecover=body?.action==="reconcile_qa106_shadow_map_b_v2";
     qaStageRequest=body?.action==="stage_map_v2"||
-      body?.action==="reconcile_map_v2"||bExactRepair||bShadow;
+      body?.action==="reconcile_map_v2"||bExactRepair||bShadow||bShadowRecover;
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
 
@@ -353,13 +355,14 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     const { env } = getCloudflareContext();
-    if(bShadow && (
+    if((bShadow||bShadowRecover) && (
       (env as any).QA106_ISOLATED_BINDINGS!=="qa106-pr100-v2-only" ||
       (env as any).QA106_B_MAP_REVISION_SHADOW_ENABLED!=="true" ||
       (env as any).INGESTION_COORDINATOR_JOB_KEY!==QA106_B_JOB ||
       document.sourceFileId!==QA106_B_PDF_ID ||
       body?.globalArchiveLease?.jobKey!==QA106_B_JOB ||
-      (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST!=="2"
+      (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST!==(bShadowRecover?"0":"2") ||
+      (bShadowRecover && (apiKey || process.env.GEMINI_BENCHMARK_API_KEY))
     ))return NextResponse.json(
       {ok:false,error:"QA106_B_SHADOW_SCOPE_DENIED"},{status:403});
     if(bExactRepair && (
@@ -401,7 +404,7 @@ export async function POST(request: NextRequest) {
       if(!qaEpoch)
         return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
       qaWindowKey=immutableMapWindowKey(doc,fp,mapVersion,pages);
-      if(bShadow){
+      if(bShadow||bShadowRecover){
         // The old B Map must remain historical. NEVER replay its missing
         // content-hashed ID or mutate A/legacy publication records.
         const pending=await (db.prepare(`
@@ -414,7 +417,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json(
             {ok:false,error:"QA106_B_SHADOW_PENDING_INTENT_INVALID"},
             {status:409});
-        if(!apiKey||(env as any).AI===undefined)
+        if(bShadow && (!apiKey||(env as any).AI===undefined))
           return NextResponse.json(
             {ok:false,error:"QA106_B_SHADOW_PROVIDERS_UNAVAILABLE"},
             {status:503});
@@ -423,6 +426,19 @@ export async function POST(request: NextRequest) {
           fingerprint:fp,documentEpoch:qaEpoch,
           revision:1,supersedesWindowKey:String(pending.results[0].window_key),
         };
+        if(bShadowRecover){
+          const durable=await readDurableShadowRevision(db,lease!,scope);
+          if(durable.state!=="embedded")
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_SHADOW_EMBEDDINGS_NOT_DURABLE"},
+              {status:409});
+          const completed=await publishShadowMapRevision(
+            db,lease!,scope,[vectorize,vectorizeV2]);
+          return NextResponse.json({
+            ok:true,shadowOnly:true,published:false,
+            status:completed?"shadow_published":"pending",providerCalls:0,
+          });
+        }
         const budget=createGeminiCallBudget(2);
         const providerSet={
           generate:async():Promise<RevisionNode[]>=>{
