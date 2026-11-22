@@ -24,6 +24,7 @@ import {filterShadowVisibleMapVectors}
 import {
  stageGenericMapCandidatePreview,activateGenericMapRevisionPreview,
  blockGenericMapRevisionPreview,filterGenericPublishedMapPreview,
+ filterGenericPublishedRawPreview,readGenericPublishedEvidencePreview,
  type MapRevisionScope,
 } from "./qa-issue106-generic-map-publication-preview.ts";
 
@@ -300,7 +301,49 @@ try{
  f.sqlite.prepare(`INSERT INTO ingestion_v2_vector_receipts
  (document_id,generation,layer,logical_id,staged_id,source_fingerprint,created_at_ms)
  VALUES (?,?,?,?,?,?,?)`).run(QA106_A_PDF_ID,1,"map",aLogical,aPhysical,fp,Date.now());
- const bHit=candidates.map(c=>structuredClone(c));
+ // Two complete, immutable RAW pairs already exist in B's old epoch.
+ // They are reused by the new Map revision and never re-embedded.
+ const bRaw=[0,1].map(i=>{
+  const id=immutableVectorId(f.lease,QA106_B_PDF_ID,"raw",
+    `raw-${i}`,fp,f.scope.documentEpoch);
+  const metadata={
+   sourceFileId:QA106_B_PDF_ID,sourceFingerprint:fp,
+   stagedGeneration:f.scope.documentEpoch,stagedLayer:"raw",
+   status:"active",contentType:"standard",
+   text:`Exact B RAW sentence ${i}`,fileName:"synthetic-b.pdf",
+   sourcePath:"qa/synthetic-b.pdf",page:i+1,chunkIndex:i,
+  };
+  const vec={id,metadata,values:[1,i,0.5]};
+  ix[0].record(vec);ix[1].record(vec);
+  return {id,metadata};
+ });
+ const aRawId=immutableVectorId(aLease,QA106_A_PDF_ID,"raw","raw-A",fp,1);
+ const aRawMeta={
+  sourceFileId:QA106_A_PDF_ID,sourceFingerprint:fp,
+  stagedGeneration:1,stagedLayer:"raw",status:"active",
+  contentType:"standard",text:"Legacy A exact source",
+  fileName:"fixture-a.pdf",sourcePath:"qa/fixture-a.pdf",page:1,chunkIndex:0,
+ };
+ const aRawHit={id:aRawId,metadata:aRawMeta};
+ f.sqlite.prepare(`INSERT INTO ingestion_v2_vector_receipts
+ (document_id,generation,layer,logical_id,staged_id,source_fingerprint,created_at_ms)
+ VALUES (?,?,?,?,?,?,?)`).run(QA106_A_PDF_ID,1,"raw","raw-A",aRawId,fp,Date.now());
+ f.sqlite.prepare(`INSERT INTO ingestion_v2_staged_evidence
+ (document_id,generation,logical_id,source_fingerprint,text,
+ file_name,source_path,page,chunk_index,created_at_ms)
+ VALUES (?,?,?,?,?,?,?,?,?,?)`).run(QA106_A_PDF_ID,1,"evidence-A",
+   fp,"Published A citation","fixture-a.pdf","qa/fixture-a.pdf",
+   1,0,Date.now());
+ assert.equal((await readGenericPublishedEvidencePreview(
+   f.db,QA106_A_PDF_ID,ix)).length,1,
+   "Existing legacy A evidence citations must remain readable");
+ assert.deepEqual((await filterGenericPublishedRawPreview(
+   f.db,[aRawHit,...bRaw],ix)).map(x=>x.id),[aRawId],
+   "Unpublished B RAW is not exposed before revision activation");
+ assert.deepEqual(await readGenericPublishedEvidencePreview(
+   f.db,QA106_B_PDF_ID,ix),[],
+   "Unpublished B exact evidence must remain hidden");
+  const bHit=candidates.map(c=>structuredClone(c));
  const currentA=await filterGenericPublishedMapPreview(f.db,[aHit],ix);
  assert.deepEqual(currentA.map(x=>x.id),[aPhysical],
    "Legacy published A remains readable with no revision candidate");
@@ -316,6 +359,10 @@ try{
  assert.deepEqual((await filterGenericPublishedMapPreview(
    f.db,[aHit,...bHit,obsolete],ix)).map(x=>x.id),[aPhysical],
    "Pre-activation B new Map and old unfinished Map must both be hidden");
+ assert.deepEqual((await filterGenericPublishedRawPreview(
+   f.db,[aRawHit,...bRaw],ix)).map(x=>x.id),[aRawId]);
+ assert.deepEqual(await readGenericPublishedEvidencePreview(
+   f.db,QA106_B_PDF_ID,ix),[]);
  assert.equal(await activateGenericMapRevisionPreview(
    f.db,f.lease,previewScope,ix),true);
  const candidatesExpected=[aPhysical,...bHit.map(x=>x.id)];
@@ -323,7 +370,19 @@ try{
    f.db,[obsolete,aHit,...bHit,bHit[0]],ix)).map(x=>x.id),
    candidatesExpected,
    "Atomic D1 activation makes ONLY new B revision visible alongside legacy A");
- assert.equal(f.count(`SELECT COUNT(*) AS n FROM
+ const rawExpected=[aRawId,...bRaw.map(x=>x.id)];
+ assert.deepEqual((await filterGenericPublishedRawPreview(
+   f.db,[aRawHit,...bRaw,bRaw[0]],ix)).map(x=>x.id),rawExpected,
+   "Active revision makes the original RAW B pair visible without reindexing");
+ const bCitations=await readGenericPublishedEvidencePreview(
+   f.db,QA106_B_PDF_ID,ix);
+ assert.equal(bCitations.length,2);
+ assert.deepEqual(bCitations.map(x=>x.page),[1,2]);
+ assert.deepEqual((await filterGenericPublishedRawPreview(
+   f.db,[{...bRaw[0],metadata:{...bRaw[0].metadata,page:100}},bRaw[1]],ix))
+   .map(x=>x.id),[bRaw[1].id],
+   "Forged RAW page must never become an authoritative citation");
+  assert.equal(f.count(`SELECT COUNT(*) AS n FROM
    ingestion_v2_map_revision_receipts WHERE document_id=?`,
    [QA106_B_PDF_ID]),2);
  assert.equal(f.count(`SELECT COUNT(*) AS n FROM
@@ -349,11 +408,23 @@ try{
  assert.deepEqual((await filterGenericPublishedMapPreview(
     f.db,[aHit,...bHit,obsolete],ix)).map(x=>x.id),[aPhysical],
     "Rollback blocks B without exposing an old Map or affecting legacy A");
+ assert.deepEqual((await filterGenericPublishedRawPreview(
+   f.db,[aRawHit,...bRaw],ix)).map(x=>x.id),[aRawId],
+   "B RAW must hide immediately on revision rollback");
+ assert.deepEqual(await readGenericPublishedEvidencePreview(
+   f.db,QA106_B_PDF_ID,ix),[],
+   "B Evidence must hide immediately on revision rollback");
+ assert.equal((await readGenericPublishedEvidencePreview(
+   f.db,QA106_A_PDF_ID,ix)).length,1);
  assert.equal(await activateGenericMapRevisionPreview(
    f.db,f.lease,previewScope,ix),true,
    "Same complete immutable revision can be restored without providers");
  assert.deepEqual((await filterGenericPublishedMapPreview(
    f.db,[aHit,...bHit],ix)).map(x=>x.id),candidatesExpected);
+ assert.deepEqual((await filterGenericPublishedRawPreview(
+   f.db,[aRawHit,...bRaw],ix)).map(x=>x.id),rawExpected);
+ assert.equal((await readGenericPublishedEvidencePreview(
+   f.db,QA106_B_PDF_ID,ix)).length,2);
  console.log("PASS: generic map activation CAS, legacy A compatibility, no B legacy fallback, revision receipt/index corruption and rollback");
  const shadow=f.read("SELECT map_count,raw_count,evidence_count FROM qa106_map_revision_shadow_publications WHERE document_id=?",[QA106_B_PDF_ID]);
  assert.deepEqual([shadow?.map_count,shadow?.raw_count,shadow?.evidence_count],[2,2,2]);
@@ -363,6 +434,13 @@ try{
    QA106_B_PDF_ID,"f".repeat(64));
  assert.ok(changedEpoch&&changedEpoch>f.scope.documentEpoch);
  assert.deepEqual(await filterShadowVisibleMapVectors(f.db,candidates,ix),[]);
+ assert.deepEqual((await filterGenericPublishedMapPreview(
+   f.db,[aHit,...bHit],ix)).map(x=>x.id),[aPhysical],
+   "stale source epoch must hide B map but preserve A");
+ assert.deepEqual((await filterGenericPublishedRawPreview(
+   f.db,[aRawHit,...bRaw],ix)).map(x=>x.id),[aRawId]);
+ assert.deepEqual(await readGenericPublishedEvidencePreview(
+   f.db,QA106_B_PDF_ID,ix),[]);
  console.log("PASS: atomic shadow Map pointer, exact active revision/receipt/metadata, half-index, stale fingerprint and old Map exclusion");
  f.close();
 
