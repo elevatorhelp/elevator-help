@@ -1,5 +1,36 @@
 # elevator.help — SINGLE EXECUTION ROADMAP
 
+## 2026-11-22 — LIVE STATUS: Archive percentages, worker controls, and realistic critical path
+
+**Status source:** actual GitHub Actions scheduled ingestion logs. This supersedes the 2026-11-16 numerical snapshot immediately below, without rewriting earlier audit history. Source: [last successful scheduled Live Archive Run #45017130713](https://github.com/elevatorhelp/elevator-help/actions/runs/45017130713), completed **2026-11-22T11:26:30Z**; earlier scheduled runs [#44970839937](https://github.com/elevatorhelp/elevator-help/actions/runs/44970839937) and [#44948734018](https://github.com/elevatorhelp/elevator-help/actions/runs/44948734018), both SUCCESS. Last exact merged-main code Build [#43773616924](https://github.com/elevatorhelp/elevator-help/actions/runs/43773616924) SUCCESS on merge `fe2b4a136a...` 2026-11-15. **No new code QA fix or successful two-PDF E2E was found since then.**
+
+### Grounded archive counts, not Green-CI inference
+
+The ingestion runner reports **241 supported documents in the configured Google Drive scope**. Its `createIngestionPlan` explicitly counts documents with a still-pending **Evidence / RAW / Map** backfill **independently of ready-to-run/eligible queue**. The counts in a run are a **pre-run checkpoint snapshot**. The final 2026-11-22 run selected RAW, processed **3 files, 0 failed**, and saved their RAW checkpoints. Consequently the estimated *post-run checkpoint state* (assuming the same 241-document scope/source fingerprints) is:
+
+| Stage | Completed by checkpoint | Pending after latest run | Completion % of 241 |
+| --- | ---: | ---: | ---: |
+| Exact Evidence | **174** | **67** | **72.2%** |
+| RAW semantic vectors | **107** | **134** | **44.4%** |
+| Document Map | **99** | **142** | **41.1%** |
+
+**Important qualification:** immediately before the final RAW run, its actual logged `pendingCounts` was `evidence=67,raw=137,map=142` and `readyCounts` was `evidence=67,raw=88,map=5`; this does NOT mean 88 is the total RAW backlog. Update RAW pending to 134 only because the same run's log attests three completed RAW checkpoints. These are checkpoint-level coverage estimates, **NOT independent Production D1/Vectorize manifest readbacks, full user-facing citation correctness, or a measured percentage of pages/vectors**. A document's Map completion is the best available *pipeline-complete* proxy, approximately **99/241 = 41.1%**; it is not a Beta sign-off.
+
+**Measured movement:** all **15** scheduled ingestion runs visible from **2026-11-16 through 2026-11-22** completed SUCCESS. Comparing the first pre-run checkpoint `evidence=82,raw=149,map=156` (2026-11-16) with the final post-run estimate `67,134,142`, total completed stage-document units increased by **15 Evidence + 15 RAW + 14 Map**. One or more Map documents can take multiple runs because of page-window budgets; success does not guarantee an entire selected Map document was finished. Evidence and RAW processed independently under the existing serial phase-fair scheduler. The last scheduled run reserved **20/60** Gemini calls, but call reservations are not actual provider billing and cannot be used to calculate euros.
+
+**Operational status:** The ChatGPT Automations supervisor inventory last checked returned 25 tasks with **zero enabled**. Do not unpause stale PR #63/#86/Index supervisors; PR #86 already merged; PR #63/87/88 still open drafts as of today's GitHub PR list. The only observed GitHub Actions cron workflow in the inspected repository YAML was `drive-ingestion.yml`: nominal `17 3,9,15,21 * * *` (4 scheduled slots/day), but **actual recent visible runs mostly ~2/day**; never equate declared cron to achieved throughput. One serial live writer with concurrency group `elevator-help-drive-ingestion`, `MAX_FILES=3`, up to 60 reserved Gemini calls per invocation; no verified continuous QA dual-worker process. Multiple short-lived Build/QA jobs are CI checks, not long-running writer supervisors. No externally authenticated Cloudflare Workers account-wide live-process audit has been performed: do not claim all remote deployed Workers are disabled. Leave the genuinely productive serial sync running, without increasing costs or enabling distributed Production.
+
+**Feasibility alarm:** `67 + 134 + 142 = 343` outstanding per-document per-phase units. Even with the unrealistic assumption that **every** 3-document batch finishes a full stage for all three documents, a strict lower bound is `ceil(343/3)=115` more jobs; multi-window Map backfills can need more. This is *not* a guaranteed throughput forecast. With current observed roughly two runs/day, a full archive by the old 2026-12-11 Gamma target is **not feasible at the current cap and cadence**. The owner must approve either a measured safe throughput plan (after budgets, checkpoints, and release gates) or re-scope/re-date Gamma. No silent deadline drift; do not imply Gamma complete based on calendar alone.
+
+### Single blocker and next action
+
+[Issue #106](https://github.com/elevatorhelp/elevator-help/issues/106) is still **OPEN**. Remote QA PDF A was published, B Evidence/RAW complete but Map has 1/2 receipts and one content-addressed node missing from **both** QA Vectorize indexes. The single owner-approved PDF B exact-content ID Gemini repair [#43772328368](https://github.com/elevatorhelp/elevator-help/actions/runs/43772328368) failed safely with `QA106_B_REPAIR_REGENERATION_MISMATCH`; do not repeat the same paid test or fake the original missing node.
+
+**NEXT, ONE ENGINEERING OWNER, OFFLINE FIRST:** design and implement **revision-scoped, fenced B-only Map supersession** that retains A's published manifest, B's full Evidence/RAW, and durable history of the old incomplete pending Map and receipt; write ahead the *actual new Gemini Map node payload/IDs* before embedding to make crash recovery model-free; stage new Map version atomically in both QA Vectorize indexes; D1 revision-specific receipts and exact manifest CAS; disallow stale lease publication; cover interruption and stale revision with offline tests. Zero paid calls, zero Production deployment, no competing supervisors during this design stage. Only later request fresh owner approval for one bounded QA test. Independently test retrieval/citation and backup/restore before Beta or Gamma exit; do not close #106 on CI alone.
+
+---
+
+
 ## 2026-11-16 — CURRENT EXECUTION CONTROL: Worker/Supervisor audit and Issue #106 unblock
 
 > **This is the latest verified operating snapshot.** Earlier dates/status lines and historical QA notes below are an audit trail, NOT evidence of current acceptance. In particular, the 2026-11-13 Beta sign-off target has **not** been verified as attained; 2026-12-11 Gamma remains a **target under feasibility review**, not a guaranteed delivery or permission to release. Keep the main release gate **NO-GO** until owner sign-off and real end-to-end evidence.
@@ -41,7 +72,7 @@
 ---
 
 
-**Canonical plan — one source of truth.** Latest operating snapshot updated **2026-11-16**; original baseline dated 2026-10-20 (historical entries retained).
+**Canonical plan — one source of truth.** Latest operating snapshot updated **2026-11-22**; original baseline dated 2026-10-20 (historical entries retained).
 **Owner:** elevator.help project owner. **Implementation:** engineering/Codex with GitHub PR + CI + production evidence.
 **Target Beta sign-off:** **2026-11-13**. **Owner-approved target Gamma sign-off:** **2026-12-11**.
 **GitHub privacy/repository decision and execution:** **2026-12-14 to 2026-12-18, AFTER Gamma**.
