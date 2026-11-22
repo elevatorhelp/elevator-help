@@ -473,12 +473,12 @@ export async function POST(request: NextRequest) {
           const mapIds=durable.payload.entries.map(e=>e.stagedId);
           const indexed=await vectorize.getByIds(mapIds);
           const allowed=await filterGenericPublishedMapPreview(db,indexed,pair);
-          const raw=await db.prepare(`SELECT staged_id FROM
+          const raw=await (db.prepare(`SELECT staged_id FROM
              ingestion_v2_vector_receipts
              WHERE document_id=? AND generation=? AND
                source_fingerprint=? AND layer='raw'`).bind(
-             QA106_B_PDF_ID,qaEpoch,fp).all() as
-             {results:Array<{staged_id:string}>};
+             QA106_B_PDF_ID,qaEpoch,fp) as unknown as
+             {all:()=>Promise<{results:Array<{staged_id:string}>}>}).all();
           if(raw.results.length!==2||allowed.length!==mapIds.length)
             return NextResponse.json(
               {ok:false,error:"QA106_B_READER_MAP_ATTESTATION_DENIED"},
