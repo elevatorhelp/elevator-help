@@ -17,6 +17,7 @@ import {QA106_A_JOB,QA106_A_PDF_ID,QA106_B_JOB,QA106_B_PDF_ID}
 import {
  beginShadowMapRevision,persistGeneratedMapPayload,persistMapEmbeddings,
  reconcileShadowMapRevision,publishShadowMapRevision,readDurableShadowRevision,
+ reserveShadowProviderCall,
  type RevisionScope,type RevisionNode,
 } from "./qa-issue106-map-revision-shadow.ts";
 import {filterShadowVisibleMapVectors}
@@ -165,6 +166,17 @@ try{
  const evidenceBefore=f.count("SELECT COUNT(*) AS n FROM ingestion_v2_staged_evidence WHERE document_id=?",[QA106_B_PDF_ID]);
  await beginShadowMapRevision(f.db,f.lease,f.scope);
  assert.equal((await readDurableShadowRevision(f.db,f.lease,f.scope)).state,"planned");
+ // A paid request must acquire one durable, never-repeat reservation
+ // BEFORE leaving D1. A lost model response cannot trigger another charge.
+ await assert.rejects(reserveShadowProviderCall(
+   f.db,f.lease,f.scope,"gemini_embedding"),
+   /PROVIDER_ALREADY_RESERVED_OR_STALE/,
+   "Embedding may not start before exact Map content is durably generated");
+ await reserveShadowProviderCall(f.db,f.lease,f.scope,"map_generation");
+ await assert.rejects(reserveShadowProviderCall(
+   f.db,f.lease,f.scope,"map_generation"),
+   /PROVIDER_ALREADY_RESERVED_OR_STALE/,
+   "Never issue the same paid Map generation twice");
  assert.equal(f.count("SELECT COUNT(*) AS n FROM qa106_map_revision_receipts"),0);
  // Crash BEFORE exact payload is durably saved: remains planned and no
  // phantom publication or receipts; generation must not auto-repeat.
@@ -190,6 +202,22 @@ try{
  f.lease=next!;
  const restored=await readDurableShadowRevision(f.db,f.lease,f.scope);
  assert.equal(restored.payload?.entries[0].text,nodes[0].text);
+ await assert.rejects(reserveShadowProviderCall(
+   f.db,f.lease,f.scope,"map_generation"),
+   /PROVIDER_ALREADY_RESERVED_OR_STALE/,
+   "A successor lease cannot regenerate an already claimed Map request");
+ await reserveShadowProviderCall(f.db,f.lease,f.scope,"workers_ai_embedding");
+ await reserveShadowProviderCall(f.db,f.lease,f.scope,"gemini_embedding");
+ await assert.rejects(reserveShadowProviderCall(
+   f.db,f.lease,f.scope,"workers_ai_embedding"),
+   /PROVIDER_ALREADY_RESERVED_OR_STALE/);
+ await assert.rejects(reserveShadowProviderCall(
+   f.db,f.lease,f.scope,"gemini_embedding"),
+   /PROVIDER_ALREADY_RESERVED_OR_STALE/);
+ assert.equal(f.count(`SELECT COUNT(*) AS n FROM
+   qa106_map_revision_provider_reservations WHERE document_id=?`,
+   [QA106_B_PDF_ID]),3,
+   "Exactly one Map generation, Gemini embed and Workers AI reservation");
  await persistMapEmbeddings(f.db,f.lease,f.scope,
     embeds(restored.payload!.entries));
  const complete=await readDurableShadowRevision(f.db,f.lease,f.scope);
