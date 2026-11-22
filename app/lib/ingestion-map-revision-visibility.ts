@@ -345,6 +345,20 @@ async function activeForDoc(db:CoordinatorDB,doc:string,
     a.map_count!==proof.payload.entries.length||
     a.raw_count!==proof.rawIds.length||
     a.evidence_count!==proof.evidenceIds.length)return null;
+ // The activation can be blocked (or the document source replaced) while
+ // asynchronous Vectorize readback is in flight. Recheck the authoritative
+ // D1 pointer + current source AFTER that readback, not only before it.
+ // A rollback during readback must never return a stale approved result.
+ const current=await q(db,fetchActiveSQL,[doc]);
+ if(!current||
+    current.job_key!==a.job_key||
+    current.staging_epoch!==a.staging_epoch||
+    current.revision!==a.revision||
+    current.source_fingerprint!==a.source_fingerprint||
+    current.manifest_sha256!==a.manifest_sha256||
+    current.map_count!==a.map_count||
+    current.raw_count!==a.raw_count||
+    current.evidence_count!==a.evidence_count)return null;
  return {scope:s,proof};
 }
 /** READ-SIDE PROOF, not connected to Production APIs.
