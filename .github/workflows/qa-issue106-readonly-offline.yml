@@ -13,6 +13,7 @@ on:
       - "scripts/qa-issue106-generic-map-publication-preview.ts"
       - "docs/qa106-generic-map-revision-preview-schema.sql"
       - "scripts/test-issue106-map-revision-shadow.ts"
+      - "scripts/test-issue106-map-migration-restore.ts"
       - "docs/qa106-map-revision-shadow-schema.sql"
       - "docs/qa106-map-revision-supersession-design.md"
       - "scripts/qa-issue106-parallel-run.sh"
@@ -31,6 +32,7 @@ on:
       - "scripts/qa-issue106-generic-map-publication-preview.ts"
       - "docs/qa106-generic-map-revision-preview-schema.sql"
       - "scripts/test-issue106-map-revision-shadow.ts"
+      - "scripts/test-issue106-map-migration-restore.ts"
       - "docs/qa106-map-revision-shadow-schema.sql"
       - "docs/qa106-map-revision-supersession-design.md"
       - "scripts/qa-issue106-parallel-run.sh"
@@ -67,6 +69,7 @@ jobs:
           node scripts/test-issue106-b-repair-runner.mjs
           node --experimental-strip-types scripts/test-issue106-b-exact-map-repair.ts
           node --experimental-sqlite --experimental-strip-types scripts/test-issue106-map-revision-shadow.ts
+          node --experimental-sqlite --experimental-strip-types scripts/test-issue106-map-migration-restore.ts
           bash -n scripts/qa-issue106-b-map-repair-run.sh
           node scripts/test-ingestion-v2-qa-guard.mjs
           node scripts/test-ingestion-coordinator-client.mjs
