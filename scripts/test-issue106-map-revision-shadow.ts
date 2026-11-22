@@ -21,6 +21,11 @@ import {
 } from "./qa-issue106-map-revision-shadow.ts";
 import {filterShadowVisibleMapVectors}
  from "./qa-issue106-map-revision-shadow-read.ts";
+import {
+ stageGenericMapCandidatePreview,activateGenericMapRevisionPreview,
+ blockGenericMapRevisionPreview,filterGenericPublishedMapPreview,
+ type MapRevisionScope,
+} from "./qa-issue106-generic-map-publication-preview.ts";
 
 const fp="a".repeat(64),key="b".repeat(64);
 const temp=mkdtempSync(join(tmpdir(),"qa106-map-revision-offline-"));
@@ -30,6 +35,7 @@ const files=[
  "../docs/ingestion-v2-document-epoch-schema.sql",
  "../docs/ingestion-v2-pending-map-windows-schema.sql",
  "../docs/qa106-map-revision-shadow-schema.sql",
+ "../docs/qa106-generic-map-revision-preview-schema.sql",
 ];
 type RecordEntry={id:string;metadata:Record<string,unknown>;values:number[]};
 class FakeIndex implements ImmutableIndex{
@@ -56,6 +62,7 @@ function fixture(prefix:string){
  const db:CoordinatorDB={prepare:(sql:string)=>({
    bind:(...args:unknown[])=>({
      first:async()=> ((sqlite.prepare(sql).get(...(args as any[])) as Record<string,unknown>|undefined) ?? null),
+     all:async()=> ({results:sqlite.prepare(sql).all(...(args as any[])) as Array<Record<string,unknown>>}),
      bind:()=>{throw Error("RE-BIND_NOT_ALLOWED")},
    }),
    first:async()=>{throw Error("BIND_REQUIRED")},
@@ -276,6 +283,78 @@ try{
  assert.equal(f.count("SELECT COUNT(*) AS n FROM qa106_map_revision_shadow_publications WHERE document_id=?",[QA106_B_PDF_ID]),1);
  assert.equal(f.count("SELECT COUNT(*) AS n FROM ingestion_v2_vector_receipts WHERE document_id=? AND layer='raw'",[QA106_B_PDF_ID]),rawBefore);
  assert.equal(f.count("SELECT COUNT(*) AS n FROM ingestion_v2_staged_evidence WHERE document_id=?",[QA106_B_PDF_ID]),evidenceBefore);
+ // PREVIEW OF A REAL GENERIC MAP PUBLICATION POINTER; still strictly
+ // local SQLite + fake dual indices and NEVER calls production routes.
+ // Seed one already-published A Map vector and D1 receipt to prove legacy
+ // compatibility and no alteration of the published A manifest.
+ const aLease={...f.lease,jobKey:QA106_A_JOB};
+ const aLogical="map-"+"1".repeat(40);
+ const aPhysical=immutableVectorId(aLease,QA106_A_PDF_ID,"map",aLogical,fp,1);
+ const aMeta={
+   sourceFileId:QA106_A_PDF_ID,sourceFingerprint:fp,
+   stagedGeneration:1,stagedLayer:"map",status:"active",
+   contentType:"document-map",text:"Grounded QA A original Map",
+   fileName:"fixture-a.pdf",sourcePath:"qa/fixture-a.pdf",page:1,pageEnd:1,
+ };
+ const aHit={id:aPhysical,metadata:aMeta};
+ f.sqlite.prepare(`INSERT INTO ingestion_v2_vector_receipts
+ (document_id,generation,layer,logical_id,staged_id,source_fingerprint,created_at_ms)
+ VALUES (?,?,?,?,?,?,?)`).run(QA106_A_PDF_ID,1,"map",aLogical,aPhysical,fp,Date.now());
+ const bHit=candidates.map(c=>structuredClone(c));
+ const currentA=await filterGenericPublishedMapPreview(f.db,[aHit],ix);
+ assert.deepEqual(currentA.map(x=>x.id),[aPhysical],
+   "Legacy published A remains readable with no revision candidate");
+ const previewScope:MapRevisionScope={
+  documentId:QA106_B_PDF_ID,jobKey:QA106_B_JOB,
+  epoch:f.scope.documentEpoch,revision:f.scope.revision,fingerprint:fp,
+ };
+ const embeddingHash=String(f.read(`SELECT embeddings_sha256 FROM
+   qa106_map_revisions WHERE document_id=?`,[QA106_B_PDF_ID])!.embeddings_sha256);
+ const previewPayload={entries:complete.payload!.entries};
+ await stageGenericMapCandidatePreview(
+   f.db,f.lease,previewScope,previewPayload,embeddingHash,ix);
+ assert.deepEqual((await filterGenericPublishedMapPreview(
+   f.db,[aHit,...bHit,obsolete],ix)).map(x=>x.id),[aPhysical],
+   "Pre-activation B new Map and old unfinished Map must both be hidden");
+ assert.equal(await activateGenericMapRevisionPreview(
+   f.db,f.lease,previewScope,ix),true);
+ const candidatesExpected=[aPhysical,...bHit.map(x=>x.id)];
+ assert.deepEqual((await filterGenericPublishedMapPreview(
+   f.db,[obsolete,aHit,...bHit,bHit[0]],ix)).map(x=>x.id),
+   candidatesExpected,
+   "Atomic D1 activation makes ONLY new B revision visible alongside legacy A");
+ assert.equal(f.count(`SELECT COUNT(*) AS n FROM
+   ingestion_v2_map_revision_receipts WHERE document_id=?`,
+   [QA106_B_PDF_ID]),2);
+ assert.equal(f.count(`SELECT COUNT(*) AS n FROM
+   ingestion_v2_publications WHERE document_id=?`,[QA106_B_PDF_ID]),0,
+   "Generic preview MUST NOT mutate existing live publication");
+ // Revision receipt loss invalidates the whole B Map but leaves A visible.
+ f.sqlite.prepare(`DELETE FROM ingestion_v2_map_revision_receipts
+  WHERE staged_id=?`).run(bHit[0].id);
+ assert.deepEqual((await filterGenericPublishedMapPreview(
+   f.db,[aHit,...bHit],ix)).map(x=>x.id),[aPhysical]);
+ await stageGenericMapCandidatePreview(
+    f.db,f.lease,previewScope,previewPayload,embeddingHash,ix);
+ assert.deepEqual((await filterGenericPublishedMapPreview(
+    f.db,[aHit,...bHit],ix)).map(x=>x.id),candidatesExpected);
+ // One missing Vectorize mirror invalidates B; no partial Map surfaced.
+ const left=ix[1].map.get(bHit[0].id)!;
+ ix[1].map.delete(bHit[0].id);
+ assert.deepEqual((await filterGenericPublishedMapPreview(
+    f.db,[aHit,...bHit],ix)).map(x=>x.id),[aPhysical]);
+ ix[1].record(left);
+ assert.equal(await blockGenericMapRevisionPreview(
+    f.db,f.lease,previewScope),true);
+ assert.deepEqual((await filterGenericPublishedMapPreview(
+    f.db,[aHit,...bHit,obsolete],ix)).map(x=>x.id),[aPhysical],
+    "Rollback blocks B without exposing an old Map or affecting legacy A");
+ assert.equal(await activateGenericMapRevisionPreview(
+   f.db,f.lease,previewScope,ix),true,
+   "Same complete immutable revision can be restored without providers");
+ assert.deepEqual((await filterGenericPublishedMapPreview(
+   f.db,[aHit,...bHit],ix)).map(x=>x.id),candidatesExpected);
+ console.log("PASS: generic map activation CAS, legacy A compatibility, no B legacy fallback, revision receipt/index corruption and rollback");
  const shadow=f.read("SELECT map_count,raw_count,evidence_count FROM qa106_map_revision_shadow_publications WHERE document_id=?",[QA106_B_PDF_ID]);
  assert.deepEqual([shadow?.map_count,shadow?.raw_count,shadow?.evidence_count],[2,2,2]);
  console.log("PASS: old Map intent retained, exact write-ahead payload+embeddings, successor lease, orphan readback, no model calls, shadow CAS only");
