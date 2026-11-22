@@ -202,15 +202,25 @@ imported by** `publishedArchiveEnv`, `/api/ask`, or any deployed Worker.
 Do not set this flag in a real environment before all reader
 integrations and security review.
 
-**Integration hazard discovered:** the existing
-`app/lib/archive-evidence-index.ts` only checks
-`ingestion_v2_publications` when filtering legacy exact Evidence.
-A B revision candidate without an old publication could therefore
-be treated as an unsuperseded legacy document in that code path.
-Production integration must add a revision-aware suppression for
-legacy Evidence rows and ensure newly published revised Evidence
-citations share the same active D1 Map pointer. **Do not enable any
-real revision-read feature flag before this is addressed.**
+**Integration hazard identified and guarded in this unmerged branch:**
+the existing `app/lib/archive-evidence-index.ts` checks only
+`ingestion_v2_publications` when filtering legacy exact Evidence;
+B with a revision candidate but without an old publication could
+otherwise be treated as an unsuperseded legacy document. The branch
+now adds a separately opt-in **`__mapRevisionReadGate`** check:
+the existence of *any* revision candidate denies legacy Evidence
+fallback for that document, including before activation or after
+a blocked rollback. If the revision table or D1 read fails, the
+candidate check fails closed. This marker is **never set** by the
+production app and changes nothing without explicit future migration
+wiring. Offline `scripts/test-issue106-legacy-evidence-gate.ts`
+covers the existing default mode, published A, incomplete B, cached
+document lookups and missing D1 schema. Future production integration
+must additionally replace the exact Evidence discovery path with
+revision-aware active-pointer citations; hiding old B rows alone is
+**not** sufficient to show B's revised citations safely. **Do not enable
+any real revision-read feature flag before that integration passes
+separate QA and release review.**
 
 ## Explicit next release gates — all require separate review
 
