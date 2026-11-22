@@ -74,11 +74,33 @@ short-lived worker lease generation**:
 7. **Partial remote index failure**: never insert into the other index by
    blindly repeating without reconciliation; a half-pair fails closed for
    separate diagnostic handling. Historical receipts are never deleted.
+8. **Atomic active-revision reader (offline proof only)**: the new
+   `filterShadowVisibleMapVectors` accepts candidates only when ONE D1 shadow
+   publication row matches the unchanged source epoch, B job, revision payload
+   and exact manifest SHA. It requires the complete revision-specific D1
+   receipt set, unchanged RAW/Evidence counts, and validates *every* new Map
+   physical ID against BOTH indexes and original durable text/metadata before
+   allowing *any* Map hit. Legacy old B Map receipt alone never makes a node
+   visible. No legacy fallback on a missing pointer, wrong metadata, index
+   outage or D1 error. This is NOT connected to the production `/api/ask`
+   route or current immutable reader.
+9. **Pointer rollback drill (offline)**: delete only the shadow active pointer
+   in synthetic SQLite; all new Map hits vanish at once while payload/embeddings,
+   revision receipts and historical old Map evidence survive. Reattest the
+   unchanged vectors with the live lease and atomically republish exactly the
+   same shadow manifest with *zero provider calls*.
+
 
 ## What this PR proves and does NOT prove
 
 - Offline SQLite/D1-SQL and fake dual-Vectorize integration tests for the
   above operations; no model or remote resource is needed.
+- Active revision read-gate tests prove **zero visible new B Map nodes
+  before** the shadow publication CAS; after publication only the exact new
+  two nodes are visible. Old unfinished Map, forged revision/fingerprint/page,
+  malformed manifest, missing D1 receipt, missing Vectorize mirror, D1
+  outage, expired source revision and revoked publication pointer fail closed.
+  This is a simulated read path, not a live reader migration.
 - The ability to preserve A and old B RAW/Evidence + missing intent and build a
   separate complete, restartable new B Map *shadow* manifest.
 - It does **not** prove a real two-worker remote QA pass, an authenticated
@@ -111,4 +133,5 @@ short-lived worker lease generation**:
 
 **Files:** `docs/qa106-map-revision-shadow-schema.sql`,
 `scripts/qa-issue106-map-revision-shadow.ts`,
+`scripts/qa-issue106-map-revision-shadow-read.ts`,
 `scripts/test-issue106-map-revision-shadow.ts`.
