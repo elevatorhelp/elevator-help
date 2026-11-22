@@ -151,9 +151,12 @@ async function setup(label:string){
 }
 async function persistAll(f:Awaited<ReturnType<typeof setup>>){
  await beginShadowMapRevision(f.db,f.lease,f.scope);
+ await reserveShadowProviderCall(f.db,f.lease,f.scope,"map_generation");
  await persistGeneratedMapPayload(f.db,f.lease,f.scope,nodes);
  let snap=await readDurableShadowRevision(f.db,f.lease,f.scope);
  assert.equal(snap.state,"generated");
+ await reserveShadowProviderCall(f.db,f.lease,f.scope,"workers_ai_embedding");
+ await reserveShadowProviderCall(f.db,f.lease,f.scope,"gemini_embedding");
  await persistMapEmbeddings(f.db,f.lease,f.scope,embeds(snap.payload!.entries));
  snap=await readDurableShadowRevision(f.db,f.lease,f.scope);
  assert.equal(snap.state,"embedded");
@@ -172,6 +175,9 @@ try{
    f.db,f.lease,f.scope,"gemini_embedding"),
    /PROVIDER_ALREADY_RESERVED_OR_STALE/,
    "Embedding may not start before exact Map content is durably generated");
+ await assert.rejects(persistGeneratedMapPayload(
+   f.db,f.lease,f.scope,nodes),/GENERATED_PAYLOAD_CONFLICT_OR_STALE/,
+   "Provider output cannot be persisted before the model reservation");
  await reserveShadowProviderCall(f.db,f.lease,f.scope,"map_generation");
  await assert.rejects(reserveShadowProviderCall(
    f.db,f.lease,f.scope,"map_generation"),
@@ -206,6 +212,9 @@ try{
    f.db,f.lease,f.scope,"map_generation"),
    /PROVIDER_ALREADY_RESERVED_OR_STALE/,
    "A successor lease cannot regenerate an already claimed Map request");
+ await assert.rejects(persistMapEmbeddings(f.db,f.lease,f.scope,
+   embeds(restored.payload!.entries)),/EMBEDDING_CONFLICT_OR_STALE/,
+   "Provider output cannot be persisted before BOTH embedding reservations");
  await reserveShadowProviderCall(f.db,f.lease,f.scope,"workers_ai_embedding");
  await reserveShadowProviderCall(f.db,f.lease,f.scope,"gemini_embedding");
  await assert.rejects(reserveShadowProviderCall(
