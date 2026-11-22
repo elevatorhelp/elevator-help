@@ -63,3 +63,23 @@ CREATE TABLE IF NOT EXISTS qa106_map_revision_shadow_publications (
   FOREIGN KEY(document_id,staging_epoch,revision)
     REFERENCES qa106_map_revisions(document_id,staging_epoch,revision)
 );
+
+
+-- One reservation per external provider step. Reserve in D1 BEFORE the call.
+-- An interrupted call with no durable output CANNOT be automatically retried
+-- under a successor lease: it would risk duplicate model/embedding spend.
+-- A deliberately approved new revision would require separate change control.
+CREATE TABLE IF NOT EXISTS qa106_map_revision_provider_reservations (
+  document_id TEXT NOT NULL,
+  staging_epoch INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  purpose TEXT NOT NULL CHECK(purpose IN
+    ('map_generation','workers_ai_embedding','gemini_embedding')),
+  job_key TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  lease_generation INTEGER NOT NULL CHECK(lease_generation>=1),
+  reserved_at_ms INTEGER NOT NULL CHECK(reserved_at_ms>0),
+  PRIMARY KEY(document_id,staging_epoch,revision,purpose),
+  FOREIGN KEY(document_id,staging_epoch,revision)
+    REFERENCES qa106_map_revisions(document_id,staging_epoch,revision)
+);
