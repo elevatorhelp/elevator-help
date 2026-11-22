@@ -190,6 +190,7 @@ async function analyzeDocumentWindow(
   apiKey: string,
   fetchImpl: FetchLike = fetch,
   maxAttempts=2,
+  redactErrors=false,
 ): Promise<MapNode[]> {
   const firstPage = pages[0]?.page || 1;
   const lastPage = pages[pages.length - 1]?.page || firstPage;
@@ -242,7 +243,7 @@ ${JSON.stringify(pages)}
       break;
     } catch (error) {
       lastError = error;
-      if(process.env.QA106_B_MAP_REPAIR_ENABLED==="true"||
+      if(redactErrors||process.env.QA106_B_MAP_REPAIR_ENABLED==="true"||
          process.env.QA106_B_MAP_REVISION_SHADOW_ENABLED==="true"){
         // QA repair output/provider errors can contain document content.
         console.error("QA106_B_REPAIR_GEMINI_GENERATION_FAILED");
@@ -428,7 +429,7 @@ export async function POST(request: NextRequest) {
             // Exactly ONE generation attempt. An ambiguous response is
             // permanently reserved; never repeat a billed request.
             const newNodes=await analyzeDocumentWindow(
-              document,pages,apiKey,budget.fetch,1);
+              document,pages,apiKey,budget.fetch,1,true);
             return newNodes.map(node=>{
               const text=[
                 "[DOCUMENT KNOWLEDGE MAP]",
