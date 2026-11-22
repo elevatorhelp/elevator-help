@@ -62,7 +62,7 @@ export async function onlyUnsupersededLegacyRows(
   return safe;
 }
 
-async function mergePublishedEvidenceRows(
+export async function mergePublishedEvidenceRows(
   db:any,rows:ArchiveEvidenceRow[],
   identifiers:ReferenceIdentifier[],clauses:string[],limit:number,
 ):Promise<ArchiveEvidenceRow[]>{
