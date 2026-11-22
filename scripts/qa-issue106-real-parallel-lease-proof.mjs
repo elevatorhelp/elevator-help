@@ -66,7 +66,7 @@ async function main(){
  assertLease(old.a,"A",owner("A","first"));
  assertLease(old.b,"B",owner("B","first"));
  if(phase==="b-survives"){
-   const keep=await post("B",{action:"renew",lease:old.b,ttlMs:60000});
+   const keep=await post("B",{action:"renew",lease:old.b,ttlMs:180000});
    if(keep.ok!==true)deny("B_RENEW_FAILED");
    // A's process is already terminated by the caller. We verify B remains
    // reachable while A is down, not merely that D1 has two lease rows.
