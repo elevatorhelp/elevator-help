@@ -27,6 +27,8 @@ import {
  filterGenericPublishedRawPreview,readGenericPublishedEvidencePreview,
  type MapRevisionScope,
 } from "./qa-issue106-generic-map-publication-preview.ts";
+import {revisionReadGatePreview}
+ from "./qa-issue106-revision-reader-flag-preview.ts";
 
 const fp="a".repeat(64),key="b".repeat(64);
 const temp=mkdtempSync(join(tmpdir(),"qa106-map-revision-offline-"));
@@ -374,7 +376,46 @@ try{
  assert.deepEqual((await filterGenericPublishedRawPreview(
    f.db,[aRawHit,...bRaw,bRaw[0]],ix)).map(x=>x.id),rawExpected,
    "Active revision makes the original RAW B pair visible without reindexing");
- const bCitations=await readGenericPublishedEvidencePreview(
+ // Disabled-by-default reader integration must preserve original env
+ // identity. Enabled path is an OFFLINE adapter, not the live /api/ask.
+ const candidatesFromIndex=[aHit,...bHit,obsolete,aRawHit,...bRaw];
+ const originalPort=(index:0|1)=>({
+    query:async (..._args:unknown[])=>({matches:candidatesFromIndex}),
+    getByIds:async(ids:string[])=>candidatesFromIndex.filter(x=>ids.includes(x.id)),
+    insert:async()=>{throw Error("QA106_TEST_READ_ADAPTER_WRITE_DENIED")},
+ });
+ const previewBase={
+   CORTEX_DB:f.db,VECTORIZE:originalPort(0),VECTORIZE_V2:originalPort(1),
+ };
+ assert.equal(revisionReadGatePreview(previewBase),previewBase,
+   "absent feature flag leaves original production-compatible object unchanged");
+ const withFlag=revisionReadGatePreview({
+  ...previewBase,INGESTION_MAP_REVISION_READS_PREVIEW_ENABLED:"true",
+ }) as typeof previewBase&{
+  readExactEvidence:(doc:string,limit?:number)=>Promise<unknown[]>;
+ };
+ const gated=await withFlag.VECTORIZE.query();
+ assert.deepEqual(gated.matches?.map(x=>x.id),
+   [aHit.id,...bHit.map(x=>x.id),aRawHit.id,...bRaw.map(x=>x.id)],
+   "query must filter obsolete B map, keep legacy A and revision B RAW/Map");
+ const byId=await withFlag.VECTORIZE_V2.getByIds(
+  candidatesFromIndex.map(x=>x.id));
+ assert.deepEqual(byId.map(x=>x.id),
+   gated.matches?.map(x=>x.id),
+   "getByIds requires same exact revision visibility as query");
+ assert.equal((await withFlag.readExactEvidence(QA106_B_PDF_ID)).length,2,
+   "revision evidence uses only the same authoritative active pointer");
+ const unavailable=revisionReadGatePreview({
+  ...previewBase,INGESTION_MAP_REVISION_READS_PREVIEW_ENABLED:"true",
+  CORTEX_DB:undefined,VECTORIZE_V2:undefined,
+ }) as typeof previewBase&{
+  readExactEvidence:(doc:string)=>Promise<unknown[]>;
+ };
+ assert.deepEqual((await unavailable.VECTORIZE.query()).matches,[],
+  "missing D1 or one index must fail closed, never fall back to unfiltered data");
+ assert.deepEqual(await unavailable.VECTORIZE.getByIds([aHit.id]),[]);
+ assert.deepEqual(await unavailable.readExactEvidence(QA106_B_PDF_ID),[]);
+  const bCitations=await readGenericPublishedEvidencePreview(
    f.db,QA106_B_PDF_ID,ix);
  assert.equal(bCitations.length,2);
  assert.deepEqual(bCitations.map(x=>x.page),[1,2]);
@@ -416,6 +457,11 @@ try{
    "B Evidence must hide immediately on revision rollback");
  assert.equal((await readGenericPublishedEvidencePreview(
    f.db,QA106_A_PDF_ID,ix)).length,1);
+ assert.deepEqual((await withFlag.VECTORIZE.query()).matches?.map(x=>x.id),
+   [aHit.id,aRawHit.id],
+   "opted-in query must hide B Map+RAW immediately after atomic rollback");
+ assert.deepEqual(await withFlag.readExactEvidence(QA106_B_PDF_ID),[]);
+ 
  assert.equal(await activateGenericMapRevisionPreview(
    f.db,f.lease,previewScope,ix),true,
    "Same complete immutable revision can be restored without providers");
