@@ -17,7 +17,7 @@ import {QA106_A_JOB,QA106_A_PDF_ID,QA106_B_JOB,QA106_B_PDF_ID}
 import {
  beginShadowMapRevision,persistGeneratedMapPayload,persistMapEmbeddings,
  reconcileShadowMapRevision,publishShadowMapRevision,readDurableShadowRevision,
- reserveShadowProviderCall,
+ reserveShadowProviderCall,advanceShadowMapRevisionWithProviders,
  type RevisionScope,type RevisionNode,
 } from "./qa-issue106-map-revision-shadow.ts";
 import {filterShadowVisibleMapVectors}
@@ -646,6 +646,59 @@ try{
    f.db,QA106_B_PDF_ID,ix),[]);
  console.log("PASS: atomic shadow Map pointer, exact active revision/receipt/metadata, half-index, stale fingerprint and old Map exclusion");
  f.close();
+
+
+ // End-to-end QA-only orchestration with mock providers and real SQLite CAS.
+ // First invocation performs one generation, two embeddings, dual fake Vectorize
+ // insert/attestation and shadow publish; repeats must make ZERO provider calls.
+ const runner=await setup("runner");
+ const runnerIx:[FakeIndex,FakeIndex]=[new FakeIndex(),new FakeIndex()];
+ const counters={generation:0,workers:0,gemini:0};
+ const providers={
+   generate:async()=>{counters.generation++;return nodes;},
+   workersEmbedding:async(texts:string[])=>{
+     counters.workers++;return texts.map((_,i)=>[1,i+1,0.5]);
+   },
+   geminiEmbedding:async(texts:string[])=>{
+     counters.gemini++;return texts.map((_,i)=>[0.4,i+1,0.2]);
+   },
+ };
+ const runOnce=await advanceShadowMapRevisionWithProviders(
+   runner.db,runner.lease,runner.scope,providers,runnerIx);
+ assert.deepEqual(runOnce,{status:"shadow_published",providerCalls:3});
+ assert.deepEqual(counters,{generation:1,workers:1,gemini:1});
+ assert.deepEqual(await advanceShadowMapRevisionWithProviders(
+   runner.db,runner.lease,runner.scope,providers,runnerIx),
+   {status:"shadow_published",providerCalls:0});
+ assert.deepEqual(counters,{generation:1,workers:1,gemini:1},
+   "Repeated QA runner must not spend again after durable embedding");
+ runner.close();
+
+ // Unknown outcome of a reserved model call is NOT an invitation to retry:
+ // the recovery caller must fail closed before contacting the provider.
+ const uncertain=await setup("uncertain");
+ const uncertainIx:[FakeIndex,FakeIndex]=[new FakeIndex(),new FakeIndex()];
+ let attempted=0;
+ const uncertainProviders={
+   ...providers,
+   generate:async():Promise<RevisionNode[]>=>{
+     attempted++;throw Error("QA106_TEST_PROVIDER_UNCERTAIN_OUTCOME");
+   },
+ };
+ await assert.rejects(advanceShadowMapRevisionWithProviders(
+   uncertain.db,uncertain.lease,uncertain.scope,
+   uncertainProviders,uncertainIx),
+   /QA106_TEST_PROVIDER_UNCERTAIN_OUTCOME/);
+ await assert.rejects(advanceShadowMapRevisionWithProviders(
+   uncertain.db,uncertain.lease,uncertain.scope,
+   uncertainProviders,uncertainIx),
+   /PROVIDER_ALREADY_RESERVED_OR_STALE/,
+   "Never retry uncertain paid request");
+ assert.equal(attempted,1);
+ assert.equal(uncertain.count(
+   "SELECT COUNT(*) AS n FROM qa106_map_revision_provider_reservations"),1);
+ uncertain.close();
+ console.log("PASS: B-only orchestrator exact reservations, durable no-spend resume and uncertain-call fail-closed");
 
  const g=await setup("half");
  await persistAll(g);
