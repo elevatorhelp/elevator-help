@@ -17,11 +17,17 @@ export type ArchiveEvidenceRow = {
 
 // In strict published-read mode a V2-published document supersedes every
 // legacy exact-source row. Fail closed on missing schema or D1 errors.
-async function onlyUnsupersededLegacyRows(
+export async function onlyUnsupersededLegacyRows(
   db:any,rows:ArchiveEvidenceRow[],
 ):Promise<ArchiveEvidenceRow[]>{
-  if(!db?.__immutableReadGate)return rows;
+  // This additional opt-in marker is NOT set in the live environment.
+  // If enabled during a reviewed migration, any revision candidate is an
+  // explicit deny-legacy-fallback marker, including before activation and
+  // after rollback. Missing migration schema => no legacy evidence.
+  const mapRevisionGate=db?.__mapRevisionReadGate===true;
+  if(!db?.__immutableReadGate&&!mapRevisionGate)return rows;
   const cache=new Map<string,Promise<any>>();
+  const revised=new Map<string,Promise<any>>();
   const safe:ArchiveEvidenceRow[]=[];
   for(const row of rows){
     const doc=row.source_file_id;
@@ -34,9 +40,21 @@ async function onlyUnsupersededLegacyRows(
       cache.set(doc,publication);
     }
     try {
+      if(mapRevisionGate){
+        let marker=revised.get(doc);
+        if(!marker){
+          marker=Promise.resolve().then(()=>db.prepare(
+            "SELECT 1 AS present FROM ingestion_v2_map_revision_candidates WHERE document_id=? LIMIT 1"
+          ).bind(doc).first());
+          revised.set(doc,marker);
+        }
+        // Candidate presence blocks *all* legacy evidence, even when the
+        // new Map pointer is not yet active. Stale-old B never becomes a citation.
+        if(await marker)continue;
+      }
       if(!(await publication))safe.push(row);
     }catch{
-      // D1 cannot prove a legacy row is still active -> do not cite it.
+      // Missing revision tables or D1 outage must never leak legacy text.
     }
   }
   return safe;
