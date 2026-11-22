@@ -439,13 +439,16 @@ export async function POST(request: NextRequest) {
             status:completed?"shadow_published":"pending",providerCalls:0,
           });
         }
+        if(typeof apiKey!=="string"||apiKey.length===0)
+          throw Error("QA106_B_SHADOW_PROVIDERS_UNAVAILABLE");
+        const paidMapApiKey:string=apiKey;
         const budget=createGeminiCallBudget(2);
         const providerSet={
           generate:async():Promise<RevisionNode[]>=>{
             // Exactly ONE generation attempt. An ambiguous response is
             // permanently reserved; never repeat a billed request.
             const newNodes=await analyzeDocumentWindow(
-              document,pages,apiKey,budget.fetch,1,true);
+              document,pages,paidMapApiKey,budget.fetch,1,true);
             return newNodes.map(node=>{
               const text=[
                 "[DOCUMENT KNOWLEDGE MAP]",
@@ -475,7 +478,7 @@ export async function POST(request: NextRequest) {
             return response?.data as number[][];
           },
           geminiEmbedding:(texts:string[])=>embedRetrievalDocuments(
-            texts,apiKey,budget.fetch),
+            texts,paidMapApiKey,budget.fetch),
         };
         const result=await advanceShadowMapRevisionWithProviders(
           db,lease!,scope,providerSet,
