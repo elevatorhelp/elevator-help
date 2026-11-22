@@ -93,6 +93,16 @@ function validatePayload(s:MapRevisionScope,lease:ArchiveLease,
      !Number.isSafeInteger(m.pageEnd)||Number(m.pageEnd)<Number(m.page))
       fail("PAYLOAD_ENTRY_INVALID");
  }
+ // Original shadow writer hashes text and PRE-staging metadata into
+ // the logical ID. Verify the cryptographic content commitment as well as
+ // the generation-qualified physical ID.
+ for(const e of payload.entries){
+   const base={...e.metadata};
+   delete base.mapRevision;delete base.stagedGeneration;delete base.stagedLayer;
+   const expected="map-"+digest([s.documentId,s.fingerprint,s.revision,
+     e.text,base]).slice(0,40);
+   if(e.logicalId!==expected)fail("CONTENT_ADDRESS_MISMATCH");
+ }
  const json=JSON.stringify(payload);
  if(Buffer.byteLength(json,"utf8")>380000)fail("PAYLOAD_TOO_LARGE");
  return {json,hash:digest(payload)};
@@ -222,14 +232,6 @@ async function manifestProof(db:CoordinatorDB,s:MapRevisionScope,
    rawIds,evidenceIds]);
  return {payload:c.payload,rawIds,evidenceIds,manifest};
 }
-const idsFence=(table:string,column:string,filter:string)=>
- ` AND (SELECT COUNT(*) FROM ${table} WHERE ${filter})=?
- AND NOT EXISTS(SELECT 1 FROM ${table} t WHERE ${filter.replaceAll("document_id=?","t.document_id=?")
-    .replaceAll("generation=?","t.generation=?")
-    .replaceAll("source_fingerprint=?","t.source_fingerprint=?")
-    .replaceAll("staging_epoch=?","t.staging_epoch=?")
-    .replaceAll("revision=?","t.revision=?")}
- AND NOT EXISTS(SELECT 1 FROM json_each(?) j WHERE j.value=t.${column}))`;
 /** Atomically activate an existing, fully attested revision with one D1 CAS.
  * The only visibility switch is this new table's active row.
  * Existing ingestion_v2_publications is NEVER overwritten by this preview.
@@ -394,5 +396,146 @@ export async function filterGenericPublishedMapPreview<T extends VectorMatch>(
     if(!approved.has(hit)||emitted.has(hit.id))return false;
     emitted.add(hit.id);return true;
   });
+ }catch{return []}
+}
+
+/** Preview of version-aware RAW visibility. A non-revisioned, already
+ * published A document retains the existing immutable receipt semantics.
+ * Revisioned B requires an intact active Map pointer BEFORE its RAW may
+ * appear, then exact old RAW receipts and readback in both indexes.
+ */
+export async function filterGenericPublishedRawPreview<T extends VectorMatch>(
+ db:CoordinatorDB|undefined,matches:T[],
+ indexes:readonly [ImmutableIndex,ImmutableIndex],
+):Promise<T[]>{
+ if(!db?.prepare||!Array.isArray(matches)||indexes?.length!==2)return [];
+ try{
+  const accepted=new Set<T>();
+  const docs=new Map<string,T[]>();
+  for(const m of matches){
+   const doc=m?.metadata?.sourceFileId;
+   if(typeof doc!=="string"||doc.length<1)continue;
+   docs.set(doc,[...(docs.get(doc)||[]),m]);
+  }
+  for(const [doc,hits] of docs){
+   const candidate=await q(db,`SELECT 1 AS present FROM
+    ingestion_v2_map_revision_candidates WHERE document_id=? LIMIT 1`,[doc]);
+   if(!candidate){
+    const pub=await q(db,`SELECT 1 AS present FROM
+     ingestion_v2_publications WHERE document_id=?`,[doc]);
+    if(!pub)continue;
+    const old=await filterVisibleImmutableVectors(db,hits,false);
+    for(const hit of old){
+      if(parseImmutableVectorId(hit.id)?.layer==="raw")accepted.add(hit);
+    }
+    continue;
+   }
+   const active=await activeForDoc(db,doc,indexes);
+   if(!active)continue;
+   const allowed=new Set(active.proof.rawIds);
+   for(const hit of hits){
+    const meta=hit.metadata||{},parts=parseImmutableVectorId(hit.id);
+    if(!allowed.has(hit.id)||parts?.layer!=="raw"||
+       parts.generation!==active.scope.epoch||
+       meta.sourceFileId!==doc||
+       meta.sourceFingerprint!==active.scope.fingerprint||
+       meta.stagedGeneration!==active.scope.epoch||
+       meta.stagedLayer!=="raw"||meta.status!=="active"||
+       meta.contentType==="document-map"||
+       typeof meta.text!=="string"||!meta.text||
+       !Number.isSafeInteger(meta.page)||Number(meta.page)<1||
+       !Number.isSafeInteger(meta.chunkIndex)||
+       Number(meta.chunkIndex)<0)continue;
+    const receipt=await q(db,`SELECT staged_id FROM ingestion_v2_vector_receipts
+     WHERE document_id=? AND generation=? AND layer='raw'
+       AND source_fingerprint=? AND staged_id=?`,[
+       doc,active.scope.epoch,active.scope.fingerprint,hit.id]);
+    if(receipt?.staged_id!==hit.id)continue;
+    const pair=await Promise.all(indexes.map(i=>i.getByIds([hit.id])));
+    if(pair.some(v=>!Array.isArray(v)||v.length!==1||
+       v[0]?.id!==hit.id||
+       v[0]?.metadata?.text!==meta.text||
+       v[0]?.metadata?.page!==meta.page||
+       v[0]?.metadata?.chunkIndex!==meta.chunkIndex||
+       v[0]?.metadata?.fileName!==meta.fileName||
+       v[0]?.metadata?.sourcePath!==meta.sourcePath||
+       v[0]?.metadata?.sourceFileId!==doc||
+       v[0]?.metadata?.sourceFingerprint!==active.scope.fingerprint||
+       v[0]?.metadata?.stagedGeneration!==active.scope.epoch||
+       v[0]?.metadata?.stagedLayer!=="raw"||
+       v[0]?.metadata?.status!=="active"))continue;
+    accepted.add(hit);
+   }
+  }
+  const seen=new Set<string>();
+  return matches.filter(v=>{
+   if(!accepted.has(v)||seen.has(v.id))return false;
+   seen.add(v.id);return true;
+  });
+ }catch{return []}
+}
+export type GenericExactEvidence={
+ logicalId:string;text:string;fileName:string;sourcePath:string;
+ page:number;chunkIndex:number;sourceFingerprint:string;
+};
+/** Evidence page citations use the SAME active source epoch and B pointer.
+ * Never allow a revision candidate with a missing/blocked activation to
+ * fall back to stale evidence, while legacy published A stays supported.
+ */
+export async function readGenericPublishedEvidencePreview(
+ db:CoordinatorDB|undefined,doc:string,
+ indexes:readonly [ImmutableIndex,ImmutableIndex],limit=100,
+):Promise<GenericExactEvidence[]>{
+ if(!db?.prepare||typeof doc!=="string"||!doc||
+    !Number.isSafeInteger(limit)||limit<1||limit>250||
+    indexes?.length!==2)return [];
+ try{
+  const candidate=await q(db,`SELECT 1 AS present
+   FROM ingestion_v2_map_revision_candidates WHERE document_id=? LIMIT 1`,[doc]);
+  let sql:string,args:unknown[];
+  if(candidate){
+   const active=await activeForDoc(db,doc,indexes);
+   if(!active)return [];
+   sql=`SELECT e.logical_id,e.text,e.file_name,e.source_path,
+     e.page,e.chunk_index,e.source_fingerprint
+    FROM ingestion_v2_staged_evidence e
+    JOIN ingestion_v2_map_revision_activations p
+      ON p.document_id=e.document_id
+       AND p.staging_epoch=e.generation
+       AND p.source_fingerprint=e.source_fingerprint
+       AND p.state='active'
+    JOIN ingestion_v2_document_epochs d
+      ON d.document_id=e.document_id AND d.job_key=p.job_key
+       AND d.staging_epoch=p.staging_epoch
+       AND d.source_fingerprint=p.source_fingerprint
+    WHERE e.document_id=?
+    ORDER BY e.page,e.chunk_index LIMIT ?`;
+   args=[doc,limit];
+  }else{
+   // Older published A documents have no revision candidate and are read
+   // strictly via the EXISTING D1 generation publication (never unpub).
+   sql=`SELECT e.logical_id,e.text,e.file_name,e.source_path,
+     e.page,e.chunk_index,e.source_fingerprint
+    FROM ingestion_v2_staged_evidence e JOIN ingestion_v2_publications p
+       ON p.document_id=e.document_id
+        AND p.active_generation=e.generation
+        AND p.source_fingerprint=e.source_fingerprint
+    WHERE e.document_id=?
+    ORDER BY e.page,e.chunk_index LIMIT ?`;
+   args=[doc,limit];
+  }
+  const evidence=await rows(db,sql,args);
+  if(evidence.some(e=>typeof e.logical_id!=="string"||
+    typeof e.text!=="string"||!e.text||
+    typeof e.file_name!=="string"||typeof e.source_path!=="string"||
+    !Number.isSafeInteger(e.page)||Number(e.page)<1||
+    !Number.isSafeInteger(e.chunk_index)||Number(e.chunk_index)<0))
+   return [];
+  return evidence.map(e=>({
+   logicalId:String(e.logical_id),text:String(e.text),
+   fileName:String(e.file_name),sourcePath:String(e.source_path),
+   page:Number(e.page),chunkIndex:Number(e.chunk_index),
+   sourceFingerprint:String(e.source_fingerprint),
+  }));
  }catch{return []}
 }
