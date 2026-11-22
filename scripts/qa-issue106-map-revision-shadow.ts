@@ -336,6 +336,23 @@ export async function reconcileShadowMapRevision(
  }
  return {status:"complete",receipts};
 }
+/** Restart from write-ahead state. No model/embedding call is made here.
+ * After 'embedded', the exact vectors are durable and all retries can use
+ * this snapshot without ANY model-provider request. */
+export async function readDurableShadowRevision(
+ db:CoordinatorDB,lease:ArchiveLease,s:RevisionScope,
+):Promise<{state:"planned"|"generated"|"embedded";
+ payload:Payload|null;embeddings:EmbeddingPayload|null}>{
+ await ensureLive(db,lease,s);
+ const row=await load(db,lease,s);
+ if(row.state!=="planned"&&row.state!=="generated"&&
+    row.state!=="embedded")abort("STATE_INVALID");
+ const state=row.state as "planned"|"generated"|"embedded";
+ const payload=state==="planned"?null:parsePayload(row);
+ const embeddings=state==="embedded"?parseEmbedding(row):null;
+ return {state,payload,embeddings};
+}
+
 /** SHADOW publication: NOT connected to the real published/archive readers. */
 export async function publishShadowMapRevision(
  db:CoordinatorDB,lease:ArchiveLease,s:RevisionScope,
