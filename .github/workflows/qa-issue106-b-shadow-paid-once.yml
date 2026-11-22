@@ -36,6 +36,12 @@ jobs:
           cache: npm
       - name: Locked install
         run: npm ci
+      - name: Compile isolated QA Worker without deployment or model calls
+        run: npm run cf:build
+      - name: Verify compiled Cloudflare worker entry exists
+        run: |
+          set -euo pipefail
+          test -s .open-next/worker.js || { echo "::error::QA106_QA_WORKER_BUILD_MISSING"; exit 1; }
       - name: Run one hard-capped B-only QA Shadow attempt
         run: |
           set -euo pipefail
