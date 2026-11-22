@@ -397,6 +397,68 @@ export async function readDurableShadowRevision(
  return {state,payload,embeddings};
 }
 
+/**
+ * Strictly QA-only orchestration boundary. No built-in provider or credentials.
+ * Callers must supply source-grounded nodes and two embedding providers.
+ * Each potentially billable call is reserved BEFORE invocation and a retry
+ * NEVER repeats an uncertain call if the persisted output is missing.
+ * After both vectors are durable, recovery is provider-free.
+ *
+ * This intentionally does NOT publish to the live D1 publication table.
+ */
+export async function advanceShadowMapRevisionWithProviders(
+ db:CoordinatorDB,lease:ArchiveLease,s:RevisionScope,
+ providers:{
+   generate:()=>Promise<RevisionNode[]>;
+   workersEmbedding:(texts:string[])=>Promise<number[][]>;
+   geminiEmbedding:(texts:string[])=>Promise<number[][]>;
+ },
+ indexes:readonly [ImmutableIndex,ImmutableIndex],
+):Promise<{status:"pending"|"shadow_published";providerCalls:number}>{
+ if(!providers||typeof providers.generate!=="function"||
+    typeof providers.workersEmbedding!=="function"||
+    typeof providers.geminiEmbedding!=="function"||
+    !Array.isArray(indexes)||indexes.length!==2||
+    indexes.some(x=>!x||typeof x.getByIds!=="function"||
+      typeof x.insert!=="function"))
+   abort("PROVIDER_OR_INDEX_UNAVAILABLE");
+ // The exact B-only lease, source epoch and old receipts are checked by
+ // the underlying SQL; no other file can enter this orchestration.
+ await beginShadowMapRevision(db,lease,s);
+ let snapshot=await readDurableShadowRevision(db,lease,s);
+ let calls=0;
+ if(snapshot.state==="planned"){
+   await reserveShadowProviderCall(db,lease,s,"map_generation");
+   calls++;
+   const nodes=await providers.generate();
+   await persistGeneratedMapPayload(db,lease,s,nodes);
+   snapshot=await readDurableShadowRevision(db,lease,s);
+ }
+ if(snapshot.state==="generated"){
+   if(!snapshot.payload?.entries?.length)abort("GENERATED_PAYLOAD_MISSING");
+   // Reserve BOTH steps before the first provider request, so a crash
+   // cannot bypass either provider's durable spend boundary.
+   await reserveShadowProviderCall(db,lease,s,"workers_ai_embedding");
+   await reserveShadowProviderCall(db,lease,s,"gemini_embedding");
+   const texts=snapshot.payload.entries.map(x=>x.text);
+   calls++;
+   const legacy=await providers.workersEmbedding(texts);
+   calls++;
+   const multilingual=await providers.geminiEmbedding(texts);
+   if(!Array.isArray(legacy)||!Array.isArray(multilingual)||
+      legacy.length!==texts.length||multilingual.length!==texts.length)
+     abort("EMBEDDING_COUNT_INVALID");
+   await persistMapEmbeddings(db,lease,s,
+     snapshot.payload.entries.map((entry,i)=>({
+       logicalId:entry.logicalId,legacy:legacy[i],multilingual:multilingual[i],
+     })));
+   snapshot=await readDurableShadowRevision(db,lease,s);
+ }
+ if(snapshot.state!=="embedded")abort("REVISION_NOT_DURABLE");
+ const complete=await publishShadowMapRevision(db,lease,s,indexes);
+ return {status:complete?"shadow_published":"pending",providerCalls:calls};
+}
+
 /** SHADOW publication: NOT connected to the real published/archive readers. */
 export async function publishShadowMapRevision(
  db:CoordinatorDB,lease:ArchiveLease,s:RevisionScope,
