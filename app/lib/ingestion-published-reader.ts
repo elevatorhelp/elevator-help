@@ -75,6 +75,7 @@ export function publishedArchiveEnv<T extends Record<string,any>>(env:T):T {
     get(target,property){
       if(property==="__immutableReadGate")return true;
       if(property==="__mapRevisionReadGate")return revisionMode;
+      if(property==="__mapRevisionIndexes")return revisionMode&&pair?pair:undefined;
       const member=Reflect.get(target,property,target);
       // D1 native methods require their original binding: do not break
       // quota/rate-limit/status paths that also use this environment.
