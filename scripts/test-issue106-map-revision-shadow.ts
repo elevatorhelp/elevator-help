@@ -383,6 +383,44 @@ try{
  assert.deepEqual((await filterGenericPublishedRawPreview(
    f.db,[aRawHit,...bRaw,bRaw[0]],ix)).map(x=>x.id),rawExpected,
    "Active revision makes the original RAW B pair visible without reindexing");
+ // A live rollback may happen while a remote Vectorize getByIds is
+ // pending. Re-check D1 after readback for Map, RAW and exact Evidence;
+ // otherwise a pre-rollback pointer could approve data after revocation.
+ for(const path of ["map","raw","evidence"] as const){
+   let revoked=false;
+   const racingIndex:ImmutableIndex={
+     insert:xs=>ix[0].insert(xs),
+     getByIds:async ids=>{
+       const found=await ix[0].getByIds(ids);
+       if(!revoked&&ids.includes(bHit[0].id)){
+         f.sqlite.prepare(`UPDATE ingestion_v2_map_revision_activations
+           SET state='blocked' WHERE document_id=? AND state='active'`)
+          .run(QA106_B_PDF_ID);
+         revoked=true;
+       }
+       return found;
+     },
+   };
+   const raceIndexes:[ImmutableIndex,ImmutableIndex]=[racingIndex,ix[1]];
+   if(path==="map"){
+     assert.deepEqual((await filterGenericPublishedMapPreview(
+       f.db,[aHit,...bHit],raceIndexes)).map(x=>x.id),[aPhysical],
+       "Mid-read rollback must revoke B Map without hiding published A");
+   }else if(path==="raw"){
+     assert.deepEqual((await filterGenericPublishedRawPreview(
+       f.db,[aRawHit,...bRaw],raceIndexes)).map(x=>x.id),[aRawId],
+       "Mid-read rollback must revoke B RAW without hiding published A");
+   }else{
+     assert.deepEqual(await readGenericPublishedEvidencePreview(
+       f.db,QA106_B_PDF_ID,raceIndexes),[],
+       "Mid-read rollback must revoke B exact Evidence");
+   }
+   assert.equal(revoked,true,"Test must actually revoke during Map readback");
+   assert.equal(await activateGenericMapRevisionPreview(
+     f.db,f.lease,previewScope,ix),true,
+     "Reattestation restores the exact same pointer without model calls");
+ }
+ console.log("PASS: concurrent rollback during Vectorize readback revokes Map, RAW and Evidence");
  // Disabled-by-default reader integration must preserve original env
  // identity. Enabled path is an OFFLINE adapter, not the live /api/ask.
  const candidatesFromIndex=[aHit,...bHit,obsolete,aRawHit,...bRaw];
