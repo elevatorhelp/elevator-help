@@ -1,0 +1,122 @@
+name: Issue106 one-shot QA source additive schema gate (NO model calls)
+run-name: Issue106 QA-only migrate B revision schema after disposable restore PASS
+on:
+  push:
+    branches: [feat/issue106-shadow-map-revision-20261122]
+    paths:
+      - ".github/workflows/qa-issue106-apply-qa-schema-once.yml"
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  qa-source-schema:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa106(one-shot): apply reviewed schemas to isolated QA D1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout QA-only branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked Wrangler
+        run: npm ci
+      - name: Validate isolated QA D1, backup, additive migration and unchanged A/B
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -z "${GEMINI_API_KEY:-}"
+          test -z "${GEMINI_BENCHMARK_API_KEY:-}"
+          CFG=wrangler.qa-pr100-v2.json
+          SRC=elevator-help-lease-test-01
+          TMP="$(mktemp -d "$RUNNER_TEMP/qa106-source-migrate.XXXXXXXX")"
+          trap 'rm -rf "$TMP"' EXIT
+          node --input-type=module - "$CFG" <<'NODE'
+          import {readFileSync} from "node:fs";
+          const c=JSON.parse(readFileSync(process.argv[2],"utf8"));
+          if(c.d1_databases?.length!==1 ||
+             c.d1_databases[0].database_name!=="elevator-help-lease-test-01" ||
+             c.d1_databases[0].database_id!=="02716877-15e3-4478-9e24-f1ba6e5dfb00" ||
+             c.vectorize?.length!==2 ||
+             c.vectorize[0].index_name!=="elevator-help-staging-test" ||
+             c.vectorize[1].index_name!=="elevator-help-staging-test-v2" ||
+             c.vars?.QA106_ISOLATED_BINDINGS!=="qa106-pr100-v2-only" ||
+             c.vars?.QA106_B_MAP_REVISION_SHADOW_ENABLED!=="false")
+             throw Error("QA106_NON_ISOLATED_OR_ENABLED_CONFIGURATION");
+          NODE
+          npx wrangler d1 list --json > "$TMP/list.json" 2>"$TMP/list.err"
+          node --input-type=module - "$TMP/list.json" <<'NODE'
+          import {readFileSync} from "node:fs";
+          const db=JSON.parse(readFileSync(process.argv[2],"utf8"));
+          const rows=Array.isArray(db)?db:[];
+          const exact=rows.filter(x=>x.name==="elevator-help-lease-test-01");
+          if(exact.length!==1 ||
+             (exact[0].uuid!=="02716877-15e3-4478-9e24-f1ba6e5dfb00" &&
+              exact[0].id!=="02716877-15e3-4478-9e24-f1ba6e5dfb00"))
+            throw Error("QA106_WRONG_REMOTE_DATABASE");
+          NODE
+          SQL="SELECT
+          (SELECT COUNT(*) FROM ingestion_v2_publications WHERE document_id='1cT2iBMx7pFDr_JKfZFBSG9xVFu3WZu3v') AS a,
+          (SELECT COUNT(*) FROM ingestion_v2_publications WHERE document_id='1iybMaW8SaB3QfBLfdFJO5ymefVDdjmFn') AS b,
+          (SELECT COUNT(*) FROM ingestion_v2_vector_receipts WHERE document_id='1iybMaW8SaB3QfBLfdFJO5ymefVDdjmFn' AND layer='map') AS map,
+          (SELECT COUNT(*) FROM ingestion_v2_vector_receipts WHERE document_id='1iybMaW8SaB3QfBLfdFJO5ymefVDdjmFn' AND layer='raw') AS raw,
+          (SELECT COUNT(*) FROM ingestion_v2_staged_evidence WHERE document_id='1iybMaW8SaB3QfBLfdFJO5ymefVDdjmFn') AS evidence,
+          (SELECT COUNT(*) FROM ingestion_global_leases WHERE job_key IN
+          ('drive:1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC_qa_A','drive:1TgIo8chX2GTD4Rdx9QCA5RrqBM64gOgC_qa_B')
+          AND lease_until_ms>CAST(strftime('%s','now') AS INTEGER)*1000) AS active;"
+          npx wrangler d1 execute "$SRC" --remote --config "$CFG" --json --command "$SQL" > "$TMP/before.json" 2>"$TMP/query.err"
+          node --input-type=module - "$TMP/before.json" <<'NODE'
+          import {readFileSync} from "node:fs";
+          const x=JSON.parse(readFileSync(process.argv[2],"utf8"));
+          const d=Array.isArray(x)?x:[x],r=d.flatMap(v=>v.results||[])[0];
+          if(!r||Number(r.a)!==1||Number(r.b)!==0||Number(r.map)!==1||
+             Number(r.raw)!==2||Number(r.evidence)!==2||Number(r.active)!==0)
+            throw Error("QA106_UNEXPECTED_SOURCE_STATE");
+          NODE
+          echo PASS:QA106_SOURCE_READONLY_GATE
+          npx wrangler d1 export "$SRC" --remote --config "$CFG" --skip-confirmation --output "$TMP/backup.sql" > "$TMP/export.log" 2>&1
+          test -s "$TMP/backup.sql"
+          test "$(wc -c < "$TMP/backup.sql")" -le 20971520
+          # Independent real remote scratch restore+double migration succeeded:
+          # https://github.com/elevatorhelp/elevator-help/actions/runs/45081177354
+          # Here ONLY the two additive CREATE TABLE/INDEX schema files are applied.
+          for file in docs/qa106-map-revision-shadow-schema.sql docs/qa106-generic-map-revision-preview-schema.sql; do
+            grep -Eq '^CREATE TABLE IF NOT EXISTS ' "$file"
+            if grep -Ein '^(DROP |DELETE |UPDATE |ALTER |INSERT |REPLACE )' "$file" >/dev/null; then
+              echo "::error::QA106_SCHEMA_CONTAINS_MUTATION";exit 1
+            fi
+            npx wrangler d1 execute "$SRC" --remote --config "$CFG" --yes --file "$file" > "$TMP/migrate.log" 2>&1
+          done
+          npx wrangler d1 execute "$SRC" --remote --config "$CFG" --json --command "$SQL" > "$TMP/after.json" 2>"$TMP/query.err"
+          node --input-type=module - "$TMP/before.json" "$TMP/after.json" <<'NODE'
+          import {readFileSync} from "node:fs";
+          const row=p=>{const x=JSON.parse(readFileSync(p,"utf8"));
+            const a=Array.isArray(x)?x:[x];return a.flatMap(v=>v.results||[])[0];};
+          const a=row(process.argv[2]),b=row(process.argv[3]);
+          if(!a||!b)throw Error("QA106_MIGRATION_VERIFY_NOT_AVAILABLE");
+          for(const key of ["a","b","map","raw","evidence","active"])
+            if(Number(a[key])!==Number(b[key]))
+              throw Error("QA106_LEGACY_SOURCE_COUNTS_CHANGED");
+          NODE
+          npx wrangler d1 execute "$SRC" --remote --config "$CFG" --json --command "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('qa106_map_revisions','qa106_map_revision_receipts','qa106_map_revision_shadow_publications','qa106_map_revision_provider_reservations','ingestion_v2_map_revision_candidates','ingestion_v2_map_revision_receipts','ingestion_v2_map_revision_activations');" > "$TMP/tables.json" 2>"$TMP/query.err"
+          node --input-type=module - "$TMP/tables.json" <<'NODE'
+          import {readFileSync} from "node:fs";
+          const x=JSON.parse(readFileSync(process.argv[2],"utf8"));
+          const z=Array.isArray(x)?x:[x];
+          const names=new Set(z.flatMap(v=>v.results||[]).map(r=>r.name));
+          if(names.size!==7)throw Error("QA106_ADDITIVE_SCHEMA_INCOMPLETE");
+          NODE
+          echo PASS:QA106_SOURCE_D1_ADDITIVE_MIGRATION_ONLY
+          echo PASS:QA106_SOURCE_A_B_UNCHANGED_NO_GEMINI_NO_PRODUCTION
