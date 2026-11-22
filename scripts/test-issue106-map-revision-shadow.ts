@@ -251,6 +251,17 @@ try{
  assert.deepEqual((await filterShadowVisibleMapVectors(
    f.db,candidates,ix)).map(v=>v.id),candidates.map(v=>v.id));
 
+ // Offline rollback drill: deleting ONLY the shadow activation pointer
+ // hides every new vector immediately; durable payload/receipts survive.
+ // Reattestation can restore the SAME shadow manifest without any providers.
+ f.sqlite.prepare("DELETE FROM qa106_map_revision_shadow_publications WHERE document_id=?")
+   .run(QA106_B_PDF_ID);
+ assert.deepEqual(await filterShadowVisibleMapVectors(f.db,candidates,ix),[],
+   "revoked atomic pointer must hide all Map matches");
+ assert.equal(f.count("SELECT COUNT(*) AS n FROM qa106_map_revision_receipts"),2);
+ assert.equal(await publishShadowMapRevision(f.db,f.lease,f.scope,ix),true);
+ assert.deepEqual((await filterShadowVisibleMapVectors(
+   f.db,candidates,ix)).map(v=>v.id),candidates.map(v=>v.id));
  assert.equal(ix[0].inserts,1,"no duplicate Vectorize insertion");
  assert.equal(ix[1].inserts,1,"no duplicate Vectorize insertion");
  assert.equal(f.count("SELECT COUNT(*) AS n FROM qa106_map_revision_receipts"),2);
