@@ -1,6 +1,7 @@
 import type { ReferenceIdentifier } from "./reference-identifiers.ts";
 import {searchPublishedImmutableEvidence} from "./ingestion-v2-evidence-references.ts";
 import {searchPublishedRevisionEvidence} from "./ingestion-map-revision-evidence.ts";
+import type {ImmutableIndex} from "./ingestion-immutable-publication.ts";
 
 export type ArchiveEvidenceRow = {
   id: string;
@@ -103,7 +104,7 @@ async function mergePublishedEvidenceRows(
       }
       acceptedPublished=safe;
       revised=await searchPublishedRevisionEvidence(
-        db,identifiers,clauses,pair,Math.max(1,Math.min(100,limit)));
+        db,identifiers,clauses,pair as [ImmutableIndex,ImmutableIndex],Math.max(1,Math.min(100,limit)));
     }catch{return []}
   }
   return [...revised,...acceptedPublished,...legacy]
