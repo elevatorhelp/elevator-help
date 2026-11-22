@@ -240,10 +240,15 @@ export async function persistGeneratedMapPayload(
    AND source_fingerprint=? AND supersedes_window_key=?
    AND (state='planned' OR
         (state='generated' AND payload_sha256=? AND payload_json=?))
+   AND EXISTS(SELECT 1 FROM qa106_map_revision_provider_reservations r
+     WHERE r.document_id=? AND r.staging_epoch=? AND r.revision=?
+       AND r.purpose='map_generation' AND r.job_key=?
+       AND r.source_fingerprint=?)
    AND ${leaseFence} ${srcFence}
  RETURNING payload_sha256`,
  [prepared.json,prepared.hash,now,...point(s),s.jobKey,s.fingerprint,
  s.supersedesWindowKey,prepared.hash,prepared.json,
+ ...point(s),s.jobKey,s.fingerprint,
  ...fenceArgs(lease,s,now)]);
  if(changed?.payload_sha256!==prepared.hash)
    abort("GENERATED_PAYLOAD_CONFLICT_OR_STALE");
@@ -278,10 +283,15 @@ export async function persistMapEmbeddings(
   AND payload_sha256=?
   AND (state='generated' OR
     (state='embedded' AND embeddings_sha256=? AND embeddings_json=?))
+  AND (SELECT COUNT(*) FROM qa106_map_revision_provider_reservations r
+       WHERE r.document_id=? AND r.staging_epoch=? AND r.revision=?
+         AND r.job_key=? AND r.source_fingerprint=?
+         AND r.purpose IN ('workers_ai_embedding','gemini_embedding'))=2
   AND ${leaseFence} ${srcFence}
  RETURNING embeddings_sha256`,
  [json,hash,now,...point(s),s.jobKey,s.fingerprint,
  s.supersedesWindowKey,row.payload_sha256,hash,json,
+ ...point(s),s.jobKey,s.fingerprint,
  ...fenceArgs(lease,s,now)]);
  if(result?.embeddings_sha256!==hash)
    abort("EMBEDDING_CONFLICT_OR_STALE");
