@@ -43,3 +43,5 @@ jobs:
         run: npm run cf:build
       - name: Reconcile only existing persisted B vectors, never regenerate
         run: bash scripts/qa-issue106-b-shadow-reconcile-run.sh
+
+# No provider credentials: model-free retry after strict TypeScript fix.
