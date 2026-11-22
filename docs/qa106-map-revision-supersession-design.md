@@ -107,6 +107,58 @@ short-lived worker lease generation**:
   citation test, an actual Production publication, or a recoverable remote D1
   restore.
 
+## Generic activation contract preview — offline only
+
+A separate additive **generic schema**, `docs/qa106-generic-map-revision-preview-schema.sql`,
+models `ingestion_v2_map_revision_candidates`,
+`ingestion_v2_map_revision_receipts` and
+`ingestion_v2_map_revision_activations` WITHOUT altering
+`ingestion_v2_publications`. It has not been applied to any remote database.
+
+`scripts/qa-issue106-generic-map-publication-preview.ts` shows the
+proposed all-layer publication **contract**, NOT a deployed implementation:
+
+- One D1 candidate stores the complete SHA-attested text, source, logical IDs
+  and revision-bound physical IDs. A candidate is itself an immutable
+  **deny-old-fallback marker**, even if no active pointer exists.
+- A current fenced writer claims exact source epoch/fingerprint and confirms
+  both index copies and the revision's exact receipt set. It atomically
+  activates a single pointer only if the same statement sees the current
+  owner lease, staging epoch, new Map receipt IDs, and the exact old RAW and
+  Evidence ID sets. Previous incomplete Map receipts are *not* included.
+- The current model-generated Map text is content-addressed again from its
+  original pre-staging metadata; neither fabricated new IDs nor a mismatched
+  physical vector may be activated.
+- A version-aware **read-side proof** checks the active pointer and all
+  revised Map physical pairs in both indexes; it gates B RAW visibility on
+  the same pointer and exact RAW receipt + dual-index metadata; exact
+  Evidence citations are read from that epoch under the same activation.
+  Existing A immutable publications without any candidate still use the
+  legacy D1 publication + receipts. Unpublished, blocked, source-changed,
+  index-missing, malformed or changed-receipt B maps/RAW/Evidence fail closed.
+- Rolling back the pointer sets `state='blocked'` under the current lease
+  and epoch, without deleting any old or new vector or D1 receipt. Because
+  the durable candidate remains, **no legacy Map fallback is possible**.
+  Reattesting the exact same complete revision can restore the pointer with
+  zero new model/embedding requests.
+- The proof is exercised only with **synthetic local SQLite and fake index
+  readers**. It does not call `publishedArchiveEnv`, `/api/ask`, the
+  production `filterVisibleImmutableVectors` call sites, remote D1,
+  Cloudflare Vectorize, or Gemini. No flag is turned on.
+
+**Important limitations / review before live:** A real migration must make
+all Vectorize query and getByIds paths AND evidence/legacy search paths use
+one reviewed revision-aware reader behind a default-off release gate.
+Reader/activation CAS must be validated against source revisions during
+concurrent updates, not merely single-threaded SQLite. A production-grade
+schema migration and explicit backfill strategy for already published A
+and other legacy documents are still needed. Verify actual Cloudflare D1
+query/transaction behavior and Vectorize eventual consistency, and
+complete a backup/restore drill. The preview reads whole-document Map
+pairs for assurance and should be optimized without weakening safety
+before enabling the user-facing service. D1 retention/access policy for
+cached exact model output and embeddings needs an IP/security review.
+
 ## Explicit next release gates — all require separate review
 
 - Migrate the generic schema from `qa106_*` to production-grade
