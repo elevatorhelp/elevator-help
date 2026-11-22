@@ -391,7 +391,7 @@ try{
    "absent feature flag leaves original production-compatible object unchanged");
  const withFlag=revisionReadGatePreview({
   ...previewBase,INGESTION_MAP_REVISION_READS_PREVIEW_ENABLED:"true",
- }) as typeof previewBase&{
+ }) as unknown as typeof previewBase&{
   readExactEvidence:(doc:string,limit?:number)=>Promise<unknown[]>;
  };
  const gated=await withFlag.VECTORIZE.query();
@@ -408,7 +408,7 @@ try{
  const unavailable=revisionReadGatePreview({
   ...previewBase,INGESTION_MAP_REVISION_READS_PREVIEW_ENABLED:"true",
   CORTEX_DB:undefined,VECTORIZE_V2:undefined,
- }) as typeof previewBase&{
+ }) as unknown as typeof previewBase&{
   readExactEvidence:(doc:string)=>Promise<unknown[]>;
  };
  assert.deepEqual((await unavailable.VECTORIZE.query()).matches,[],
