@@ -113,6 +113,7 @@ try{
   "ingestion_v2_map_revision_activations",
   "ingestion_v2_map_revision_candidates",
   "ingestion_v2_map_revision_receipts",
+  "qa106_map_revision_provider_reservations",
   "qa106_map_revision_receipts",
   "qa106_map_revision_shadow_publications",
   "qa106_map_revisions",
