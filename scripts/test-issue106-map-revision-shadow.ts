@@ -33,6 +33,8 @@ import {publishedArchiveEnv}
  from "../app/lib/ingestion-published-reader.ts";
 import {searchPublishedRevisionEvidence}
  from "../app/lib/ingestion-map-revision-evidence.ts";
+import {mergePublishedEvidenceRows,type ArchiveEvidenceRow}
+ from "../app/lib/archive-evidence-index.ts";
 
 const fp="a".repeat(64),key="b".repeat(64);
 const temp=mkdtempSync(join(tmpdir(),"qa106-map-revision-offline-"));
@@ -463,6 +465,28 @@ try{
  assert.deepEqual(await searchPublishedRevisionEvidence(f.db,[
    {key:"UNKNOWN",label:"Unknown",structured:false}],[],ix,60),[],
    "unrelated reference cannot become an authoritative B citation");
+ const guardedD1=Object.assign(Object.create(f.db),{
+   __immutableReadGate:true,
+   __mapRevisionReadGate:true,
+   __mapRevisionIndexes:ix,
+ });
+ const staleB:ArchiveEvidenceRow={
+   id:"legacy-b-stale",text:"stale synthetic B citation",
+   source_file_id:QA106_B_PDF_ID,file_name:"synthetic-b.pdf",
+   source_path:"qa/synthetic-b.pdf",page:200,chunk_index:0,
+   content_type:"standard",source_fingerprint:fp,
+   identifier_labels:refs[0].label,matched_identifiers:1,
+ };
+ const untouchedLegacy:ArchiveEvidenceRow={
+   ...staleB,id:"legacy-c",text:"synthetic unindexed C",
+   source_file_id:"unpublished-legacy-C",page:3,
+ };
+ const mergedEvidence=await mergePublishedEvidenceRows(
+   guardedD1,[staleB,untouchedLegacy],refs,[],60);
+ assert.deepEqual(mergedEvidence.map(x=>x.page),[1,2,3],
+   "real Evidence merge must include only two revised B pages and valid untouched C");
+ assert.ok(!mergedEvidence.some(x=>x.id===staleB.id),
+   "old legacy B Evidence must stay invisible even if archive_chunks returned it");
  const bCitations=await readGenericPublishedEvidencePreview(
    f.db,QA106_B_PDF_ID,ix);
  assert.equal(bCitations.length,2);
@@ -515,6 +539,10 @@ try{
  assert.deepEqual(await withFlag.readExactEvidence(QA106_B_PDF_ID),[]);
  assert.deepEqual(await searchPublishedRevisionEvidence(f.db,refs,[],ix,60),[],
    "rollback of active revision must also revoke B identifier citations");
+ assert.deepEqual((await mergePublishedEvidenceRows(
+   guardedD1,[staleB,untouchedLegacy],refs,[],60)).map(x=>x.id),
+   ["legacy-c"],"blocked B pointer must reject stale legacy and revised citations");
+
  
  assert.equal(await activateGenericMapRevisionPreview(
    f.db,f.lease,previewScope,ix),true,
