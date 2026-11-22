@@ -296,3 +296,48 @@ authorize this release.
 `scripts/qa-issue106-map-revision-shadow.ts`,
 `scripts/qa-issue106-map-revision-shadow-read.ts`,
 `scripts/test-issue106-map-revision-shadow.ts`.
+
+
+## Verified remote Cloudflare scratch backup/restore rehearsal (2026-11-22)
+
+**Real isolated QA infra tested; this is not a live B Map repair.**
+[GitHub Actions #45055404560](https://github.com/elevatorhelp/elevator-help/actions/runs/45055404560)
+ran the one-shot `scripts/qa-issue106-remote-backup-restore.sh` on PR #125
+branch head `6b748443a0587bee7d1fffe915fa059ee0109de4`.
+
+- Checked exact configured QA D1 UUID `02716877-15e3-4478-9e24-f1ba6e5dfb00` and
+  two staging-only Vectorize index bindings; this prevents a Production D1
+  or Vectorize binding from being selected by the rehearsal.
+- Source **QA** D1 was queried **read-only**, proving one published A,
+  unpublished B, one incomplete B Map receipt, two B RAW receipts,
+  two exact B Evidence entries and no active QA worker leases.
+- Exported the actual remote QA D1 to a private temporary CI file.
+  Restored locally to SQLite, with an integrity check; no DB SQL or source
+  content was logged or uploaded as a CI artifact.
+- Created a **disposable remote EU-jurisdiction D1**, imported the actual
+  QA export there, and compared exact A/B row counts against the source.
+- Applied both additive revision schemas **twice** to the disposable
+  remote D1 to verify idempotency; A/B historical row counts remained intact.
+- Rechecked the source QA D1 unchanged and successfully **deleted the
+  disposable remote DB**. Sanitized PASS markers from the run include
+  `QA106_REAL_REMOTE_D1_RESTORE`,
+  `QA106_REMOTE_RESTORE_ADDITIVE_MIGRATION_TWICE`,
+  `QA106_SOURCE_QA_UNCHANGED_NO_GEMINI_NO_PRODUCTION` and
+  `QA106_SCRATCH_D1_DELETED`.
+- Entire exact-head branch CI also passed Build, offline Issue106, published
+  reader and exact Evidence QA after this addition.
+
+**Still not done:** neither additive schema was applied to the ORIGINAL QA
+database; its remote Time Travel bookmark/restore under an actual failed
+migration has not been tested. No B generated replacement Map was staged in
+actual D1/Vectorize; no real active revision pointer or QA readers were
+enabled. No Cloudflare production database, config, API or Worker was
+changed; no Gemini/Workers AI model calls occurred.
+
+**Next guarded engineering gate:** QA-only B new-revision runtime behind a
+default-OFF flag, with irreversible per-document model-call reservation
+before any external provider request, persisted exact payload/dual embeddings,
+strict no-auto-paid-retry, and original-old-receipt preservation. Review the
+D1 retention/IP policy and independent source/lease fencing before migrating
+the source QA D1 or running billed regeneration. The old paid exact-ID
+workflow is permanently unsuitable for this scenario.
