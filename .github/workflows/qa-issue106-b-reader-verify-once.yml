@@ -43,3 +43,5 @@ jobs:
         run: npm run cf:build
       - name: Activate QA-only B generic Reader and verify real citations
         run: bash scripts/qa-issue106-b-reader-run.sh
+
+# Retry after TypeScript-only correction; no model credentials.
