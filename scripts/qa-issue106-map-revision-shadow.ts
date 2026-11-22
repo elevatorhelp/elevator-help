@@ -193,6 +193,40 @@ export async function beginShadowMapRevision(
   s.documentId,s.documentEpoch,s.revision]);
  if(row?.revision!==s.revision)abort("PRECONDITIONS_OR_LEASE_DENIED");
 }
+/**
+ * Reserve a single external provider invocation BEFORE making the call.
+ * Even if the caller crashes or the lease expires after the provider
+ * accepts the request, successor owners must not spend again automatically.
+ * Offline SQL only; this module NEVER invokes a model itself.
+ */
+export type Qa106ProviderPurpose=
+  "map_generation"|"workers_ai_embedding"|"gemini_embedding";
+export async function reserveShadowProviderCall(
+ db:CoordinatorDB,lease:ArchiveLease,s:RevisionScope,
+ purpose:Qa106ProviderPurpose,now=Date.now(),
+):Promise<void>{
+ scopeGuard(s,lease);
+ if(!["map_generation","workers_ai_embedding","gemini_embedding"].includes(purpose)||
+    !Number.isSafeInteger(now)||now<=0)abort("INVALID_PROVIDER_RESERVATION");
+ const requiredState=purpose==="map_generation"?"planned":"generated";
+ const reserved=await rowFirst(db,`INSERT INTO qa106_map_revision_provider_reservations
+   (document_id,staging_epoch,revision,purpose,job_key,
+    source_fingerprint,lease_generation,reserved_at_ms)
+ SELECT ?,?,?,?,?,?,?,?
+ WHERE ${leaseFence} ${srcFence}
+ AND EXISTS(SELECT 1 FROM qa106_map_revisions
+  WHERE document_id=? AND staging_epoch=? AND revision=?
+    AND job_key=? AND source_fingerprint=? AND supersedes_window_key=?
+    AND state=?)
+ ON CONFLICT(document_id,staging_epoch,revision,purpose) DO NOTHING
+ RETURNING purpose`,
+ [...point(s),purpose,s.jobKey,s.fingerprint,lease.generation,now,
+  ...fenceArgs(lease,s,now),
+  ...point(s),s.jobKey,s.fingerprint,s.supersedesWindowKey,requiredState]);
+ if(reserved?.purpose!==purpose)
+   abort("PROVIDER_ALREADY_RESERVED_OR_STALE");
+}
+
 /** ONE D1 CAS stores exact generated text/metadata and stable IDs before embeddings. */
 export async function persistGeneratedMapPayload(
  db:CoordinatorDB,lease:ArchiveLease,s:RevisionScope,nodes:RevisionNode[],
