@@ -361,7 +361,7 @@ export async function filterGenericPublishedMapPreview<T extends VectorMatch>(
    if(typeof doc!=="string"||doc.length<1)continue;
    groups.set(doc,[...(groups.get(doc)||[]),m]);
   }
-  const out:T[]=[];
+  const approved=new Set<T>();
   for(const [doc,hits] of groups){
    const any=await q(db,`SELECT 1 AS present FROM
      ingestion_v2_map_revision_candidates WHERE document_id=? LIMIT 1`,[doc]);
@@ -370,7 +370,9 @@ export async function filterGenericPublishedMapPreview<T extends VectorMatch>(
       ingestion_v2_publications WHERE document_id=?`,[doc]);
     if(!published)continue; // never allow unpublished legacy fallback
     const old=await filterVisibleImmutableVectors(db,hits,false);
-    out.push(...old.filter(x=>parseImmutableVectorId(x.id)?.layer==="map"));
+    for(const hit of old){
+      if(parseImmutableVectorId(hit.id)?.layer==="map")approved.add(hit);
+    }
     continue;
    }
    const active=await activeForDoc(db,doc,indexes);
@@ -381,9 +383,16 @@ export async function filterGenericPublishedMapPreview<T extends VectorMatch>(
     const e=allowed.get(hit.id);
     if(!e||seen.has(hit.id)||!activeVector(
       [{id:hit.id,metadata:hit.metadata}],e,active.scope))continue;
-    seen.add(hit.id);out.push(hit);
+    seen.add(hit.id);approved.add(hit);
    }
   }
-  return out;
+  // Preserve search relevance ordering across mixed legacy/new documents.
+  // Track the exact approved object, never treat a forged duplicate with the
+  // same ID as equivalent to an approved candidate.
+  const emitted=new Set<string>();
+  return matches.filter(hit=>{
+    if(!approved.has(hit)||emitted.has(hit.id))return false;
+    emitted.add(hit.id);return true;
+  });
  }catch{return []}
 }
