@@ -19,6 +19,8 @@ import {
  reconcileShadowMapRevision,publishShadowMapRevision,readDurableShadowRevision,
  type RevisionScope,type RevisionNode,
 } from "./qa-issue106-map-revision-shadow.ts";
+import {filterShadowVisibleMapVectors}
+ from "./qa-issue106-map-revision-shadow-read.ts";
 
 const fp="a".repeat(64),key="b".repeat(64);
 const temp=mkdtempSync(join(tmpdir(),"qa106-map-revision-offline-"));
@@ -190,9 +192,65 @@ try{
  assert.equal(ix[0].inserts,1);
  assert.equal(ix[1].inserts,1);
  assert.equal(externalModelCalls,0);
+ // The full physical pair is now staged, but there is no active D1
+ // pointer. No Map candidate (including valid new ones) is visible yet.
+ const candidates=[...ix[0].map.values()].map(v=>({
+    id:v.id,metadata:structuredClone(v.metadata),
+ }));
+ const obsolete={id:f.old,metadata:{...m,mapRevision:0}};
+ assert.deepEqual(await filterShadowVisibleMapVectors(
+    f.db,[...candidates,obsolete],ix),[],
+   "complete vectors must be invisible BEFORE the atomic pointer");
  const pub=await publishShadowMapRevision(f.db,f.lease,f.scope,ix);
  assert.equal(pub,true);
  assert.equal(await publishShadowMapRevision(f.db,f.lease,f.scope,ix),true);
+ const active=await filterShadowVisibleMapVectors(
+   f.db,[obsolete,candidates[0],candidates[1],candidates[0]],ix);
+ assert.deepEqual(active.map(v=>v.id),candidates.map(v=>v.id),
+   "ONLY active Map vectors are visible; old receipt and duplicate excluded");
+ const wrongVersion={...candidates[0],metadata:{...candidates[0].metadata,
+   mapRevision:2}};
+ const wrongPage={...candidates[0],metadata:{...candidates[0].metadata,
+   page:99}};
+ const wrongFingerprint={...candidates[0],metadata:{...candidates[0].metadata,
+   sourceFingerprint:"f".repeat(64)}};
+ assert.deepEqual((await filterShadowVisibleMapVectors(f.db,
+   [wrongVersion,wrongPage,wrongFingerprint,candidates[1]],ix))
+   .map(v=>v.id),[candidates[1].id]);
+ assert.deepEqual(await filterShadowVisibleMapVectors(
+   undefined,candidates,ix),[],"no D1 means no fallback");
+ const brokenDb={prepare:()=>{throw Error("QA106_TEST_D1_DOWN")}} as unknown as CoordinatorDB;
+ assert.deepEqual(await filterShadowVisibleMapVectors(
+   brokenDb,candidates,ix),[],"D1 exception fails closed");
+ // Corruption of either Vectorize physical index hides the ENTIRE Map, not
+ // just the one candidate that happened to be returned by search.
+ const removed=ix[1].map.get(candidates[0].id)!;
+ ix[1].map.delete(candidates[0].id);
+ assert.deepEqual(await filterShadowVisibleMapVectors(
+   f.db,candidates,ix),[],"half-index read must not leak the other Map");
+ ix[1].record(removed);
+ // Active pointer must match the immutable original manifest.
+ const publishedSha=f.read("SELECT manifest_sha256 FROM qa106_map_revision_shadow_publications WHERE document_id=?",[QA106_B_PDF_ID])!.manifest_sha256;
+ f.sqlite.prepare("UPDATE qa106_map_revision_shadow_publications SET manifest_sha256=? WHERE document_id=?")
+   .run("f".repeat(64),QA106_B_PDF_ID);
+ assert.deepEqual(await filterShadowVisibleMapVectors(f.db,candidates,ix),[]);
+ f.sqlite.prepare("UPDATE qa106_map_revision_shadow_publications SET manifest_sha256=? WHERE document_id=?")
+   .run(publishedSha,QA106_B_PDF_ID);
+ // One extra or missing Map receipt cannot be treated as full publication.
+ const firstReceipt=f.read("SELECT * FROM qa106_map_revision_receipts WHERE staged_id=?",[candidates[0].id])!;
+ f.sqlite.prepare("DELETE FROM qa106_map_revision_receipts WHERE staged_id=?")
+   .run(candidates[0].id);
+ assert.deepEqual(await filterShadowVisibleMapVectors(f.db,candidates,ix),[]);
+ f.sqlite.prepare(`INSERT INTO qa106_map_revision_receipts
+ (document_id,staging_epoch,revision,logical_id,staged_id,
+ source_fingerprint,created_at_ms) VALUES (?,?,?,?,?,?,?)`).run(
+   firstReceipt.document_id as string,firstReceipt.staging_epoch as number,
+   firstReceipt.revision as number,firstReceipt.logical_id as string,
+   firstReceipt.staged_id as string,firstReceipt.source_fingerprint as string,
+   firstReceipt.created_at_ms as number);
+ assert.deepEqual((await filterShadowVisibleMapVectors(
+   f.db,candidates,ix)).map(v=>v.id),candidates.map(v=>v.id));
+
  assert.equal(ix[0].inserts,1,"no duplicate Vectorize insertion");
  assert.equal(ix[1].inserts,1,"no duplicate Vectorize insertion");
  assert.equal(f.count("SELECT COUNT(*) AS n FROM qa106_map_revision_receipts"),2);
@@ -210,6 +268,12 @@ try{
  const shadow=f.read("SELECT map_count,raw_count,evidence_count FROM qa106_map_revision_shadow_publications WHERE document_id=?",[QA106_B_PDF_ID]);
  assert.deepEqual([shadow?.map_count,shadow?.raw_count,shadow?.evidence_count],[2,2,2]);
  console.log("PASS: old Map intent retained, exact write-ahead payload+embeddings, successor lease, orphan readback, no model calls, shadow CAS only");
+ // Changing the source revision invalidates the entire old shadow pointer.
+ const changedEpoch=await claimDocumentStagingEpoch(f.db,f.lease,
+   QA106_B_PDF_ID,"f".repeat(64));
+ assert.ok(changedEpoch&&changedEpoch>f.scope.documentEpoch);
+ assert.deepEqual(await filterShadowVisibleMapVectors(f.db,candidates,ix),[]);
+ console.log("PASS: atomic shadow Map pointer, exact active revision/receipt/metadata, half-index, stale fingerprint and old Map exclusion");
  f.close();
 
  const g=await setup("half");
