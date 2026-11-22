@@ -1,0 +1,41 @@
+name: Issue106 one-shot isolated QA D1 backup and remote restore
+run-name: Issue106 QA D1 restore to disposable EU database (NO Gemini)
+on:
+  push:
+    branches:
+      - feat/issue106-shadow-map-revision-20261122
+    paths:
+      - ".github/workflows/qa-issue106-remote-restore-once.yml"
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  scratch-d1-restore:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa106(one-shot): execute approved isolated D1 backup and restore'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      QA106_REMOTE_APPROVAL: QA106_REMOTE_QA_EXPORT_RESTORE_ONLY_20261122
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout exact isolated QA branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Use Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked tools (no paid model credentials)
+        run: npm ci
+      - name: Validate read-only source and rehearse isolated remote D1 restore/migration
+        run: |
+          set -euo pipefail
+          bash -n scripts/qa-issue106-remote-backup-restore.sh
+          bash scripts/qa-issue106-remote-backup-restore.sh
+      # No production bindings, deploy, Gemini secret, Vectorize writes or artifacts.
