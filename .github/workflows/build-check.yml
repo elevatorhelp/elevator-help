@@ -124,6 +124,9 @@ jobs:
           node --experimental-sqlite --experimental-strip-types scripts/test-issue106-map-migration-restore.ts
           node --experimental-strip-types scripts/test-issue106-legacy-evidence-gate.ts
           bash -n scripts/qa-issue106-b-map-repair-run.sh
+          bash -n scripts/qa-issue106-b-shadow-run.sh
+          node --check scripts/qa-issue106-b-shadow-client.mjs
+          node scripts/test-issue106-b-shadow-client.mjs
           bash -n scripts/qa-issue106-vector-status-run.sh
           bash -n scripts/qa-issue106-map-only-run.sh
 
