@@ -44,3 +44,5 @@ jobs:
           bash scripts/qa-issue106-b-shadow-run.sh
       # Do not upload logs, PDFs, exact generated Map text, vectors or secrets.
       # No Production API calls, deployments, live publication or auto-retry.
+
+# One-time authorized QA B Shadow run: approval in conversation, strictly capped.
