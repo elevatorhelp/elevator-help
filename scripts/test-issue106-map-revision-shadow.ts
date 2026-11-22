@@ -29,6 +29,8 @@ import {
 } from "./qa-issue106-generic-map-publication-preview.ts";
 import {revisionReadGatePreview}
  from "./qa-issue106-revision-reader-flag-preview.ts";
+import {publishedArchiveEnv}
+ from "../app/lib/ingestion-published-reader.ts";
 
 const fp="a".repeat(64),key="b".repeat(64);
 const temp=mkdtempSync(join(tmpdir(),"qa106-map-revision-offline-"));
@@ -394,6 +396,33 @@ try{
  }) as unknown as typeof previewBase&{
   readExactEvidence:(doc:string,limit?:number)=>Promise<unknown[]>;
  };
+ // Production entrypoint CODE is now wired only behind an EXTRA flag.
+ // These tests run solely on synthetic SQLite and fake Vectorize.
+ const liveEntryDisabled={...previewBase,INGESTION_PUBLISHED_READS_ENABLED:"false",
+   INGESTION_MAP_REVISION_READS_ENABLED:"false"};
+ assert.equal(publishedArchiveEnv(liveEntryDisabled),liveEntryDisabled,
+   "Both flags off must preserve original Production environment identity");
+ const liveEntryWrongOrder=publishedArchiveEnv({
+   ...previewBase,INGESTION_PUBLISHED_READS_ENABLED:"false",
+   INGESTION_MAP_REVISION_READS_ENABLED:"true",
+ });
+ assert.deepEqual((await liveEntryWrongOrder.VECTORIZE.query()).matches,[],
+   "revision flag without published gate must fail closed");
+ const productionAdapter=publishedArchiveEnv({
+    ...previewBase,INGESTION_PUBLISHED_READS_ENABLED:"true",
+    INGESTION_MAP_REVISION_READS_ENABLED:"true",
+ }) as unknown as typeof previewBase&{
+   CORTEX_DB:typeof f.db&{__mapRevisionReadGate:boolean;__immutableReadGate:boolean};
+ };
+ assert.equal(productionAdapter.CORTEX_DB.__mapRevisionReadGate,true);
+ assert.equal(productionAdapter.CORTEX_DB.__immutableReadGate,true);
+ assert.deepEqual((await productionAdapter.VECTORIZE.query()).matches?.map(x=>x.id),
+   [aHit.id,...bHit.map(x=>x.id),aRawHit.id,...bRaw.map(x=>x.id)],
+   "reviewed adapter must gate real query exactly as offline preview");
+ assert.deepEqual((await productionAdapter.VECTORIZE_V2.getByIds(
+   candidatesFromIndex.map(x=>x.id))).map(x=>x.id),
+   [aHit.id,...bHit.map(x=>x.id),aRawHit.id,...bRaw.map(x=>x.id)],
+   "reviewed adapter must gate real getByIds on both indexes");
  const gated=await withFlag.VECTORIZE.query();
  assert.deepEqual(gated.matches?.map(x=>x.id),
    [aHit.id,...bHit.map(x=>x.id),aRawHit.id,...bRaw.map(x=>x.id)],
@@ -460,6 +489,10 @@ try{
  assert.deepEqual((await withFlag.VECTORIZE.query()).matches?.map(x=>x.id),
    [aHit.id,aRawHit.id],
    "opted-in query must hide B Map+RAW immediately after atomic rollback");
+ assert.deepEqual((await productionAdapter.VECTORIZE.query()).matches?.map(x=>x.id),
+   [aHit.id,aRawHit.id],
+   "real code's default-off revision adapter must suppress B during rollback");
+
  assert.deepEqual(await withFlag.readExactEvidence(QA106_B_PDF_ID),[]);
  
  assert.equal(await activateGenericMapRevisionPreview(
