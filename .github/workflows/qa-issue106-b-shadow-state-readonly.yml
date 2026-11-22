@@ -70,3 +70,5 @@ jobs:
           }
           console.log("PASS:QA106_B_D1_READONLY_NO_GEMINI");
           NODE
+
+# Post-recovery independent read of shadow receipt/publication counts.
