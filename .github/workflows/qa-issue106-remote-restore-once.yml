@@ -6,6 +6,9 @@ on:
       - feat/issue106-shadow-map-revision-20261122
     paths:
       - ".github/workflows/qa-issue106-remote-restore-once.yml"
+      - "docs/qa106-map-revision-shadow-schema.sql"
+      - "docs/qa106-generic-map-revision-preview-schema.sql"
+      - "scripts/qa-issue106-remote-backup-restore.sh"
 permissions:
   contents: read
 concurrency:
