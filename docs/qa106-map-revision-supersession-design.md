@@ -159,6 +159,59 @@ pairs for assurance and should be optimized without weakening safety
 before enabling the user-facing service. D1 retention/access policy for
 cached exact model output and embeddings needs an IP/security review.
 
+## Migration, restore and feature-flag rehearsal (2026-11-22, LOCAL ONLY)
+
+The new `scripts/test-issue106-map-migration-restore.ts` exercises a
+**local temporary SQLite** D1-like database with a previously published
+synthetic A, B's one old unfinished Map receipt/pending window, 2 RAW
+receipts, 2 Evidence records and one durable checkpoint.
+
+1. Apply the existing coordinator/epoch/evidence/receipt/pending schema,
+   seed the synthetic source-fingerprinted records, and verify SQLite
+   integrity + foreign keys.
+2. Use SQLite `VACUUM INTO` to create a **pre-migration backup** and
+   verify its baseline rows/DDL.
+3. Run both additive revision-preview SQL schemas **twice** to verify
+   idempotency; assert the old table DDL and all seven existing table
+   contents are unchanged, verify that orphan revision receipts cannot be
+   inserted, and ensure no legacy B publication is silently manufactured.
+4. Insert only a **blocked** synthetic candidate/pointer and verify the
+   published A, RAW/Evidence B and old incomplete Map stay unchanged.
+5. Restore the pre-migration file to a second isolated SQLite DB; assert
+   the exact old tables/rows, B Map incompleteness, A publication,
+   integrity and foreign keys. No external mutations or model API calls.
+
+**This is NOT a Cloudflare D1 remote backup/export/restore**, which still
+requires a separate authorized QA run and rollback review. Additive
+migration cannot be rolled back on real D1 by blindly dropping tables
+that may have acquired live rows; production rollback is **blocking the
+active revision pointer and switching off the read flag** under an
+explicit change-control plan, with a verified backup before migration.
+
+The new `scripts/qa-issue106-revision-reader-flag-preview.ts` is an
+**offline-only** three-path adapter for `query`, `getByIds`, and
+`readExactEvidence`. The optional
+`INGESTION_MAP_REVISION_READS_PREVIEW_ENABLED` flag defaults to off
+and returns the original environment object **unchanged**. In opt-in
+simulation it requires D1 + both indexes and calls the generic
+revision-aware Map/RAW/Evidence proof; a missing binding, query
+failure, blocked pointer or stale source yields **no matches**.
+The test proves the flag cannot leak the original B unfinished Map
+while still allowing legacy published A. This adapter is **NOT
+imported by** `publishedArchiveEnv`, `/api/ask`, or any deployed Worker.
+Do not set this flag in a real environment before all reader
+integrations and security review.
+
+**Integration hazard discovered:** the existing
+`app/lib/archive-evidence-index.ts` only checks
+`ingestion_v2_publications` when filtering legacy exact Evidence.
+A B revision candidate without an old publication could therefore
+be treated as an unsuperseded legacy document in that code path.
+Production integration must add a revision-aware suppression for
+legacy Evidence rows and ensure newly published revised Evidence
+citations share the same active D1 Map pointer. **Do not enable any
+real revision-read feature flag before this is addressed.**
+
 ## Explicit next release gates — all require separate review
 
 - Migrate the generic schema from `qa106_*` to production-grade
