@@ -436,7 +436,8 @@ export async function advanceShadowMapRevisionWithProviders(
  }
  if(snapshot.state==="generated"){
    const payload=snapshot.payload;
-   if(!payload?.entries?.length)abort("GENERATED_PAYLOAD_MISSING");
+   if(payload===null || payload.entries.length===0)
+     throw Error("QA106_MAP_REVISION_GENERATED_PAYLOAD_MISSING");
    // Reserve BOTH steps before the first provider request, so a crash
    // cannot bypass either provider's durable spend boundary.
    await reserveShadowProviderCall(db,lease,s,"workers_ai_embedding");
