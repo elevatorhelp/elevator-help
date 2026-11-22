@@ -222,6 +222,52 @@ revision-aware active-pointer citations; hiding old B rows alone is
 any real revision-read feature flag before that integration passes
 separate QA and release review.**
 
+## Application integration under a second default-OFF flag (review only)
+
+The generic revision implementation now lives once in
+`app/lib/ingestion-map-revision-visibility.ts`; the old test script re-exports
+the same core, avoiding divergence between the tested SQL and the app copy.
+**No D1 migration is deployed**, and no environment currently has the new
+feature flag set.
+
+`app/lib/ingestion-published-reader.ts` has a SECOND optional gate,
+`INGESTION_MAP_REVISION_READS_ENABLED`. Both that flag **and**
+`INGESTION_PUBLISHED_READS_ENABLED` must explicitly be `true` to allow
+version-aware Map/RAW results; if only revision flag is set, all archived
+Vectorize results are denied. With both OFF, the original env object is
+returned unchanged. With only existing published reads enabled, the existing
+legacy immutable D1 reader remains the default. With both flags enabled,
+`query` and `getByIds` require BOTH original Vectorize indexes and
+the precise active D1 Map revision; no partial Map/RAW or legacy Map fallback
+is allowed for a document with a pending candidate.
+
+The D1 wrapper exposes `__mapRevisionReadGate` and the original pair of
+readback indexes only when the revision gate is enabled. This enables:
+- `app/lib/archive-evidence-index.ts` to suppress **all** legacy Evidence
+  (and previously published old-epoch Evidence) for any revision-candidate
+  document, including before Map activation or after pointer rollback;
+- `app/lib/ingestion-map-revision-evidence.ts` to search bounded exact
+  identifier/clause terms, then reattest every candidate's complete
+  active Map and exact unchanged source-page Evidence from D1 and both
+  Vectorize indexes before surfacing any citation;
+- published legacy A evidence to retain the older immutable semantics
+  if no revision candidate exists.
+
+No flag is configured in `wrangler*`, GitHub Actions or Production.
+This additional code does **not** stage a real B replacement Map, apply
+a migration, start the remote ingestion runner, or activate a new
+publication; PR #125 remains Draft and unmerged.
+
+**Review blockers before enabling either gate remotely:** performance of
+full-document dual-index readback on every query; D1 eventual consistency
+under concurrent lease and epoch flips; rollback across a partially failed
+multi-index write; exact synthetic and real source citation verification;
+fresh protected backup and restoration drill on QA D1; customer-protected
+model text/embedding retention policy; auth and cross-tenant separation;
+bounded spending for any future B regeneration; independent approval of the
+feature flag and staged rollout. A green offline test alone does not
+authorize this release.
+
 ## Explicit next release gates — all require separate review
 
 - Migrate the generic schema from `qa106_*` to production-grade
