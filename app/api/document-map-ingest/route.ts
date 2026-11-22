@@ -5,6 +5,11 @@ import {advanceShadowMapRevisionWithProviders,
   type RevisionScope,type RevisionNode,
 } from "../../../scripts/qa-issue106-map-revision-shadow";
 import {
+  stageGenericMapCandidatePreview,activateGenericMapRevisionPreview,
+  filterGenericPublishedMapPreview,filterGenericPublishedRawPreview,
+  readGenericPublishedEvidencePreview,type MapRevisionScope,
+} from "../../lib/ingestion-map-revision-visibility";
+import {
   QA106_B_JOB,QA106_B_PDF_ID,
   preflightExactMissingQa106BMap,assertExactQa106BRegeneration,
   type ExactRepairPlan,
@@ -307,8 +312,10 @@ export async function POST(request: NextRequest) {
     const bExactRepair=body?.action==="repair_missing_map_b_v2";
     const bShadow=body?.action==="stage_qa106_shadow_map_b_v2";
     const bShadowRecover=body?.action==="reconcile_qa106_shadow_map_b_v2";
+    const bReader=body?.action==="activate_qa106_generic_b_v2";
     qaStageRequest=body?.action==="stage_map_v2"||
-      body?.action==="reconcile_map_v2"||bExactRepair||bShadow||bShadowRecover;
+      body?.action==="reconcile_map_v2"||bExactRepair||bShadow||
+      bShadowRecover||bReader;
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
 
@@ -355,14 +362,14 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     const { env } = getCloudflareContext();
-    if((bShadow||bShadowRecover) && (
+    if((bShadow||bShadowRecover||bReader) && (
       (env as any).QA106_ISOLATED_BINDINGS!=="qa106-pr100-v2-only" ||
       (env as any).QA106_B_MAP_REVISION_SHADOW_ENABLED!=="true" ||
       (env as any).INGESTION_COORDINATOR_JOB_KEY!==QA106_B_JOB ||
       document.sourceFileId!==QA106_B_PDF_ID ||
       body?.globalArchiveLease?.jobKey!==QA106_B_JOB ||
-      (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST!==(bShadowRecover?"0":"2") ||
-      (bShadowRecover && (apiKey || process.env.GEMINI_BENCHMARK_API_KEY))
+      (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST!==(bShadow?"2":"0") ||
+      (!bShadow && (apiKey || process.env.GEMINI_BENCHMARK_API_KEY))
     ))return NextResponse.json(
       {ok:false,error:"QA106_B_SHADOW_SCOPE_DENIED"},{status:403});
     if(bExactRepair && (
@@ -404,7 +411,7 @@ export async function POST(request: NextRequest) {
       if(!qaEpoch)
         return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
       qaWindowKey=immutableMapWindowKey(doc,fp,mapVersion,pages);
-      if(bShadow||bShadowRecover){
+      if(bShadow||bShadowRecover||bReader){
         // The old B Map must remain historical. NEVER replay its missing
         // content-hashed ID or mutate A/legacy publication records.
         const pending=await (db.prepare(`
@@ -426,6 +433,75 @@ export async function POST(request: NextRequest) {
           fingerprint:fp,documentEpoch:qaEpoch,
           revision:1,supersedesWindowKey:String(pending.results[0].window_key),
         };
+        if(bReader){
+          // QA-only promotion of an ALREADY dual-index-attested B Shadow Map.
+          // This does not call AI, Gemini, or modify legacy publication.
+          // A fully active candidate is the *only* read-side publication.
+          const shadow=await db.prepare(`SELECT map_count,raw_count,evidence_count
+            FROM qa106_map_revision_shadow_publications
+            WHERE document_id=? AND staging_epoch=? AND revision=?
+              AND job_key=? AND source_fingerprint=?`).bind(
+            QA106_B_PDF_ID,qaEpoch,1,QA106_B_JOB,fp).first() as
+            {map_count:number;raw_count:number;evidence_count:number}|null;
+          if(!shadow||shadow.map_count!==2||shadow.raw_count!==2||
+             shadow.evidence_count!==2)
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_SHADOW_NOT_ATTESTED"},{status:409});
+          const durable=await readDurableShadowRevision(db,lease!,scope);
+          if(durable.state!=="embedded"||!durable.payload||!durable.embeddings)
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_SHADOW_EMBEDDINGS_NOT_DURABLE"},
+              {status:409});
+          const generic:MapRevisionScope={
+            documentId:QA106_B_PDF_ID,jobKey:QA106_B_JOB,epoch:qaEpoch,
+            revision:1,fingerprint:fp,
+          };
+          const pair:[any,any]=[vectorize,vectorizeV2];
+          await stageGenericMapCandidatePreview(
+            db,lease!,generic,durable.payload,durable.embeddings
+              ? String((await db.prepare(`SELECT embeddings_sha256
+                  FROM qa106_map_revisions WHERE document_id=?
+                    AND staging_epoch=? AND revision=1`).bind(
+                    QA106_B_PDF_ID,qaEpoch).first() as
+                    {embeddings_sha256:string}|null)?.embeddings_sha256||"")
+              : "",pair);
+          const active=await activateGenericMapRevisionPreview(
+            db,lease!,generic,pair);
+          if(!active)
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_READER_ACTIVATION_DENIED"},{status:409});
+          const mapIds=durable.payload.entries.map(e=>e.stagedId);
+          const indexed=await vectorize.getByIds(mapIds);
+          const allowed=await filterGenericPublishedMapPreview(db,indexed,pair);
+          const raw=await db.prepare(`SELECT staged_id FROM
+             ingestion_v2_vector_receipts
+             WHERE document_id=? AND generation=? AND
+               source_fingerprint=? AND layer='raw'`).bind(
+             QA106_B_PDF_ID,qaEpoch,fp).all() as
+             {results:Array<{staged_id:string}>};
+          if(raw.results.length!==2||allowed.length!==mapIds.length)
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_READER_MAP_ATTESTATION_DENIED"},
+              {status:409});
+          const rawVectors=await vectorize.getByIds(
+            raw.results.map(x=>x.staged_id));
+          const visibleRaw=await filterGenericPublishedRawPreview(
+            db,rawVectors,pair);
+          const evidence=await readGenericPublishedEvidencePreview(
+            db,QA106_B_PDF_ID,pair,10);
+          if(visibleRaw.length!==2||evidence.length!==2||
+             evidence.some(x=>!Number.isSafeInteger(x.page)||
+               x.page<1||x.page>pages.length))
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_READER_CITATION_ATTESTATION_DENIED"},
+              {status:409});
+          return NextResponse.json({
+            ok:true,qaOnly:true,publishedProduction:false,
+            genericReaderActive:true,modelCalls:0,
+            verifiedMapVectors:allowed.length,verifiedRawVectors:visibleRaw.length,
+            exactEvidencePages:evidence.map(x=>x.page).sort((a,b)=>a-b),
+          });
+        }
         if(bShadowRecover){
           const durable=await readDurableShadowRevision(db,lease!,scope);
           if(durable.state!=="embedded")
