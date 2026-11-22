@@ -230,7 +230,7 @@ try{
    f.db,candidates,ix),[],"half-index read must not leak the other Map");
  ix[1].record(removed);
  // Active pointer must match the immutable original manifest.
- const publishedSha=f.read("SELECT manifest_sha256 FROM qa106_map_revision_shadow_publications WHERE document_id=?",[QA106_B_PDF_ID])!.manifest_sha256;
+ const publishedSha=String(f.read("SELECT manifest_sha256 FROM qa106_map_revision_shadow_publications WHERE document_id=?",[QA106_B_PDF_ID])!.manifest_sha256);
  f.sqlite.prepare("UPDATE qa106_map_revision_shadow_publications SET manifest_sha256=? WHERE document_id=?")
    .run("f".repeat(64),QA106_B_PDF_ID);
  assert.deepEqual(await filterShadowVisibleMapVectors(f.db,candidates,ix),[]);
