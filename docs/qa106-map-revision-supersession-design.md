@@ -341,3 +341,34 @@ strict no-auto-paid-retry, and original-old-receipt preservation. Review the
 D1 retention/IP policy and independent source/lease fencing before migrating
 the source QA D1 or running billed regeneration. The old paid exact-ID
 workflow is permanently unsuitable for this scenario.
+
+## Current stage: bounded QA shadow writer code behind OFF flag (2026-11-22)
+
+A new B-only route action `stage_qa106_shadow_map_b_v2` is present in
+`app/api/document-map-ingest/route.ts` **only on Draft PR #125**.
+
+- Requires an ingestion authorization token, a valid D1 owner lease,
+  document ID for the reviewed synthetic QA PDF B, the dedicated QA job,
+  `QA106_ISOLATED_BINDINGS=qa106-pr100-v2-only`,
+  `QA106_B_MAP_REVISION_SHADOW_ENABLED=true`, and the exact bounded
+  `GEMINI_MAX_CALLS_PER_INGEST_REQUEST=2`.
+- These flags are **OFF** in the committed QA Wrangler configuration and
+  absent from Production. No running QA Worker is enabled.
+- Reads the original unchanged pending Map window, retains the original
+  receipts, and creates a separate B revision with one generation attempt,
+  one Workers AI embedding and one Gemini embedding batch, each D1-reserved
+  before invoking its provider. The pipeline checkpoints generated Map
+  text and both embedding arrays before dual Vectorize insertion.
+- A failure with uncertain provider outcome **never auto-retries that call**.
+  A completed durable embedding phase can be re-attested without providers.
+- Returns a SHADOW status only. Does not update the real publication table,
+  enable QA /api/ask, or start two Worker processes.
+- The QA-only provider-orchestration entrypoint is additionally covered by
+  offline SQLite + fake-index regressions; a real source-grounded paid run
+  remains separately gated.
+
+The next remote **disposable** D1 rehearsal will include the newly added
+`qa106_map_revision_provider_reservations` table as well as both original
+additive schemas. No real model invocation, no original QA schema migration,
+no live app deployment and no Production change are authorized by that
+rehearsal.
