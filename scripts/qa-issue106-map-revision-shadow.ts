@@ -76,7 +76,7 @@ const fenceArgs=(lease:ArchiveLease,s:RevisionScope,at:number)=>[
   lease.jobKey,lease.owner,lease.generation,at,
   s.documentId,s.jobKey,s.documentEpoch,s.fingerprint,
 ];
-const srcFence=` AND ${DOCUMENT_STAGING_EPOCH_FENCE_SQL}`;
+const srcFence=DOCUMENT_STAGING_EPOCH_FENCE_SQL;
 const point=(s:RevisionScope)=>[
   s.documentId,s.documentEpoch,s.revision,
 ];
