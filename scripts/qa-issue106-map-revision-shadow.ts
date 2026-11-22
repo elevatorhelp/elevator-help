@@ -435,12 +435,13 @@ export async function advanceShadowMapRevisionWithProviders(
    snapshot=await readDurableShadowRevision(db,lease,s);
  }
  if(snapshot.state==="generated"){
-   if(!snapshot.payload?.entries?.length)abort("GENERATED_PAYLOAD_MISSING");
+   const payload=snapshot.payload;
+   if(!payload?.entries?.length)abort("GENERATED_PAYLOAD_MISSING");
    // Reserve BOTH steps before the first provider request, so a crash
    // cannot bypass either provider's durable spend boundary.
    await reserveShadowProviderCall(db,lease,s,"workers_ai_embedding");
    await reserveShadowProviderCall(db,lease,s,"gemini_embedding");
-   const texts=snapshot.payload.entries.map(x=>x.text);
+   const texts=payload.entries.map(x=>x.text);
    calls++;
    const legacy=await providers.workersEmbedding(texts);
    calls++;
@@ -449,7 +450,7 @@ export async function advanceShadowMapRevisionWithProviders(
       legacy.length!==texts.length||multilingual.length!==texts.length)
      abort("EMBEDDING_COUNT_INVALID");
    await persistMapEmbeddings(db,lease,s,
-     snapshot.payload.entries.map((entry,i)=>({
+     payload.entries.map((entry,i)=>({
        logicalId:entry.logicalId,legacy:legacy[i],multilingual:multilingual[i],
      })));
    snapshot=await readDurableShadowRevision(db,lease,s);
