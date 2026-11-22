@@ -66,7 +66,7 @@ export async function searchPublishedRevisionEvidence(
     all:()=>Promise<{results:Record<string,unknown>[]}>
   }).all();
   if(!Array.isArray(bounded?.results))return [];
-  const proven=new Map<string,Promise<ReturnType<typeof readGenericPublishedEvidencePreview> extends Promise<infer V>?V:never>>();
+  const proven=new Map<string,ReturnType<typeof readGenericPublishedEvidencePreview>>();
   const output:PublishedV2EvidenceRow[]=[];
   for(const x of bounded.results){
    if(output.length>=limit)break;
