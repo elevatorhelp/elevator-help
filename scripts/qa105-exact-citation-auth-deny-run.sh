@@ -30,9 +30,11 @@ NODE
 source scripts/qa-issue106-worker-process-group.sh
 TMP="$(mktemp -d "$RUNNER_TEMP/qa105-auth-only.XXXXXXXX")"
 pid=""
+pid2=""
 cleanup(){
  local rc="$?"
  qa106_stop_worker_group "$pid" || rc=1
+ if [[ -n "$pid2" ]];then qa106_stop_worker_group "$pid2" || rc=1;fi
  rm -rf "$TMP"
  exit "$rc"
 }
@@ -74,4 +76,49 @@ for(const language of ["de","it"]){
 }
 console.log("PASS:QA105_REAL_QA_HTTP_UNSIGNED_AND_FORGED_DENIED");
 console.log("PASS:QA105_QA_WORKER_DEFAULT_OFF_NO_MODEL_NO_SOURCE_LEAK");
+NODE
+
+# SECOND isolated QA worker: opt-in gate ON, strict Clerk ON, but only a
+# deliberately INVALID, non-secret Clerk key. No genuine tokens or user data.
+# Verifies an unsigned or forged bearer is denied by auth, not by default-off.
+pid2="$(qa106_spawn_worker_group "$TMP/worker-auth-on.log" \\
+ npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \\
+ --ip 127.0.0.1 --port 8796 \\
+ --var "AUTH_REQUIRED:true" \\
+ --var "QA105_AUTH_CITATION_PROBE_ENABLED:true" \\
+ --var "QA105_EXPECTED_CLERK_TEST_USER_ID:user_QA105OFFLINE0001" \\
+ --var "CLERK_SECRET_KEY:sk_test_dummy_not_a_real_clerk_key" \\
+ --var "INGESTION_PUBLISHED_READS_ENABLED:true" \\
+ --var "INGESTION_MAP_REVISION_READS_ENABLED:true" \\
+ --var "QA106_ISOLATED_BINDINGS:qa106-pr100-v2-only" \\
+ --var "GEMINI_MAX_CALLS_PER_INGEST_REQUEST:0")"
+qa106_assert_worker_group "$pid2"
+for i in $(seq 1 75);do
+ code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 \\
+   -X POST -H 'Content-Type: application/json' \\
+   --data '{"language":"de"}' \\
+   http://127.0.0.1:8796/api/qa105-exact-citation-probe 2>/dev/null||true)"
+ if [[ "$code" == 401 ]];then break;fi
+ if ! kill -0 "$pid2" 2>/dev/null;then break;fi
+ sleep 2
+done
+[[ "$code" == 401 ]] || {
+ echo "::error::QA105_REAL_AUTH_GATE_DID_NOT_REQUIRE_JWT";exit 1; }
+node --input-type=module <<'NODE'
+const url="http://127.0.0.1:8796/api/qa105-exact-citation-probe";
+for(const language of ["de","it"]){
+ for(const auth of [undefined,"Bearer definitely.invalid.signature"]){
+  const res=await fetch(url,{method:"POST",headers:{
+   "Content-Type":"application/json",
+   ...(auth?{Authorization:auth}:{})},
+   body:JSON.stringify({language}),
+   signal:AbortSignal.timeout(20000)});
+  const result=await res.json();
+  if(res.status!==401||result?.code!=="QA105_AUTH_DENIED"||
+     result?.ok!==false||result?.sourceAttested!==undefined)
+    throw Error("QA105_AUTHENTICATED_MODE_FAIL_OPEN");
+ }
+}
+console.log("PASS:QA105_QA_REAL_HTTP_AUTH_ON_UNSIGNED_AND_FORGED_401");
+console.log("PASS:QA105_QA_REAL_HTTP_NO_GEMINI_NO_SOURCE_DISCLOSURE");
 NODE
