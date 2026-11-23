@@ -493,6 +493,73 @@ export type GenericExactEvidence={
  logicalId:string;text:string;fileName:string;sourcePath:string;
  page:number;chunkIndex:number;sourceFingerprint:string;
 };
+/**
+ * Exact-ID Evidence proof for identifier/section lookup. The earlier preview
+ * took the first 250 page-ordered rows before matching IDs; that could hide a
+ * valid reference on page 251+. Here we attest the complete active revision,
+ * then fetch ONLY the requested ≤100 bounded logical IDs.
+ *
+ * No unactivated B candidate can fall back to older Evidence; stale index
+ * or a pointer blocked during async reads returns [].
+ */
+export async function readGenericPublishedEvidenceByIds(
+ db:CoordinatorDB|undefined,doc:string,logicalIds:string[],
+ indexes:readonly [ImmutableIndex,ImmutableIndex],
+):Promise<GenericExactEvidence[]>{
+ if(!db?.prepare||typeof doc!=="string"||!doc||
+    !Array.isArray(logicalIds)||logicalIds.length<1||
+    logicalIds.length>100||indexes?.length!==2||
+    indexes.some(i=>typeof i?.getByIds!=="function"))return [];
+ const ids=[...new Set(logicalIds)];
+ if(ids.some(x=>typeof x!=="string"||x.length<1||x.length>180))
+   return [];
+ try{
+  // Only new revision candidates use this path. Legacy A continues through
+  // its dedicated published V2 Evidence lookup.
+  const candidate=await q(db,`SELECT 1 AS present
+    FROM ingestion_v2_map_revision_candidates
+    WHERE document_id=? LIMIT 1`,[doc]);
+  if(!candidate)return [];
+  const active=await activeForDoc(db,doc,indexes);
+  if(!active)return [];
+  const sql=`SELECT e.logical_id,e.text,e.file_name,e.source_path,
+    e.page,e.chunk_index,e.source_fingerprint
+    FROM ingestion_v2_staged_evidence e
+    JOIN ingestion_v2_map_revision_activations a
+      ON a.document_id=e.document_id
+       AND a.staging_epoch=e.generation
+       AND a.source_fingerprint=e.source_fingerprint
+       AND a.state='active'
+    JOIN ingestion_v2_document_epochs d
+      ON d.document_id=a.document_id AND d.job_key=a.job_key
+       AND d.staging_epoch=a.staging_epoch
+       AND d.source_fingerprint=a.source_fingerprint
+    WHERE e.document_id=? AND e.logical_id IN (${ids.map(()=>"?").join(",")})
+    ORDER BY e.page,e.chunk_index LIMIT ?`;
+  const selected=await rows(db,sql,[doc,...ids,ids.length]);
+  if(selected.length>ids.length)return [];
+  const allowed=new Set(active.proof.evidenceIds);
+  if(selected.some(e=>!allowed.has(String(e.logical_id))||
+     typeof e.text!=="string"||!e.text||
+     typeof e.file_name!=="string"||typeof e.source_path!=="string"||
+     !Number.isSafeInteger(e.page)||Number(e.page)<1||
+     !Number.isSafeInteger(e.chunk_index)||Number(e.chunk_index)<0||
+     e.source_fingerprint!==active.scope.fingerprint))return [];
+  // Close rollback/replacement races during the exact-ID D1 query.
+  const again=await activeForDoc(db,doc,indexes);
+  if(!again||again.scope.epoch!==active.scope.epoch||
+     again.scope.revision!==active.scope.revision||
+     again.scope.fingerprint!==active.scope.fingerprint||
+     again.proof.manifest!==active.proof.manifest)return [];
+  return selected.map(e=>({
+   logicalId:String(e.logical_id),text:String(e.text),
+   fileName:String(e.file_name),sourcePath:String(e.source_path),
+   page:Number(e.page),chunkIndex:Number(e.chunk_index),
+   sourceFingerprint:String(e.source_fingerprint),
+  }));
+ }catch{return []}
+}
+
 /** Evidence page citations use the SAME active source epoch and B pointer.
  * Never allow a revision candidate with a missing/blocked activation to
  * fall back to stale evidence, while legacy published A stays supported.
