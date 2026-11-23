@@ -33,6 +33,7 @@ jobs:
       QA105_CLERK_TEST_SESSION_JWT: ${{ secrets.QA105_CLERK_TEST_SESSION_JWT }}
       QA105_CLERK_TEST_USER_ID: ${{ secrets.QA105_CLERK_TEST_USER_ID }}
       QA105_POSITIVE_CONFIRMATION: QA105_REAL_TEST_CLERK_ZERO_MODEL
+      QA105_POSITIVE_EVENT_TRIGGER: ${{ github.event.head_commit.message }}
     steps:
       - name: Checkout isolated QA-only branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
