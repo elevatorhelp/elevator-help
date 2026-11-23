@@ -26,6 +26,7 @@ import {
  stageGenericMapCandidatePreview,activateGenericMapRevisionPreview,
  blockGenericMapRevisionPreview,filterGenericPublishedMapPreview,
  filterGenericPublishedRawPreview,readGenericPublishedEvidencePreview,
+ readGenericPublishedEvidenceByIds,
  type MapRevisionScope,
 } from "./qa-issue106-generic-map-publication-preview.ts";
 import {revisionReadGatePreview}
@@ -647,6 +648,62 @@ try{
  console.log("PASS: atomic shadow Map pointer, exact active revision/receipt/metadata, half-index, stale fingerprint and old Map exclusion");
  f.close();
 
+
+
+ // Regression: a published reference on page 260 must NOT disappear
+ // merely because the old page-ordered Evidence preview took 250 rows.
+ // All source epochs, 260 Evidence logical IDs, A/B leases and both
+ // physical Map indexes are real SQLite + independent FakeIndex proofs.
+ const huge=await setup("many-evidence");
+ const hugeIndexes:[FakeIndex,FakeIndex]=[new FakeIndex(),new FakeIndex()];
+ const hugeSnap=await persistAll(huge);
+ assert.equal(await publishShadowMapRevision(
+   huge.db,huge.lease,huge.scope,hugeIndexes),true);
+ for(let i=2;i<260;i++){
+   huge.sqlite.prepare(`INSERT INTO ingestion_v2_staged_evidence
+   (document_id,generation,logical_id,source_fingerprint,text,
+    file_name,source_path,page,chunk_index,created_at_ms)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+     QA106_B_PDF_ID,huge.scope.documentEpoch,`evidence-${i}`,fp,
+     `Grounded QA page ${i+1}`,"synthetic-b.pdf",
+     "qa/synthetic-b.pdf",i+1,i,Date.now());
+ }
+ huge.sqlite.prepare(`INSERT INTO ingestion_v2_evidence_terms
+   (document_id,generation,logical_id,source_fingerprint,kind,
+    term_key,label,created_at_ms) VALUES (?,?,?,?,?,?,?,?)`)
+    .run(QA106_B_PDF_ID,huge.scope.documentEpoch,"evidence-259",
+         fp,"reference","EN8120","EN 81-20",Date.now());
+ const hugeScope:MapRevisionScope={
+   documentId:QA106_B_PDF_ID,jobKey:QA106_B_JOB,
+   epoch:huge.scope.documentEpoch,revision:1,fingerprint:fp,
+ };
+ const hugeHash=String(huge.read(`SELECT embeddings_sha256
+    FROM qa106_map_revisions WHERE document_id=?`,
+    [QA106_B_PDF_ID])!.embeddings_sha256);
+ await stageGenericMapCandidatePreview(
+   huge.db,huge.lease,hugeScope,hugeSnap.payload!,hugeHash,hugeIndexes);
+ assert.equal(await activateGenericMapRevisionPreview(
+   huge.db,huge.lease,hugeScope,hugeIndexes),true);
+ assert.equal((await readGenericPublishedEvidencePreview(
+   huge.db,QA106_B_PDF_ID,hugeIndexes,250)).length,250);
+ const exactHuge=await readGenericPublishedEvidenceByIds(
+   huge.db,QA106_B_PDF_ID,["evidence-259"],hugeIndexes);
+ assert.deepEqual(exactHuge.map(x=>x.page),[260]);
+ const citedHuge=await searchPublishedRevisionEvidence(
+   huge.db,[{key:"EN8120",label:"EN 81-20",structured:true}],
+   [],hugeIndexes,60);
+ assert.deepEqual(citedHuge.map(x=>x.page),[260],
+   "Exact citation on page 260 is valid despite first-250 preview cap");
+ assert.equal(await blockGenericMapRevisionPreview(
+   huge.db,huge.lease,hugeScope),true);
+ assert.deepEqual(await readGenericPublishedEvidenceByIds(
+   huge.db,QA106_B_PDF_ID,["evidence-259"],hugeIndexes),[]);
+ assert.deepEqual(await searchPublishedRevisionEvidence(
+   huge.db,[{key:"EN8120",label:"EN 81-20",structured:true}],
+   [],hugeIndexes,60),[],
+   "Blocked active revision must fail closed on exact page 260");
+ huge.close();
+ console.log("PASS: exact active-revision citation beyond 250 Evidence rows, rollback fails closed");
 
  // End-to-end QA-only orchestration with mock providers and real SQLite CAS.
  // First invocation performs one generation, two embeddings, dual fake Vectorize
