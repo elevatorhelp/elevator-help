@@ -13,8 +13,13 @@ const secret=process.env.QA105_CLERK_TEST_SECRET_KEY;
 const token=process.env.QA105_CLERK_TEST_SESSION_JWT;
 const identity=process.env.QA105_CLERK_TEST_USER_ID;
 function guard(){
+ const event=process.env.GITHUB_EVENT_NAME;
+ const permittedTrigger=event==="workflow_dispatch"||
+   (event==="push"&&
+    process.env.QA105_POSITIVE_EVENT_TRIGGER===
+    "qa105(test): authorized real Clerk TEST positive probe zero models");
  if(process.env.GITHUB_ACTIONS!=="true"||
-    process.env.GITHUB_EVENT_NAME!=="workflow_dispatch"||
+    !permittedTrigger||
     process.env.GITHUB_REF!=="refs/heads/feat/issue106-shadow-map-revision-20261122"||
     process.env.QA105_POSITIVE_CONFIRMATION!=="QA105_REAL_TEST_CLERK_ZERO_MODEL"||
     process.env.GEMINI_API_KEY!==undefined||
