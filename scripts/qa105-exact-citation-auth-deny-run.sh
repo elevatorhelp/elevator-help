@@ -81,22 +81,22 @@ NODE
 # SECOND isolated QA worker: opt-in gate ON, strict Clerk ON, but only a
 # deliberately INVALID, non-secret Clerk key. No genuine tokens or user data.
 # Verifies an unsigned or forged bearer is denied by auth, not by default-off.
-pid2="$(qa106_spawn_worker_group "$TMP/worker-auth-on.log" \\
- npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \\
- --ip 127.0.0.1 --port 8796 \\
- --var "AUTH_REQUIRED:true" \\
- --var "QA105_AUTH_CITATION_PROBE_ENABLED:true" \\
- --var "QA105_EXPECTED_CLERK_TEST_USER_ID:user_QA105OFFLINE0001" \\
- --var "CLERK_SECRET_KEY:sk_test_dummy_not_a_real_clerk_key" \\
- --var "INGESTION_PUBLISHED_READS_ENABLED:true" \\
- --var "INGESTION_MAP_REVISION_READS_ENABLED:true" \\
- --var "QA106_ISOLATED_BINDINGS:qa106-pr100-v2-only" \\
+pid2="$(qa106_spawn_worker_group "$TMP/worker-auth-on.log" \
+ npx wrangler dev --remote --config wrangler.qa-pr100-v2.json \
+ --ip 127.0.0.1 --port 8796 \
+ --var "AUTH_REQUIRED:true" \
+ --var "QA105_AUTH_CITATION_PROBE_ENABLED:true" \
+ --var "QA105_EXPECTED_CLERK_TEST_USER_ID:user_QA105OFFLINE0001" \
+ --var "CLERK_SECRET_KEY:sk_test_dummy_not_a_real_clerk_key" \
+ --var "INGESTION_PUBLISHED_READS_ENABLED:true" \
+ --var "INGESTION_MAP_REVISION_READS_ENABLED:true" \
+ --var "QA106_ISOLATED_BINDINGS:qa106-pr100-v2-only" \
  --var "GEMINI_MAX_CALLS_PER_INGEST_REQUEST:0")"
 qa106_assert_worker_group "$pid2"
 for i in $(seq 1 75);do
- code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 \\
-   -X POST -H 'Content-Type: application/json' \\
-   --data '{"language":"de"}' \\
+ code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 \
+   -X POST -H 'Content-Type: application/json' \
+   --data '{"language":"de"}' \
    http://127.0.0.1:8796/api/qa105-exact-citation-probe 2>/dev/null||true)"
  if [[ "$code" == 401 ]];then break;fi
  if ! kill -0 "$pid2" 2>/dev/null;then break;fi
