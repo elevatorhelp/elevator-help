@@ -43,3 +43,5 @@ jobs:
         run: bash scripts/qa105-exact-citation-auth-deny-run.sh
 
 # Reviewed auth-on dummy-key 401 branch; never accepts valid Clerk token.
+
+# QA auth-on dummy-key process-group syntax fix; model and Clerk secrets absent.
