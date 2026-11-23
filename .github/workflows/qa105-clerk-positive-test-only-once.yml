@@ -1,0 +1,59 @@
+name: QA105 REAL Clerk TEST session and exact-page citation proof (manual, no models)
+on:
+  push:
+    branches: [feat/issue106-shadow-map-revision-20261122]
+    paths: [".github/workflows/qa105-clerk-positive-test-only-once.yml"]
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type QA105_REAL_TEST_CLERK_ZERO_MODEL; explicit TEST only"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  real-test-clerk:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      ((github.event_name == 'push' &&
+         github.event.head_commit.message == 'qa105(test): authorized real Clerk TEST positive probe zero models') ||
+       (github.event_name == 'workflow_dispatch' &&
+         inputs.confirmation == 'QA105_REAL_TEST_CLERK_ZERO_MODEL'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: qa-clerk-positive
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      QA105_CLERK_TEST_SECRET_KEY: ${{ secrets.QA105_CLERK_TEST_SECRET_KEY }}
+      QA105_CLERK_TEST_SESSION_JWT: ${{ secrets.QA105_CLERK_TEST_SESSION_JWT }}
+      QA105_CLERK_TEST_USER_ID: ${{ secrets.QA105_CLERK_TEST_USER_ID }}
+      QA105_POSITIVE_CONFIRMATION: QA105_REAL_TEST_CLERK_ZERO_MODEL
+    steps:
+      - name: Checkout isolated QA-only branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Verify secrets and QA bindings before Worker build (never print values)
+        run: |
+          set -euo pipefail
+          bash -n scripts/qa105-clerk-positive-run.sh
+          node --check scripts/qa105-clerk-positive-probe.mjs
+          test -z "${GEMINI_API_KEY:-}"
+          test -z "${GEMINI_BENCHMARK_API_KEY:-}"
+          test -z "${CLERK_SECRET_KEY:-}"
+          export QA105_PRIVATE_DEV_VARS="$RUNNER_TEMP/preflight-only/.dev.vars"
+          node scripts/qa105-clerk-positive-probe.mjs preflight
+      - name: Compile QA Worker without Production deployment
+        run: npm run cf:build
+      - name: One positive TEST Clerk JWT and exact B Evidence page/section HTTP proof
+        run: bash scripts/qa105-clerk-positive-run.sh
