@@ -26,9 +26,10 @@ import {
  stageGenericMapCandidatePreview,activateGenericMapRevisionPreview,
  blockGenericMapRevisionPreview,filterGenericPublishedMapPreview,
  filterGenericPublishedRawPreview,readGenericPublishedEvidencePreview,
- readGenericPublishedEvidenceByIds,
  type MapRevisionScope,
 } from "./qa-issue106-generic-map-publication-preview.ts";
+import {readGenericPublishedEvidenceByIds}
+ from "../app/lib/ingestion-map-revision-visibility.ts";
 import {revisionReadGatePreview}
  from "./qa-issue106-revision-reader-flag-preview.ts";
 import {publishedArchiveEnv}
