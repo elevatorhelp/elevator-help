@@ -36,6 +36,7 @@ import {publishedArchiveEnv}
  from "../app/lib/ingestion-published-reader.ts";
 import {searchPublishedRevisionEvidence}
  from "../app/lib/ingestion-map-revision-evidence.ts";
+import {authorizeChatRequest} from "../app/lib/request-auth.ts";
 import {mergePublishedEvidenceRows,type ArchiveEvidenceRow}
  from "../app/lib/archive-evidence-index.ts";
 
@@ -542,6 +543,97 @@ try{
  assert.deepEqual(await searchPublishedRevisionEvidence(f.db,[
    {key:"UNKNOWN",label:"Unknown",structured:false}],[],ix,60),[],
    "unrelated reference cannot become an authoritative B citation");
+
+ // QA #105: combined authentication + authoritative D1/dual-index Evidence
+ // contract for the exact synthetic code, clause and language scenarios.
+ // This is NOT a live authenticated /api/ask HTTP test. No provider calls.
+ const previousAuth=process.env.AUTH_REQUIRED;
+ const previousClerk=process.env.CLERK_SECRET_KEY;
+ try{
+  process.env.AUTH_REQUIRED="true";
+  process.env.CLERK_SECRET_KEY="qa-test-secret-not-real";
+  const makeReq=(token?:string)=>new Request(
+   "https://qa.elevator.help/api/ask",{
+     method:"POST",
+     headers:token?{authorization:"Bearer "+token}:{},
+     body:JSON.stringify({question:"QA #105 source citation probe"}),
+   });
+  const qaUser="user_QA105TEST0001";
+  const signedVerifier=(async (token:string, opts:{authorizedParties?:string[]})=>{
+    assert.deepEqual(opts.authorizedParties,["https://qa.elevator.help"]);
+    if(token!=="signed-qa-test-only")throw Error("invalid_signature");
+    return {data:{sub:qaUser,sid:"sess_QA105TEST0001"},errors:undefined};
+  }) as unknown as typeof import("@clerk/backend").verifyToken;
+  const unsigned=await authorizeChatRequest(makeReq(),signedVerifier);
+  assert.equal(unsigned.ok,false);
+  if(!unsigned.ok)assert.equal(unsigned.status,401);
+  const invalid=await authorizeChatRequest(
+    makeReq("unsigned-forged"),signedVerifier);
+  assert.equal(invalid.ok,false);
+  if(!invalid.ok)assert.equal(invalid.status,401);
+  const valid=await authorizeChatRequest(
+    makeReq("signed-qa-test-only"),signedVerifier);
+  assert.deepEqual(valid,{ok:true,userId:qaUser});
+  const otherVerifier=(async()=>({data:{
+    sub:"user_DIFFERENTREALACCOUNT",sid:"sess_DIFFERENTACCOUNT"},
+    errors:undefined})) as unknown as typeof import("@clerk/backend").verifyToken;
+  const other=await authorizeChatRequest(
+    makeReq("signed-qa-test-only"),otherVerifier);
+  assert.equal(other.ok,true);
+  // Clerk accepts other genuine signed users in the normal product.
+  // Our *isolated QA probe* must additionally require the exact test user.
+  const allowProbe=(auth:Awaited<ReturnType<typeof authorizeChatRequest>>)=>
+    auth.ok&&auth.userId===qaUser;
+  assert.equal(allowProbe(valid),true);
+  assert.equal(allowProbe(other),false);
+  assert.equal(allowProbe(unsigned),false);
+  assert.equal(allowProbe(invalid),false);
+
+  const cases=[
+   {id:"QA-4711",clause:"QA-1.2.3",page:1,
+    language:"de",question:"Was bedeutet QA-4711 in Abschnitt QA-1.2.3?"},
+   {id:"MOCK-DOOR-12",clause:"QA-2.4.6",page:2,
+    language:"it",question:"Cosa indica MOCK-DOOR-12 nella sezione QA-2.4.6?"},
+  ];
+  for(const [i,c] of cases.entries()){
+   f.sqlite.prepare(`UPDATE ingestion_v2_staged_evidence
+     SET text=? WHERE document_id=? AND logical_id=?`).run(
+     `Synthetic QA-only code ${c.id} / ${c.clause}; source page ${c.page}`,
+      QA106_B_PDF_ID,`evidence-${i}`);
+   f.sqlite.prepare(`INSERT INTO ingestion_v2_evidence_terms
+     (document_id,generation,logical_id,source_fingerprint,kind,
+      term_key,label,created_at_ms) VALUES (?,?,?,?,?,?,?,?)`).run(
+      QA106_B_PDF_ID,f.scope.documentEpoch,`evidence-${i}`,
+      fp,"reference",c.id,c.id,Date.now());
+   f.sqlite.prepare(`INSERT INTO ingestion_v2_evidence_terms
+     (document_id,generation,logical_id,source_fingerprint,kind,
+      term_key,label,created_at_ms) VALUES (?,?,?,?,?,?,?,?)`).run(
+      QA106_B_PDF_ID,f.scope.documentEpoch,`evidence-${i}`,
+      fp,"clause",c.clause,c.clause,Date.now());
+   assert.ok(c.question.length>15&&["de","it"].includes(c.language));
+   const hits=allowProbe(valid)
+    ?await searchPublishedRevisionEvidence(f.db,
+       [{key:c.id,label:c.id,structured:true}],[c.clause],ix,10)
+    :[];
+   assert.deepEqual(hits.map(x=>x.page),[c.page]);
+   assert.equal(hits[0].source_file_id,QA106_B_PDF_ID);
+   assert.ok(hits[0].text.includes(c.id));
+   assert.ok(hits[0].text.includes(c.clause));
+   assert.deepEqual(allowProbe(other)?hits:[],
+     [],"A different signed Clerk user must not run the QA-only probe");
+  }
+  assert.deepEqual(await searchPublishedRevisionEvidence(f.db,
+   [{key:"MOCK-DOOR-12",label:"MOCK-DOOR-12",structured:true}],
+   ["QA-1.2.3"],ix,10),[],
+   "Clause mismatch must never cite the adjacent source page");
+  console.log("PASS: QA105 offline signed/unsigned/wrong-QA-user, German+Italian fixture code/section/page provenance");
+ }finally{
+  if(previousAuth===undefined)delete process.env.AUTH_REQUIRED;
+  else process.env.AUTH_REQUIRED=previousAuth;
+  if(previousClerk===undefined)delete process.env.CLERK_SECRET_KEY;
+  else process.env.CLERK_SECRET_KEY=previousClerk;
+ }
+
  const guardedD1=Object.assign(Object.create(f.db),{
    __immutableReadGate:true,
    __mapRevisionReadGate:true,
