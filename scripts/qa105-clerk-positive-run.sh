@@ -3,7 +3,9 @@
 set -Eeuo pipefail
 umask 077
 [[ "${GITHUB_ACTIONS:-}" == true &&
-   "${GITHUB_EVENT_NAME:-}" == workflow_dispatch &&
+   ( "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ||
+     ( "${GITHUB_EVENT_NAME:-}" == push &&
+       "${QA105_POSITIVE_EVENT_TRIGGER:-}" == "qa105(test): authorized real Clerk TEST positive probe zero models" ) ) &&
    "${GITHUB_REF:-}" == refs/heads/feat/issue106-shadow-map-revision-20261122 &&
    "${QA105_POSITIVE_CONFIRMATION:-}" == QA105_REAL_TEST_CLERK_ZERO_MODEL &&
    -z "${GEMINI_API_KEY:-}" &&
