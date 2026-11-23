@@ -130,6 +130,12 @@ jobs:
           bash -n scripts/qa-issue106-vector-status-run.sh
           bash -n scripts/qa-issue106-map-only-run.sh
 
+      - name: Test manual TEST Clerk positive QA runner fail-closed (offline)
+        run: |
+          bash -n scripts/qa105-clerk-positive-run.sh
+          node --check scripts/qa105-clerk-positive-probe.mjs
+          node scripts/test-qa105-clerk-positive-gate.mjs
+
       - name: Build
         run: npm run build
 
