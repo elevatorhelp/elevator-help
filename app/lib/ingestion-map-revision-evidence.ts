@@ -10,7 +10,7 @@
 import type {ReferenceIdentifier} from "./reference-identifiers.ts";
 import type {CoordinatorDB} from "./ingestion-global-coordinator.ts";
 import type {ImmutableIndex} from "./ingestion-immutable-publication.ts";
-import {readGenericPublishedEvidencePreview}
+import {readGenericPublishedEvidenceByIds}
  from "./ingestion-map-revision-visibility.ts";
 import type {PublishedV2EvidenceRow}
  from "./ingestion-v2-evidence-references.ts";
@@ -66,7 +66,15 @@ export async function searchPublishedRevisionEvidence(
     all:()=>Promise<{results:Record<string,unknown>[]}>
   }).all();
   if(!Array.isArray(bounded?.results))return [];
-  const proven=new Map<string,ReturnType<typeof readGenericPublishedEvidencePreview>>();
+  const perDoc=new Map<string,string[]>();
+  for(const x of bounded.results){
+   if(typeof x.source_file_id!=="string"||
+      typeof x.id!=="string")continue;
+   const arr=perDoc.get(x.source_file_id)||[];
+   arr.push(x.id);
+   perDoc.set(x.source_file_id,arr);
+  }
+  const proven=new Map<string,ReturnType<typeof readGenericPublishedEvidenceByIds>>();
   const output:PublishedV2EvidenceRow[]=[];
   for(const x of bounded.results){
    if(output.length>=limit)break;
@@ -74,7 +82,8 @@ export async function searchPublishedRevisionEvidence(
    if(typeof doc!=="string"||!doc||typeof x.id!=="string")continue;
    let trusted=proven.get(doc);
    if(!trusted){
-    trusted=readGenericPublishedEvidencePreview(db,doc,indexes,250);
+    trusted=readGenericPublishedEvidenceByIds(
+     db,doc,perDoc.get(doc)||[],indexes);
     proven.set(doc,trusted);
    }
    const all=await trusted;
