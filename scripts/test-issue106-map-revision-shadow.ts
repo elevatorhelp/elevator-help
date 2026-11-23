@@ -611,10 +611,11 @@ try{
       QA106_B_PDF_ID,f.scope.documentEpoch,`evidence-${i}`,
       fp,"clause",c.clause,c.clause,Date.now());
    assert.ok(c.question.length>15&&["de","it"].includes(c.language));
-   const hits=allowProbe(valid)
-    ?await searchPublishedRevisionEvidence(f.db,
-       [{key:c.id,label:c.id,structured:true}],[c.clause],ix,10)
-    :[];
+   const hits:Awaited<ReturnType<typeof searchPublishedRevisionEvidence>>=
+    allowProbe(valid)
+     ?await searchPublishedRevisionEvidence(f.db,
+        [{key:c.id,label:c.id,structured:true}],[c.clause],ix,10)
+     :[];
    assert.deepEqual(hits.map(x=>x.page),[c.page]);
    assert.equal(hits[0].source_file_id,QA106_B_PDF_ID);
    assert.ok(hits[0].text.includes(c.id));
