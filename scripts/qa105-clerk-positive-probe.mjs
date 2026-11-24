@@ -252,7 +252,13 @@ async function probe(){
    denied("SIGNED_TEST_TOKEN_REJECTED_401");
   }
   if(valid.code===403)denied("DEDICATED_TEST_USER_REJECTED_403");
-  if(valid.code===409)denied("QA_EXACT_CITATION_NOT_ATTESTED_409");
+  if(valid.code===409){
+   const reasons=["QA105_EVIDENCE_EMPTY","QA105_EVIDENCE_MULTIPLE",
+    "QA105_EVIDENCE_WRONG_SOURCE","QA105_EVIDENCE_WRONG_PAGE",
+    "QA105_EVIDENCE_CODE_TEXT_MISMATCH","QA105_EVIDENCE_CLAUSE_TEXT_MISMATCH"];
+   const reason=reasons.includes(valid.data?.code)?valid.data.code:"QA105_EVIDENCE_UNCLASSIFIED";
+   denied(lang.toUpperCase()+"_"+reason+"_409");
+  }
   if(valid.code===503)denied("QA_PROBE_BINDINGS_UNAVAILABLE_503");
   if(valid.code!==200||valid.data.ok!==true||
      valid.data.qaOnly!==true||valid.data.modelCalls!==0||
