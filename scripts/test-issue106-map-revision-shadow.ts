@@ -36,6 +36,10 @@ import {publishedArchiveEnv}
  from "../app/lib/ingestion-published-reader.ts";
 import {searchPublishedRevisionEvidence}
  from "../app/lib/ingestion-map-revision-evidence.ts";
+import {referenceIdentifierKey}
+ from "../app/lib/reference-identifiers.ts";
+import {extractClauseNumbers}
+ from "../app/lib/standard-identifiers.ts";
 import {authorizeChatRequest} from "../app/lib/request-auth.ts";
 import {mergePublishedEvidenceRows,type ArchiveEvidenceRow}
  from "../app/lib/archive-evidence-index.ts";
@@ -596,6 +600,9 @@ try{
     language:"it",question:"Cosa indica MOCK-DOOR-12 nella sezione QA-2.4.6?"},
   ];
   for(const [i,c] of cases.entries()){
+   const normalizedCode=referenceIdentifierKey(c.id);
+   const normalizedClause=extractClauseNumbers(c.clause)[0];
+   assert.ok(normalizedCode&&normalizedClause);
    f.sqlite.prepare(`UPDATE ingestion_v2_staged_evidence
      SET text=? WHERE document_id=? AND logical_id=?`).run(
      `Synthetic QA-only code ${c.id} / ${c.clause}; source page ${c.page}`,
@@ -604,17 +611,17 @@ try{
      (document_id,generation,logical_id,source_fingerprint,kind,
       term_key,label,created_at_ms) VALUES (?,?,?,?,?,?,?,?)`).run(
       QA106_B_PDF_ID,f.scope.documentEpoch,`evidence-${i}`,
-      fp,"reference",c.id,c.id,Date.now());
+      fp,"reference",normalizedCode,c.id,Date.now());
    f.sqlite.prepare(`INSERT INTO ingestion_v2_evidence_terms
      (document_id,generation,logical_id,source_fingerprint,kind,
       term_key,label,created_at_ms) VALUES (?,?,?,?,?,?,?,?)`).run(
       QA106_B_PDF_ID,f.scope.documentEpoch,`evidence-${i}`,
-      fp,"clause",c.clause,c.clause,Date.now());
+      fp,"clause",normalizedClause,normalizedClause,Date.now());
    assert.ok(c.question.length>15&&["de","it"].includes(c.language));
    const hits:Awaited<ReturnType<typeof searchPublishedRevisionEvidence>>=
     allowProbe(valid)
      ?await searchPublishedRevisionEvidence(f.db,
-        [{key:c.id,label:c.id,structured:true}],[c.clause],ix,10)
+        [{key:normalizedCode,label:c.id,structured:true}],[normalizedClause],ix,10)
      :[];
    assert.deepEqual(hits.map(x=>x.page),[c.page]);
    assert.equal(hits[0].source_file_id,QA106_B_PDF_ID);
@@ -624,8 +631,8 @@ try{
      [],"A different signed Clerk user must not run the QA-only probe");
   }
   assert.deepEqual(await searchPublishedRevisionEvidence(f.db,
-   [{key:"MOCK-DOOR-12",label:"MOCK-DOOR-12",structured:true}],
-   ["QA-1.2.3"],ix,10),[],
+   [{key:referenceIdentifierKey("MOCK-DOOR-12"),label:"MOCK-DOOR-12",structured:true}],
+   extractClauseNumbers("QA-1.2.3"),ix,10),[],
    "Clause mismatch must never cite the adjacent source page");
   console.log("PASS: QA105 offline signed/unsigned/wrong-QA-user, German+Italian fixture code/section/page provenance");
  }finally{
