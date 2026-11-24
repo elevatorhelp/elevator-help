@@ -7,7 +7,7 @@ umask 077
      ( "${GITHUB_EVENT_NAME:-}" == push &&
        "${QA105_POSITIVE_EVENT_TRIGGER:-}" == "qa105(approved paid): exact DE IT fixture max two Gemini calls" ) ) &&
    "${GITHUB_REF:-}" == refs/heads/feat/issue106-shadow-map-revision-20261122 &&
-   "${QA105_POSITIVE_CONFIRMATION:-}" == qa105-20261124-two-calls-v1 &&
+   "${QA105_POSITIVE_CONFIRMATION:-}" == qa105-20261124-two-calls-v2 &&
    -n "${QA105_PAID_GEMINI_KEY:-}" &&
    -z "${GEMINI_API_KEY:-}" &&
    -z "${GEMINI_BENCHMARK_API_KEY:-}" &&
