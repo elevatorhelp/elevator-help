@@ -124,23 +124,38 @@ async function frontlineTicketSession(backendSessionId){
      url.search||url.hash)denied("UNAPPROVED_FAPI_HOST");
   origin=url.origin;
  }catch{denied("UNAPPROVED_FAPI_HOST");}
- const issued=await bapi("/sign_in_tokens",{
-  user_id:identity,expires_in_seconds:120,
- });
- const ticket=issued?.token;
- if(typeof ticket!=="string"||ticket.length<40||ticket.length>10000)
-  denied("TEST_SIGNIN_TICKET_UNAVAILABLE");
+ // Development FAPI requires its DevBrowser token. This token is
+ // limited to TEST, never persisted, printed, or attached to the app URL.
+ let devBrowser;
+ try{
+  const db=await fetch(origin+"/v1/dev_browser",{
+   method:"POST",
+   headers:{Origin:expectedOrigin,
+     Accept:"application/json",
+     "Content-Type":"application/x-www-form-urlencoded"},
+   body:new URLSearchParams({}),
+   signal:AbortSignal.timeout(15000),
+  });
+  if(!db.ok)denied("FAPI_DEV_BROWSER_ORIGIN_DENIED");
+  const j=await db.json();
+  devBrowser=j?.token||j?.dev_browser?.token||j?.jwt;
+ }catch{denied("FAPI_DEV_BROWSER_UNAVAILABLE")}
+ if(typeof devBrowser!=="string"||devBrowser.length<40||
+    devBrowser.length>10000)
+  denied("FAPI_DEV_BROWSER_TOKEN_UNAVAILABLE");
  const safeFetch=async (path,method,body,cookies="")=>{
   let res;
   try{
-   res=await fetch(origin+path,{
+   const u=origin+path+(path.includes("?")?"&":"?")+
+     "__dev_session="+encodeURIComponent(devBrowser);
+   res=await fetch(u,{
     method,
     headers:{
       Origin:expectedOrigin,
       Accept:"application/json",
       ...(method==="POST"?
         {"Content-Type":"application/x-www-form-urlencoded"}:{}),
-      ...(cookies?{Cookie:cookies}:{}),
+      Cookie:["__clerk_db_jwt="+devBrowser,cookies].filter(Boolean).join("; "),
     },
     ...(method==="POST"?{body:new URLSearchParams(body)}:{}),
     redirect:"manual",
@@ -160,6 +175,14 @@ async function frontlineTicketSession(backendSessionId){
  };
  const client=await safeFetch("/v1/client","GET",undefined);
  const cookies=[...client.cookies];
+ // Short-lived one-use ticket is requested ONLY after FAPI origin/bootstrap
+ // acceptance, and redeemed once. No password or email from the test user.
+ const issued=await bapi("/sign_in_tokens",{
+   user_id:identity,expires_in_seconds:120,
+ });
+ const ticket=issued?.token;
+ if(typeof ticket!=="string"||ticket.length<40||ticket.length>10000)
+   denied("TEST_SIGNIN_TICKET_UNAVAILABLE");
  const sign=await safeFetch("/v1/client/sign_ins","POST",
    {strategy:"ticket",ticket},cookies.join("; "));
  cookies.push(...sign.cookies);
