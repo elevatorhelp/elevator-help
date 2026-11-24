@@ -101,6 +101,82 @@ async function locallyVerifyToken(jwt){
  if(usable(basic))denied("TEST_SESSION_AUTHORIZED_PARTY_MISMATCH");
  denied("TEST_SESSION_SIGNATURE_OR_CLAIMS_NOT_VERIFIED");
 }
+/**
+ * Obtain an origin-bound session through Clerk's documented Frontend API
+ * sign-in ticket flow. The Backend JWT is used ONLY to discover the
+ * cryptographically-verified development FAPI issuer, NEVER for QA auth.
+ * FAPI's ticket is single-use. Neither ticket nor cookies leave this process.
+ */
+async function frontlineTicketSession(backendSessionId){
+ const backendJwt=await freshToken(backendSessionId);
+ const result=await verifyToken(backendJwt,{secretKey:secret})
+   .catch(()=>null);
+ const claims=result&&typeof result==="object"?
+   ("data" in result?result.data:result):null;
+ if(!claims||claims.sub!==identity||
+    typeof claims.sid!=="string"||result.errors)
+   denied("TEST_BAPI_ISSUER_NOT_VERIFIED");
+ let origin;
+ try{
+  const url=new URL(claims.iss);
+  if(url.protocol!=="https:"||url.port||url.pathname!=="/"||
+     !/^[a-z0-9-]+\\.clerk\\.accounts\\.dev$/.test(url.hostname)||
+     url.search||url.hash)denied("UNAPPROVED_FAPI_HOST");
+  origin=url.origin;
+ }catch{denied("UNAPPROVED_FAPI_HOST");}
+ const issued=await bapi("/sign_in_tokens",{
+  user_id:identity,expires_in_seconds:120,
+ });
+ const ticket=issued?.token;
+ if(typeof ticket!=="string"||ticket.length<40||ticket.length>10000)
+  denied("TEST_SIGNIN_TICKET_UNAVAILABLE");
+ const safeFetch=async (path,method,body,cookies="")=>{
+  let res;
+  try{
+   res=await fetch(origin+path,{
+    method,
+    headers:{
+      Origin:expectedOrigin,
+      Accept:"application/json",
+      ...(method==="POST"?
+        {"Content-Type":"application/x-www-form-urlencoded"}:{}),
+      ...(cookies?{Cookie:cookies}:{}),
+    },
+    ...(method==="POST"?{body:new URLSearchParams(body)}:{}),
+    redirect:"manual",
+    signal:AbortSignal.timeout(20000),
+   });
+  }catch{denied("FAPI_TEST_TRANSPORT_FAILED");}
+  const result=await res.json().catch(()=>null);
+  if(!res.ok||!result||typeof result!=="object")
+    denied("FAPI_TEST_"+path.includes("/sign_ins")?
+      "FAPI_TICKET_SIGNIN_REJECTED":"FAPI_CLIENT_UNAVAILABLE");
+  const setCookies=res.headers.getSetCookie?.()||[];
+  const names=setCookies.map(c=>c.split(";")[0]).filter(c=>
+    /^[A-Za-z0-9_]+=[^;]{1,4096}$/.test(c));
+  return {result,cookies:names};
+ };
+ const client=await safeFetch("/v1/client","GET",undefined);
+ const cookies=[...client.cookies];
+ const sign=await safeFetch("/v1/client/sign_ins","POST",
+   {strategy:"ticket",ticket},cookies.join("; "));
+ cookies.push(...sign.cookies);
+ const resource=sign.result?.response||sign.result?.client||sign.result;
+ let id=resource?.created_session_id||resource?.createdSessionId||
+  resource?.last_active_session_id||
+  resource?.sessions?.[0]?.id||
+  sign.result?.client?.sessions?.[0]?.id;
+ if(typeof id!=="string"||!/^sess_[A-Za-z0-9]{8,}$/.test(id))
+   denied("FAPI_TEST_ACTIVE_SESSION_UNAVAILABLE");
+ const token=await safeFetch("/v1/client/sessions/"+
+   encodeURIComponent(id)+"/tokens","POST",{},cookies.join("; "));
+ const jwt=token.result?.jwt||token.result?.response?.jwt;
+ if(typeof jwt!=="string"||jwt.split(".").length!==3)
+  denied("FAPI_TEST_SESSION_JWT_MISSING");
+ await locallyVerifyToken(jwt);
+ console.log("PASS:QA105_FRONTEND_TEST_SESSION_STRICT_ORIGIN_VERIFIED");
+ return {jwt,sessionId:id};
+}
 async function revokeSession(sessionId){
  try{await bapi("/sessions/"+sessionId+"/revoke");}
  catch{console.error("::warning::QA105_TEST_SESSION_REVOKE_UNCONFIRMED");}
@@ -127,7 +203,10 @@ async function probe(){
   return {code:response.status,data:body};
  };
  const sessionId=await startTestSession();
+ let frontendSessionId=null;
  try{
+ const frontend=await frontlineTicketSession(sessionId);
+ frontendSessionId=frontend.sessionId;
  for(const [lang,code,section,page] of tests){
   const unsigned=await post(lang);
   const forged=await post(lang,"not.a.valid.clerk.signature");
@@ -135,9 +214,7 @@ async function probe(){
      unsigned.data.code!=="QA105_AUTH_DENIED"||
      forged.data.code!=="QA105_AUTH_DENIED")
    denied("AUTH_NEGATIVE_GATE_FAILED");
-  const jwt=await freshToken(sessionId);
-  await locallyVerifyToken(jwt);
-  const valid=await post(lang,jwt);
+  const valid=await post(lang,frontend.jwt);
   // Never output HTTP body, token, user ID or the Evidence text.
   // Only known aggregate enums are permitted in CI diagnostic logs.
   if(valid.code===401)denied("SIGNED_TEST_TOKEN_REJECTED_401");
@@ -153,7 +230,10 @@ async function probe(){
      valid.data.sourceAttested!==true)
    denied("REAL_CLERK_OR_QA_EVIDENCE_NOT_ATTESTED");
  }
- }finally{await revokeSession(sessionId);}
+ }finally{
+   if(frontendSessionId)await revokeSession(frontendSessionId);
+   await revokeSession(sessionId);
+ }
  console.log("PASS:QA105_REAL_TEST_CLERK_AUTH_AND_QA_DUAL_INDEX_CITATIONS");
  console.log("PASS:QA105_DE_IT_EXACT_SECTION_PAGE_NO_MODEL_NO_SOURCE_TEXT");
 }
