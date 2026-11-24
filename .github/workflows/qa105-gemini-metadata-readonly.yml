@@ -106,3 +106,5 @@ jobs:
           report("Remote worker metadata",JSON.parse(readFileSync(root+"/result.json","utf8")));
           console.log("PASS:QA105_METADATA_DIAGNOSTIC_NO_GENERATION");
           JS
+
+# Owner updated benchmark secret; repeat metadata GET only, no generation.
