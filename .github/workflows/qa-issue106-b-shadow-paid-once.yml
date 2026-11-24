@@ -1,0 +1,54 @@
+name: Issue106 B-only source-grounded Map Shadow QA (PAID MANUAL GATE)
+run-name: Issue106 B only / 2 Gemini calls max / QA Shadow, never Production
+on:
+  push:
+    branches:
+      - feat/issue106-shadow-map-revision-20261122
+    paths:
+      - ".github/workflows/qa-issue106-b-shadow-paid-once.yml"
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  approved-b-shadow:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.actor == 'elevatorhelp' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa106(approved paid): one B shadow Map attempt max 2 Gemini calls'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+      QA106_B_SHADOW_CONFIRMATION: QA106_B_SHADOW_MAX_2_GEMINI_CALLS
+    steps:
+      - name: Checkout exactly reviewed QA branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Locked install
+        run: npm ci
+      - name: Compile isolated QA Worker without deployment or model calls
+        run: npm run cf:build
+      - name: Verify compiled Cloudflare worker entry exists
+        run: |
+          set -euo pipefail
+          test -s .open-next/worker.js || { echo "::error::QA106_QA_WORKER_BUILD_MISSING"; exit 1; }
+      - name: Run one hard-capped B-only QA Shadow attempt
+        run: |
+          set -euo pipefail
+          bash -n scripts/qa-issue106-b-shadow-run.sh
+          node --check scripts/qa-issue106-b-shadow-client.mjs
+          bash scripts/qa-issue106-b-shadow-run.sh
+      # Do not upload logs, PDFs, exact generated Map text, vectors or secrets.
+      # No Production API calls, deployments, live publication or auto-retry.
+
+# One-time authorized QA B Shadow run: approval in conversation, strictly capped.

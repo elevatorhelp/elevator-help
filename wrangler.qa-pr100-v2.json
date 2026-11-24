@@ -33,7 +33,9 @@
   "vars": {
     "AUTH_REQUIRED": "false",
     "INGESTION_STAGED_PUBLICATION": "false",
-    "GEMINI_MAX_CALLS_PER_INGEST_REQUEST": "0"
+    "GEMINI_MAX_CALLS_PER_INGEST_REQUEST": "0",
+    "QA106_ISOLATED_BINDINGS": "qa106-pr100-v2-only",
+    "QA106_B_MAP_REVISION_SHADOW_ENABLED": "false"
   },
   "observability": {
     "enabled": true

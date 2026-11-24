@@ -1,0 +1,126 @@
+name: QA105 authenticated Gemini metadata (zero generation)
+on:
+  push:
+    branches: [feat/issue106-shadow-map-revision-20261122]
+    paths: [".github/workflows/qa105-gemini-metadata-readonly.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  metadata:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa105(readonly): check authenticated model metadata without generation'
+    environment: qa-clerk-positive
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Compare authenticated model metadata in runner and isolated remote preview
+        env:
+          QA105_METADATA_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          test -n "${QA105_METADATA_KEY:-}"
+          test -z "${GEMINI_API_KEY:-}${QA105_PAID_GEMINI_KEY:-}${CLERK_SECRET_KEY:-}"
+          ROOT="$(mktemp -d "$RUNNER_TEMP/qa105-meta.XXXXXXXX")"
+          source scripts/qa-issue106-worker-process-group.sh
+          pid=""
+          cleanup(){ [[ -z "$pid" ]] || qa106_stop_worker_group "$pid"; rm -rf "$ROOT"; }
+          trap cleanup EXIT
+          cat > "$ROOT/wrangler.json" <<'JSON'
+          {"name":"elevator-help-qa105-metadata-diagnostic","main":"worker.mjs","compatibility_date":"2026-08-23","compatibility_flags":["nodejs_compat"]}
+          JSON
+          node --input-type=module - "$ROOT/.dev.vars" <<'JS'
+          import {writeFileSync} from "node:fs";
+          const original=process.env.QA105_METADATA_KEY||"";
+          const key=original.trim();
+          // Only validate transport safety, not an assumed Google key alphabet.
+          // Google, not a local regex, decides whether the credential is valid.
+          const safe=key.length>0&&key.length<=4096&&/^[\x21-\x7e]+$/.test(key);
+          console.log("::notice title=Key transport diagnostic::SAFE_HEADER="+safe+" EXPECTED_ALPHABET="+(/^[A-Za-z0-9_-]+$/.test(key)));
+          if(!safe)throw Error("QA105_METADATA_UNSAFE_HEADER");
+          writeFileSync(process.argv[2],"QA105_METADATA_KEY="+JSON.stringify(key)+"\n",{mode:0o600});
+          JS
+          cat > "$ROOT/worker.mjs" <<'JS'
+          export async function probe(key){
+            if(!key||key.length>4096||!/^[\x21-\x7e]+$/.test(key))return {kind:"KEY_MISSING"};
+            let stage="HEADERS";
+            try{
+              const headers=new Headers({"x-goog-api-key":key});
+              stage="FETCH";
+              const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash",{
+                method:"GET",headers,redirect:"manual",signal:AbortSignal.timeout(15000)
+              });
+              const status=r.status;
+              if(status>=300&&status<400){
+                let destination="UNKNOWN";
+                try{const u=new URL(r.headers.get("location")||"","https://generativelanguage.googleapis.com");
+                  destination=u.origin==="https://generativelanguage.googleapis.com"?"SAME_ORIGIN":"OTHER_ORIGIN";
+                }catch{}
+                return {kind:"HTTP",status,destination};
+              }
+              if(!r.ok)return {kind:"HTTP",status};
+              stage="RESPONSE_JSON";
+              const m=await r.json();
+              return {kind:"HTTP",status,exactModel:m.name==="models/gemini-3.6-flash",supportsGeneration:Array.isArray(m.supportedGenerationMethods)&&m.supportedGenerationMethods.includes("generateContent")};
+            }catch(e){return {kind:"EXCEPTION",stage,type:["TypeError","AbortError","TimeoutError","Error","SyntaxError"].includes(e?.name)?e.name:"OTHER"};}
+          }
+          export default {async fetch(request,env){
+            if(request.method!=="GET"||new URL(request.url).pathname!=="/probe")return new Response(null,{status:404});
+            return Response.json(await probe(env.QA105_METADATA_KEY));
+          }};
+          JS
+          cat > "$ROOT/report.mjs" <<'JS'
+          export function report(label,v){
+            let summary;
+            if(v.kind==="HTTP"&&Number.isInteger(v.status)&&v.status>=100&&v.status<=599){
+              summary="HTTP_"+v.status;
+              if(v.status>=300&&v.status<400)summary+="_REDIRECT_"+(["SAME_ORIGIN","OTHER_ORIGIN"].includes(v.destination)?v.destination:"UNKNOWN");
+              if(v.status===200)summary+="_EXACT_"+(v.exactModel===true)+"_GENERATION_"+(v.supportsGeneration===true);
+            }else if(v.kind==="KEY_MISSING")summary="KEY_MISSING";
+            else if(v.kind==="EXCEPTION"&&["TypeError","AbortError","TimeoutError","Error","SyntaxError","OTHER"].includes(v.type))summary="EXCEPTION_"+v.type+"_"+(["HEADERS","FETCH","RESPONSE_JSON"].includes(v.stage)?v.stage:"UNKNOWN");
+            else throw Error("QA105_METADATA_INVALID_DIAGNOSTIC");
+            console.log("::notice title="+label+"::"+label.replaceAll(" ","_").toUpperCase()+"="+summary);
+          }
+          JS
+          node --input-type=module - "$ROOT" <<'JS'
+          import {pathToFileURL} from "node:url";
+          const root=process.argv[2];
+          const {probe}=await import(pathToFileURL(root+"/worker.mjs").href);
+          const {report}=await import(pathToFileURL(root+"/report.mjs").href);
+          report("Runner metadata",await probe(process.env.QA105_METADATA_KEY.trim()));
+          JS
+          unset QA105_METADATA_KEY
+          pid="$(qa106_spawn_worker_group "$ROOT/worker.log" npx wrangler dev --remote --config "$ROOT/wrangler.json" --ip 127.0.0.1 --port 8797)"
+          qa106_assert_worker_group "$pid"
+          ready=0
+          for i in $(seq 1 40);do
+            if curl -fsS --max-time 20 http://127.0.0.1:8797/probe -o "$ROOT/result.json" 2>/dev/null;then ready=1;break;fi
+            sleep 2
+          done
+          test "$ready" = 1
+          node --input-type=module - "$ROOT" <<'JS'
+          import {pathToFileURL} from "node:url";
+          import {readFileSync} from "node:fs";
+          const root=process.argv[2];
+          const {report}=await import(pathToFileURL(root+"/report.mjs").href);
+          report("Remote worker metadata",JSON.parse(readFileSync(root+"/result.json","utf8")));
+          console.log("PASS:QA105_METADATA_DIAGNOSTIC_NO_GENERATION");
+          JS
+
+# Owner updated benchmark secret; repeat metadata GET only, no generation.
+
+# Verify newly configured environment-scoped benchmark secret; metadata only.

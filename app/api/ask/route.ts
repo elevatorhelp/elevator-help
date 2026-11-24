@@ -14,6 +14,7 @@ import { multilingualRetrievalFromEnv } from "../../lib/retrieval-backend";
 import { publishedArchiveEnv } from "../../lib/ingestion-published-reader";
 import { addWebSourceLabel } from "../../lib/source-label";
 import { authorizeChatRequest } from "../../lib/request-auth";
+import { qa105PaidAnswer } from "../../lib/qa105-paid-answer";
 import {
   allowAskRequest,
   createGeminiCallBudget,
@@ -393,6 +394,10 @@ async function retrieveFaultEvidenceWithoutGemini(question: string) {
 }
 
 export async function POST(request: NextRequest) {
+  // Separate default-off QA fixture path. Ordinary ask is unchanged.
+  if (process.env.QA105_PAID_APPROVAL !== undefined) {
+    return qa105PaidAnswer(request,getCloudflareContext().env);
+  }
   let question = "";
   let geminiBudget: ReturnType<typeof createGeminiCallBudget> | null = null;
   let runtimeEnv: any = null;
@@ -501,6 +506,16 @@ export async function POST(request: NextRequest) {
         mode: "clarification",
       }, false);
     const key = process.env.GEMINI_API_KEY;
+    // QA-only Cloudflare bindings MUST NOT proxy a question into the public
+    // Production answer route when an isolated QA worker has zero AI keys.
+    // This is a strict gate: QA tests either have an explicitly authorized
+    // model budget, or return a deterministic no-provider response.
+    if (!key && (env as any).QA106_ISOLATED_BINDINGS === "qa106-pr100-v2-only") {
+      return NextResponse.json(
+        { error: "QA model is disabled.", diagnosticCode: "QA106_ISOLATED_NO_MODEL" },
+        { status: 503 },
+      );
+    }
     if (!key) {
       try {
         const evidence = await retrieveFaultEvidenceWithoutGemini(question);

@@ -1,0 +1,43 @@
+name: QA105 real B exact source terms remote D1 READ ONLY (NO MODELS)
+on:
+  push:
+    branches: [feat/issue106-shadow-map-revision-20261122]
+    paths: [".github/workflows/qa105-b-source-terms-readonly-once.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  b-terms-readonly:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa105(readonly): inspect actual B PDF source terms and active revision'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      QA105_SOURCE_PREFLIGHT: QA105_STRICT_B_SOURCE_READONLY
+    steps:
+      - name: Checkout exact QA branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Locked install
+        run: npm ci
+      - name: Preflight read-only script; no model secrets
+        run: |
+          set -euo pipefail
+          bash -n scripts/qa105-real-b-source-terms-readonly.sh
+          test -z "${GEMINI_API_KEY:-}"
+          test -z "${GEMINI_BENCHMARK_API_KEY:-}"
+          test -z "${CLERK_SECRET_KEY:-}"
+      - name: Query aggregate real QA B source citations read-only
+        run: bash scripts/qa105-real-b-source-terms-readonly.sh
+
+# Recheck exact code/section presence in A as well as B; no cloud mutation.

@@ -1,5 +1,14 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {stageImmutableVectorPair} from "../../lib/ingestion-immutable-publication";
+import {advanceShadowMapRevisionWithProviders,
+  readDurableShadowRevision,publishShadowMapRevision,
+  type RevisionScope,type RevisionNode,
+} from "../../../scripts/qa-issue106-map-revision-shadow";
+import {
+  stageGenericMapCandidatePreview,activateGenericMapRevisionPreview,
+  filterGenericPublishedMapPreview,filterGenericPublishedRawPreview,
+  readGenericPublishedEvidencePreview,type MapRevisionScope,
+} from "../../lib/ingestion-map-revision-visibility";
 import {
   QA106_B_JOB,QA106_B_PDF_ID,
   preflightExactMissingQa106BMap,assertExactQa106BRegeneration,
@@ -186,6 +195,8 @@ async function analyzeDocumentWindow(
   pages: PageInput[],
   apiKey: string,
   fetchImpl: FetchLike = fetch,
+  maxAttempts=2,
+  redactErrors=false,
 ): Promise<MapNode[]> {
   const firstPage = pages[0]?.page || 1;
   const lastPage = pages[pages.length - 1]?.page || firstPage;
@@ -230,7 +241,7 @@ ${JSON.stringify(pages)}
   let parsed: any = null;
   let lastError: unknown = null;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const raw = await requestDocumentMap(prompt, apiKey, fetchImpl);
       if (!raw) return [];
@@ -238,7 +249,8 @@ ${JSON.stringify(pages)}
       break;
     } catch (error) {
       lastError = error;
-      if(process.env.QA106_B_MAP_REPAIR_ENABLED==="true"){
+      if(redactErrors||process.env.QA106_B_MAP_REPAIR_ENABLED==="true"||
+         process.env.QA106_B_MAP_REVISION_SHADOW_ENABLED==="true"){
         // QA repair output/provider errors can contain document content.
         console.error("QA106_B_REPAIR_GEMINI_GENERATION_FAILED");
       }else{
@@ -298,8 +310,12 @@ export async function POST(request: NextRequest) {
 
     const body: any = await request.json();
     const bExactRepair=body?.action==="repair_missing_map_b_v2";
+    const bShadow=body?.action==="stage_qa106_shadow_map_b_v2";
+    const bShadowRecover=body?.action==="reconcile_qa106_shadow_map_b_v2";
+    const bReader=body?.action==="activate_qa106_generic_b_v2";
     qaStageRequest=body?.action==="stage_map_v2"||
-      body?.action==="reconcile_map_v2"||bExactRepair;
+      body?.action==="reconcile_map_v2"||bExactRepair||bShadow||
+      bShadowRecover||bReader;
     const document: DocumentInput = body?.document;
     const pages: PageInput[] = Array.isArray(body?.pages) ? body.pages : [];
 
@@ -346,6 +362,16 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     const { env } = getCloudflareContext();
+    if((bShadow||bShadowRecover||bReader) && (
+      (env as any).QA106_ISOLATED_BINDINGS!=="qa106-pr100-v2-only" ||
+      (env as any).QA106_B_MAP_REVISION_SHADOW_ENABLED!=="true" ||
+      (env as any).INGESTION_COORDINATOR_JOB_KEY!==QA106_B_JOB ||
+      document.sourceFileId!==QA106_B_PDF_ID ||
+      body?.globalArchiveLease?.jobKey!==QA106_B_JOB ||
+      (env as any).GEMINI_MAX_CALLS_PER_INGEST_REQUEST!==(bShadow?"2":"0") ||
+      (!bShadow && (apiKey || process.env.GEMINI_BENCHMARK_API_KEY))
+    ))return NextResponse.json(
+      {ok:false,error:"QA106_B_SHADOW_SCOPE_DENIED"},{status:403});
     if(bExactRepair && (
       process.env.QA106_B_MAP_REPAIR_ENABLED!=="true" ||
       (env as any).INGESTION_COORDINATOR_JOB_KEY!==QA106_B_JOB ||
@@ -385,6 +411,160 @@ export async function POST(request: NextRequest) {
       if(!qaEpoch)
         return NextResponse.json({ok:false,error:"V2_DOCUMENT_EPOCH_DENIED"},{status:409});
       qaWindowKey=immutableMapWindowKey(doc,fp,mapVersion,pages);
+      if(bShadow||bShadowRecover||bReader){
+        // The old B Map must remain historical. NEVER replay its missing
+        // content-hashed ID or mutate A/legacy publication records.
+        const pending=await (db.prepare(`
+          SELECT window_key FROM ingestion_v2_pending_map_windows
+          WHERE document_id=? AND generation=? AND job_key=?
+            AND source_fingerprint=?`).bind(
+              QA106_B_PDF_ID,qaEpoch,QA106_B_JOB,fp) as any).all();
+        if(!Array.isArray(pending?.results)||pending.results.length!==1||
+           !/^[0-9a-f]{64}$/.test(String(pending.results[0]?.window_key)))
+          return NextResponse.json(
+            {ok:false,error:"QA106_B_SHADOW_PENDING_INTENT_INVALID"},
+            {status:409});
+        if(bShadow && (!apiKey||(env as any).AI===undefined))
+          return NextResponse.json(
+            {ok:false,error:"QA106_B_SHADOW_PROVIDERS_UNAVAILABLE"},
+            {status:503});
+        const scope:RevisionScope={
+          documentId:QA106_B_PDF_ID,jobKey:QA106_B_JOB,
+          fingerprint:fp,documentEpoch:qaEpoch,
+          revision:1,supersedesWindowKey:String(pending.results[0].window_key),
+        };
+        if(bReader){
+          // QA-only promotion of an ALREADY dual-index-attested B Shadow Map.
+          // This does not call AI, Gemini, or modify legacy publication.
+          // A fully active candidate is the *only* read-side publication.
+          const shadow=await db.prepare(`SELECT map_count,raw_count,evidence_count
+            FROM qa106_map_revision_shadow_publications
+            WHERE document_id=? AND staging_epoch=? AND revision=?
+              AND job_key=? AND source_fingerprint=?`).bind(
+            QA106_B_PDF_ID,qaEpoch,1,QA106_B_JOB,fp).first() as
+            {map_count:number;raw_count:number;evidence_count:number}|null;
+          if(!shadow||shadow.map_count!==2||shadow.raw_count!==2||
+             shadow.evidence_count!==2)
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_SHADOW_NOT_ATTESTED"},{status:409});
+          const durable=await readDurableShadowRevision(db,lease!,scope);
+          if(durable.state!=="embedded"||!durable.payload||!durable.embeddings)
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_SHADOW_EMBEDDINGS_NOT_DURABLE"},
+              {status:409});
+          const generic:MapRevisionScope={
+            documentId:QA106_B_PDF_ID,jobKey:QA106_B_JOB,epoch:qaEpoch,
+            revision:1,fingerprint:fp,
+          };
+          const pair:[any,any]=[vectorize,vectorizeV2];
+          await stageGenericMapCandidatePreview(
+            db,lease!,generic,durable.payload,durable.embeddings
+              ? String((await db.prepare(`SELECT embeddings_sha256
+                  FROM qa106_map_revisions WHERE document_id=?
+                    AND staging_epoch=? AND revision=1`).bind(
+                    QA106_B_PDF_ID,qaEpoch).first() as
+                    {embeddings_sha256:string}|null)?.embeddings_sha256||"")
+              : "",pair);
+          const active=await activateGenericMapRevisionPreview(
+            db,lease!,generic,pair);
+          if(!active)
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_READER_ACTIVATION_DENIED"},{status:409});
+          const mapIds=durable.payload.entries.map(e=>e.stagedId);
+          const indexed=await vectorize.getByIds(mapIds);
+          const allowed=await filterGenericPublishedMapPreview(db,indexed,pair);
+          const raw=await (db.prepare(`SELECT staged_id FROM
+             ingestion_v2_vector_receipts
+             WHERE document_id=? AND generation=? AND
+               source_fingerprint=? AND layer='raw'`).bind(
+             QA106_B_PDF_ID,qaEpoch,fp) as unknown as
+             {all:()=>Promise<{results:Array<{staged_id:string}>}>}).all();
+          if(raw.results.length!==2||allowed.length!==mapIds.length)
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_READER_MAP_ATTESTATION_DENIED"},
+              {status:409});
+          const rawVectors=await vectorize.getByIds(
+            raw.results.map(x=>x.staged_id));
+          const visibleRaw=await filterGenericPublishedRawPreview(
+            db,rawVectors,pair);
+          const evidence=await readGenericPublishedEvidencePreview(
+            db,QA106_B_PDF_ID,pair,10);
+          if(visibleRaw.length!==2||evidence.length!==2||
+             evidence.some(x=>!Number.isSafeInteger(x.page)||
+               x.page<1||x.page>pages.length))
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_READER_CITATION_ATTESTATION_DENIED"},
+              {status:409});
+          return NextResponse.json({
+            ok:true,qaOnly:true,publishedProduction:false,
+            genericReaderActive:true,modelCalls:0,
+            verifiedMapVectors:allowed.length,verifiedRawVectors:visibleRaw.length,
+            exactEvidencePages:evidence.map(x=>x.page).sort((a,b)=>a-b),
+          });
+        }
+        if(bShadowRecover){
+          const durable=await readDurableShadowRevision(db,lease!,scope);
+          if(durable.state!=="embedded")
+            return NextResponse.json(
+              {ok:false,error:"QA106_B_SHADOW_EMBEDDINGS_NOT_DURABLE"},
+              {status:409});
+          const completed=await publishShadowMapRevision(
+            db,lease!,scope,[vectorize,vectorizeV2]);
+          return NextResponse.json({
+            ok:true,shadowOnly:true,published:false,
+            status:completed?"shadow_published":"pending",providerCalls:0,
+          });
+        }
+        if(typeof apiKey!=="string"||apiKey.length===0)
+          throw Error("QA106_B_SHADOW_PROVIDERS_UNAVAILABLE");
+        const paidMapApiKey:string=apiKey;
+        const budget=createGeminiCallBudget(2);
+        const providerSet={
+          generate:async():Promise<RevisionNode[]>=>{
+            // Exactly ONE generation attempt. An ambiguous response is
+            // permanently reserved; never repeat a billed request.
+            const newNodes=await analyzeDocumentWindow(
+              document,pages,paidMapApiKey,budget.fetch,1,true);
+            return newNodes.map(node=>{
+              const text=[
+                "[DOCUMENT KNOWLEDGE MAP]",
+                `Document: ${document.fileName}`,
+                `Type: ${node.nodeType}`,
+                node.sectionId?`Section: ${node.sectionId}`:"",
+                node.title?`Title: ${node.title}`:"",
+                `Pages: ${node.pageStart}-${node.pageEnd}`,
+                `Summary: ${node.summary}`,
+              ].filter(Boolean).join("\\n");
+              return {text,metadata:{
+                sourceFileId:QA106_B_PDF_ID,
+                sourceFingerprint:fp,
+                fileName:document.fileName,
+                sourcePath:document.sourcePath,
+                page:node.pageStart,pageEnd:node.pageEnd,
+                contentType:"document-map",status:"active",
+                mapNodeType:node.nodeType,
+                ...(node.sectionId?{sectionId:node.sectionId}:{}),
+                ...(node.title?{sectionTitle:node.title}:{}),
+              }};
+            });
+          },
+          workersEmbedding:async(texts:string[])=>{
+            const response=await (env as any).AI.run(
+              "@cf/baai/bge-base-en-v1.5",{text:texts});
+            return response?.data as number[][];
+          },
+          geminiEmbedding:(texts:string[])=>embedRetrievalDocuments(
+            texts,paidMapApiKey,budget.fetch),
+        };
+        const result=await advanceShadowMapRevisionWithProviders(
+          db,lease!,scope,providerSet,
+          [vectorize,vectorizeV2]);
+        // Shadow-only: no real published D1 pointer or /api/ask visibility.
+        return NextResponse.json({
+          ok:true,shadowOnly:true,published:false,
+          status:result.status,providerCalls:result.providerCalls,
+        });
+      }
       const recovered=await reconcilePendingMapWindow(db,lease!,doc,fp,
         qaEpoch,qaWindowKey,mapVersion,[vectorize,vectorizeV2]);
       if(recovered.status==="complete")
@@ -613,7 +793,7 @@ export async function POST(request: NextRequest) {
       else if (detail==="V2_MAP_PENDING_INTENT_CORRUPT") code="V2_MAP_PENDING_INTENT_CORRUPT";
       else if (detail==="V2_MAP_PENDING_VECTOR_METADATA_MISMATCH")
         code="V2_MAP_PENDING_VECTOR_METADATA_MISMATCH";
-      else if (/^QA106_B_REPAIR_[A-Z0-9_]+$/.test(detail))
+      else if (/^QA106_(?:B_REPAIR|MAP_REVISION)_[A-Z0-9_]+$/.test(detail))
         code=detail;
       else if (detail.startsWith("Gemini document-map error: 429")) code="V2_MAP_GEMINI_RATE_LIMITED";
       else if (detail.startsWith("Gemini document-map error: 403")) code="V2_MAP_GEMINI_PERMISSION_DENIED";

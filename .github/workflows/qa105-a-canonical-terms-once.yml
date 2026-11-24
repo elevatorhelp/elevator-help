@@ -1,0 +1,45 @@
+name: QA105 canonical A published Evidence terms (READ ONLY, no models)
+on:
+  push:
+    branches: [feat/issue106-shadow-map-revision-20261122]
+    paths: [".github/workflows/qa105-a-canonical-terms-once.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  a-terms:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa105(readonly): prove existing A source canonical code and clause index'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      QA105_A_TERMS_CONFIRMATION: QA_ONLY_PUBLISHED_A_NO_MODELS
+    steps:
+      - name: Checkout isolated QA only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Fail-closed security context and offline syntax, no model keys
+        run: |
+          set -euo pipefail
+          node --check scripts/qa105-a-canonical-evidence-terms-stage.mjs
+          test -z "${GEMINI_API_KEY:-}"
+          test -z "${GEMINI_BENCHMARK_API_KEY:-}"
+          test -z "${CLERK_SECRET_KEY:-}"
+      - name: Verify FOUR existing terms from published original A Evidence without D1 writes
+        run: node --experimental-strip-types scripts/qa105-a-canonical-evidence-terms-stage.mjs
+
+# Sanitized source-publication preflight counts; no export of source or IDs.
+
+# QA A has 19 pre-existing canonical terms, all checked read-only.

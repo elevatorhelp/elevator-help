@@ -1,0 +1,85 @@
+name: QA105 Gemini transport diagnostic (zero model calls)
+on:
+  push:
+    branches: [feat/issue106-shadow-map-revision-20261122]
+    paths: [".github/workflows/qa105-provider-transport-readonly.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  transport:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa105(readonly): compare runner and remote preview Gemini connectivity without inference'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Compare unauthenticated metadata GET from runner and ephemeral remote worker
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          test -z "${GEMINI_API_KEY:-}${QA105_PAID_GEMINI_KEY:-}${GEMINI_BENCHMARK_API_KEY:-}${CLERK_SECRET_KEY:-}"
+          ROOT="$(mktemp -d "$RUNNER_TEMP/qa105-transport.XXXXXXXX")"
+          source scripts/qa-issue106-worker-process-group.sh
+          pid=""
+          cleanup(){ [[ -z "$pid" ]] || qa106_stop_worker_group "$pid"; rm -rf "$ROOT"; }
+          trap cleanup EXIT
+          cat > "$ROOT/wrangler.json" <<'JSON'
+          {"name":"elevator-help-qa105-transport-diagnostic","main":"worker.mjs","compatibility_date":"2026-08-23","compatibility_flags":["nodejs_compat"]}
+          JSON
+          cat > "$ROOT/worker.mjs" <<'JS'
+          async function probe(){
+            const endpoint="https://generativelanguage.googleapis.com/v1beta/models";
+            try{
+              const r=await fetch(endpoint,{method:"GET",redirect:"manual",signal:AbortSignal.timeout(15000)});
+              const status=r.status;
+              await r.body?.cancel();
+              return {transport:"HTTP",status};
+            }catch(e){
+              return {transport:"EXCEPTION",kind:["TypeError","TimeoutError","AbortError","Error"].includes(e?.name)?e.name:"OTHER"};
+            }
+          }
+          export default {async fetch(request){
+            if(request.method!=="GET"||new URL(request.url).pathname!=="/probe")return new Response(null,{status:404});
+            return Response.json(await probe());
+          }};
+          JS
+          node --input-type=module <<'JS'
+          try{
+            const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models",{method:"GET",redirect:"manual",signal:AbortSignal.timeout(15000)});
+            console.log("::notice title=Runner connectivity::HTTP_"+r.status);
+            await r.body?.cancel();
+          }catch(e){
+            console.log("::notice title=Runner connectivity::EXCEPTION_"+(["TypeError","TimeoutError","AbortError","Error"].includes(e?.name)?e.name:"OTHER"));
+          }
+          JS
+          pid="$(qa106_spawn_worker_group "$ROOT/worker.log" npx wrangler dev --remote --config "$ROOT/wrangler.json" --ip 127.0.0.1 --port 8797)"
+          qa106_assert_worker_group "$pid"
+          ready=0
+          for i in $(seq 1 40);do
+            if curl -fsS --max-time 20 http://127.0.0.1:8797/probe -o "$ROOT/result.json" 2>/dev/null;then ready=1;break;fi
+            sleep 2
+          done
+          test "$ready" = 1
+          node --input-type=module - "$ROOT/result.json" <<'JS'
+          import {readFileSync} from "node:fs";
+          const v=JSON.parse(readFileSync(process.argv[2],"utf8"));
+          if(v.transport==="HTTP"&&Number.isInteger(v.status)&&v.status>=100&&v.status<=599)
+            console.log("::notice title=Remote worker connectivity::HTTP_"+v.status);
+          else if(v.transport==="EXCEPTION"&&["TypeError","TimeoutError","AbortError","Error","OTHER"].includes(v.kind))
+            console.log("::notice title=Remote worker connectivity::EXCEPTION_"+v.kind);
+          else throw Error("QA105_UNEXPECTED_DIAGNOSTIC_RESPONSE");
+          console.log("PASS:QA105_TRANSPORT_DIAGNOSTIC_COMPLETED_NO_MODEL_GENERATION");
+          JS

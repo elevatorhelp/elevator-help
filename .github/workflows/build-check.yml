@@ -120,9 +120,24 @@ jobs:
           node scripts/test-issue106-b-repair-readonly.mjs
           node scripts/test-issue106-b-repair-runner.mjs
           node --experimental-strip-types scripts/test-issue106-b-exact-map-repair.ts
+          node --experimental-sqlite --experimental-strip-types scripts/test-issue106-map-revision-shadow.ts
+          node --experimental-sqlite --experimental-strip-types scripts/test-issue106-map-migration-restore.ts
+          node --experimental-strip-types scripts/test-issue106-legacy-evidence-gate.ts
           bash -n scripts/qa-issue106-b-map-repair-run.sh
+          bash -n scripts/qa-issue106-b-shadow-run.sh
+          node --check scripts/qa-issue106-b-shadow-client.mjs
+          node scripts/test-issue106-b-shadow-client.mjs
           bash -n scripts/qa-issue106-vector-status-run.sh
           bash -n scripts/qa-issue106-map-only-run.sh
+
+      - name: Test manual TEST Clerk positive QA runner fail-closed (offline)
+        run: |
+          bash -n scripts/qa105-clerk-positive-run.sh
+          node --check scripts/qa105-clerk-positive-probe.mjs
+          node scripts/test-qa105-clerk-positive-gate.mjs
+
+      - name: Verify isolated QA no-model ask never proxies Production (static guard)
+        run: node scripts/test-qa106-no-production-proxy.mjs
 
       - name: Build
         run: npm run build

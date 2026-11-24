@@ -1,0 +1,55 @@
+name: QA105 paid reservation audit (read only, zero models)
+on:
+  push:
+    branches: [feat/issue106-shadow-map-revision-20261122]
+    paths: [".github/workflows/qa105-paid-budget-readonly-once.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa105(readonly): inspect durable paid reservations after 503 without model calls'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Read only isolated D1 reservation counts
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          const c=JSON.parse(readFileSync('wrangler.qa-pr100-v2.json','utf8'));
+          if(c.d1_databases?.length!==1||c.d1_databases[0].database_id!=='02716877-15e3-4478-9e24-f1ba6e5dfb00'||c.d1_databases[0].database_name!=='elevator-help-lease-test-01'||c.vars?.QA106_ISOLATED_BINDINGS!=='qa106-pr100-v2-only'||process.env.GEMINI_API_KEY||process.env.QA105_PAID_GEMINI_KEY||process.env.GEMINI_BENCHMARK_API_KEY||process.env.CLERK_SECRET_KEY)throw Error('QA105_AUDIT_CONTEXT_DENIED');
+          function query(sql){
+            let output;
+            try {output=execFileSync('npx',['wrangler','d1','execute','elevator-help-lease-test-01','--remote','--config','wrangler.qa-pr100-v2.json','--json','--command',sql],{encoding:'utf8',timeout:100000,stdio:['ignore','pipe','ignore']});}
+            catch{throw Error('QA105_AUDIT_D1_UNAVAILABLE')}
+            const parsed=JSON.parse(output);
+            const rows=(Array.isArray(parsed)?parsed:[parsed]).flatMap(x=>{if(x.success===false||!Array.isArray(x.results))throw Error('QA105_AUDIT_QUERY_FAILED');return x.results});
+            if(rows.length!==1)throw Error('QA105_AUDIT_INVALID_RESULT');
+            return rows[0];
+          }
+          const table=query("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='qa105_paid_answer_reservations'").n;
+          if(table!==0&&table!==1)throw Error('QA105_AUDIT_INVALID_TABLE_COUNT');
+          let de=0,it=0;
+          if(table===1){
+            const r=query("SELECT COUNT(CASE WHEN language='de' THEN 1 END) AS de,COUNT(CASE WHEN language='it' THEN 1 END) AS it FROM qa105_paid_answer_reservations WHERE approval='qa105-20261124-two-calls-v1'");
+            de=r.de;it=r.it;
+            if(![de,it].every(n=>n===0||n===1))throw Error('QA105_AUDIT_INVALID_RESERVATIONS');
+          }
+          console.log('::notice title=QA105 read-only audit::TABLE='+table+' DE_RESERVED='+de+' IT_RESERVED='+it+' TOTAL_RESERVED='+(de+it));
+          console.log('PASS:QA105_READONLY_ZERO_MODELS_NO_WRITES');
+          NODE
