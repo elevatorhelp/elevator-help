@@ -4,6 +4,7 @@
  * Never prints or persists token, source body, Clerk claims or secrets.
  */
 import {readFileSync,writeFileSync,chmodSync} from "node:fs";
+import {verifyToken} from "@clerk/backend";
 
 const denied=code=>{throw Error("QA105_POSITIVE_"+code);};
 const mode=process.argv[2];
@@ -79,6 +80,27 @@ async function freshToken(sessionId){
   denied("CLERK_TEST_SESSION_JWT_INVALID");
  return jwt;
 }
+async function locallyVerifyToken(jwt){
+ // Check exactly the same signed JWT verifier as app/lib/request-auth.ts.
+ // On any failure only a fixed enum is printed, never the token, claims or
+ // arbitrary Clerk error messages.
+ const verify=async options=>{
+  try{return await verifyToken(jwt,options);}
+  catch{return null;}
+ };
+ const usable=result=>{
+  if(!result||typeof result!=="object"||
+     result.errors!==undefined&&result.errors!==null)return false;
+  const c="data" in result?result.data:result;
+  return c?.sub===identity&&typeof c?.sid==="string"&&
+    c.sid.startsWith("sess_");
+ };
+ const strict=await verify({secretKey:secret,authorizedParties:[expectedOrigin]});
+ if(usable(strict)){console.log("PASS:QA105_LOCAL_CLERK_TEST_JWT_STRICTLY_VERIFIED");return;}
+ const basic=await verify({secretKey:secret});
+ if(usable(basic))denied("TEST_SESSION_AUTHORIZED_PARTY_MISMATCH");
+ denied("TEST_SESSION_SIGNATURE_OR_CLAIMS_NOT_VERIFIED");
+}
 async function revokeSession(sessionId){
  try{await bapi("/sessions/"+sessionId+"/revoke");}
  catch{console.error("::warning::QA105_TEST_SESSION_REVOKE_UNCONFIRMED");}
@@ -113,7 +135,9 @@ async function probe(){
      unsigned.data.code!=="QA105_AUTH_DENIED"||
      forged.data.code!=="QA105_AUTH_DENIED")
    denied("AUTH_NEGATIVE_GATE_FAILED");
-  const valid=await post(lang,await freshToken(sessionId));
+  const jwt=await freshToken(sessionId);
+  await locallyVerifyToken(jwt);
+  const valid=await post(lang,jwt);
   // Never output HTTP body, token, user ID or the Evidence text.
   // Only known aggregate enums are permitted in CI diagnostic logs.
   if(valid.code===401)denied("SIGNED_TEST_TOKEN_REJECTED_401");
