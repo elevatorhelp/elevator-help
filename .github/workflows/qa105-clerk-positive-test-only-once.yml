@@ -66,3 +66,5 @@ jobs:
 # QA TEST-only JWT diagnostic: strictly local signature versus authorized party, no sensitive logs.
 
 # One-time QA FAPI DevBrowser origin-bound sign-in ticket probe; no model requests.
+
+# QA-origin FAPI allowlist typo corrected; final bounded no-Gemini Clerk TEST ticket attempt.
