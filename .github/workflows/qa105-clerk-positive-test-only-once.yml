@@ -30,7 +30,6 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       QA105_CLERK_TEST_SECRET_KEY: ${{ secrets.QA105_CLERK_TEST_SECRET_KEY }}
-      QA105_CLERK_TEST_SESSION_JWT: ${{ secrets.QA105_CLERK_TEST_SESSION_JWT }}
       QA105_CLERK_TEST_USER_ID: ${{ secrets.QA105_CLERK_TEST_USER_ID }}
       QA105_POSITIVE_CONFIRMATION: QA105_REAL_TEST_CLERK_ZERO_MODEL
       QA105_POSITIVE_EVENT_TRIGGER: ${{ github.event.head_commit.message }}
@@ -52,6 +51,7 @@ jobs:
           test -z "${GEMINI_API_KEY:-}"
           test -z "${GEMINI_BENCHMARK_API_KEY:-}"
           test -z "${CLERK_SECRET_KEY:-}"
+          test -z "${QA105_CLERK_TEST_SESSION_JWT:-}"
           export QA105_PRIVATE_DEV_VARS="$RUNNER_TEMP/preflight-only/.dev.vars"
           node scripts/qa105-clerk-positive-probe.mjs preflight
       - name: Compile QA Worker without Production deployment
