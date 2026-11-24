@@ -501,6 +501,16 @@ export async function POST(request: NextRequest) {
         mode: "clarification",
       }, false);
     const key = process.env.GEMINI_API_KEY;
+    // QA-only Cloudflare bindings MUST NOT proxy a question into the public
+    // Production answer route when an isolated QA worker has zero AI keys.
+    // This is a strict gate: QA tests either have an explicitly authorized
+    // model budget, or return a deterministic no-provider response.
+    if (!key && (env as any).QA106_ISOLATED_BINDINGS === "qa106-pr100-v2-only") {
+      return NextResponse.json(
+        { error: "QA model is disabled.", diagnosticCode: "QA106_ISOLATED_NO_MODEL" },
+        { status: 503 },
+      );
+    }
     if (!key) {
       try {
         const evidence = await retrieveFaultEvidenceWithoutGemini(question);
