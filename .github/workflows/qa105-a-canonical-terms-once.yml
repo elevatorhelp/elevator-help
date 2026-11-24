@@ -39,3 +39,5 @@ jobs:
           test -z "${CLERK_SECRET_KEY:-}"
       - name: Stage FOUR terms ONLY from published original A evidence in isolated QA D1
         run: node --experimental-strip-types scripts/qa105-a-canonical-evidence-terms-stage.mjs
+
+# Sanitized source-publication preflight counts; no export of source or IDs.
