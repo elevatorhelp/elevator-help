@@ -14,6 +14,7 @@ import { multilingualRetrievalFromEnv } from "../../lib/retrieval-backend";
 import { publishedArchiveEnv } from "../../lib/ingestion-published-reader";
 import { addWebSourceLabel } from "../../lib/source-label";
 import { authorizeChatRequest } from "../../lib/request-auth";
+import { qa105PaidAnswer } from "../../lib/qa105-paid-answer";
 import {
   allowAskRequest,
   createGeminiCallBudget,
@@ -393,6 +394,10 @@ async function retrieveFaultEvidenceWithoutGemini(question: string) {
 }
 
 export async function POST(request: NextRequest) {
+  // Separate default-off QA fixture path. Ordinary ask is unchanged.
+  if (process.env.QA105_PAID_APPROVAL !== undefined) {
+    return qa105PaidAnswer(request,getCloudflareContext().env);
+  }
   let question = "";
   let geminiBudget: ReturnType<typeof createGeminiCallBudget> | null = null;
   let runtimeEnv: any = null;
