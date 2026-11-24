@@ -48,8 +48,6 @@ export async function POST(request:NextRequest){
    // Diagnostics are restricted to the dedicated TEST-only positive
    // workflow. Return only fixed enums (never a URL, key, JWT or claims).
    if(env.QA105_AUTH_ORIGIN_DIAG==="true"&&auth.status===401){
-     if(new URL(request.url).origin!=="http://127.0.0.1:8797")
-       return denial("QA105_WORKER_ORIGIN_NOT_EXPECTED",401);
      const bearer=request.headers.get("authorization")||"";
      const jwt=bearer.startsWith("Bearer ")?bearer.slice(7):"";
      let signed=false;
@@ -65,9 +63,12 @@ export async function POST(request:NextRequest){
          }
        }catch{/* Return only a fixed failure enum. */}
      }
-     return denial(signed?
-       "QA105_WORKER_ORIGIN_CLAIM_MISMATCH":
-       "QA105_WORKER_SIGNATURE_OR_SECRET_MISMATCH",401);
+     // Preserve the public negative-auth contract for unsigned or forged
+     // requests. Only a verified dedicated TEST identity gets diagnostics.
+     if(!signed)return denial("QA105_AUTH_DENIED",401);
+     if(new URL(request.url).origin!=="http://127.0.0.1:8797")
+       return denial("QA105_WORKER_ORIGIN_NOT_EXPECTED",401);
+     return denial("QA105_WORKER_ORIGIN_CLAIM_MISMATCH",401);
    }
    return denial("QA105_AUTH_DENIED",auth.status);
  }
