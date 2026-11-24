@@ -20,7 +20,7 @@ function guard(){
  if(process.env.GITHUB_ACTIONS!=="true"||
     !permittedTrigger||
     process.env.GITHUB_REF!=="refs/heads/feat/issue106-shadow-map-revision-20261122"||
-    process.env.QA105_POSITIVE_CONFIRMATION!=="qa105-20261124-two-calls-v1"||
+    process.env.QA105_POSITIVE_CONFIRMATION!=="qa105-20261124-two-calls-v2"||
     !process.env.QA105_PAID_GEMINI_KEY||
     process.env.GEMINI_API_KEY!==undefined||
     process.env.GEMINI_BENCHMARK_API_KEY!==undefined||
@@ -209,6 +209,7 @@ async function revokeSession(sessionId){
 }
 async function probe(){
  const tests=[
+  ["de","Was bedeutet QA-4711 im Abschnitt QA-1.2.3?","QA-4711","QA-1.2.3",1],
   ["it","Cosa indica MOCK-DOOR-12 nella sezione QA-2.4.6?","MOCK-DOOR-12","QA-2.4.6",2],
  ];
  for(const [language,question,code,section,page] of tests){
@@ -237,7 +238,7 @@ async function probe(){
    await revokeSession(sessionId);
   }
  }
- console.log("PASS:QA105_BOUNDED_IT_ONLY_NOT_FULL_ASK_ACCEPTANCE");
+ console.log("PASS:QA105_BOUNDED_DE_IT_NOT_FULL_ASK_ACCEPTANCE");
 }
 async function main(){
  guard();
@@ -251,8 +252,8 @@ async function main(){
   const vars={
    CLERK_SECRET_KEY:secret,
    AUTH_REQUIRED:"true",
-   QA105_PAID_APPROVAL:"qa105-20261124-two-calls-v1",
-   QA105_PAID_GEMINI_KEY:process.env.QA105_PAID_GEMINI_KEY,
+   QA105_PAID_APPROVAL:"qa105-20261124-two-calls-v2",
+   QA105_PAID_GEMINI_KEY:process.env.QA105_PAID_GEMINI_KEY.trim(),
    QA105_EXPECTED_CLERK_TEST_USER_ID:identity,
    QA106_ISOLATED_BINDINGS:"qa106-pr100-v2-only",
    INGESTION_PUBLISHED_READS_ENABLED:"true",
