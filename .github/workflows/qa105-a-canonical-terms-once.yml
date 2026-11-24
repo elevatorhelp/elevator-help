@@ -1,4 +1,4 @@
-name: QA105 canonical A published Evidence terms (ONE-TIME QA ONLY, no models)
+name: QA105 canonical A published Evidence terms (READ ONLY, no models)
 on:
   push:
     branches: [feat/issue106-shadow-map-revision-20261122]
@@ -13,7 +13,7 @@ jobs:
     if: >-
       github.repository == 'elevatorhelp/elevator-help' &&
       github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
-      github.event.head_commit.message == 'qa105(qa-only): stage canonical terms on already published A without models'
+      github.event.head_commit.message == 'qa105(readonly): prove existing A source canonical code and clause index'
     runs-on: ubuntu-latest
     timeout-minutes: 18
     env:
@@ -37,7 +37,7 @@ jobs:
           test -z "${GEMINI_API_KEY:-}"
           test -z "${GEMINI_BENCHMARK_API_KEY:-}"
           test -z "${CLERK_SECRET_KEY:-}"
-      - name: Stage FOUR terms ONLY from published original A evidence in isolated QA D1
+      - name: Verify FOUR existing terms from published original A Evidence without D1 writes
         run: node --experimental-strip-types scripts/qa105-a-canonical-evidence-terms-stage.mjs
 
 # Sanitized source-publication preflight counts; no export of source or IDs.
