@@ -120,7 +120,7 @@ async function frontlineTicketSession(backendSessionId){
  try{
   const url=new URL(claims.iss);
   if(url.protocol!=="https:"||url.port||url.pathname!=="/"||
-     !/^[a-z0-9-]+\\.clerk\\.accounts\\.dev$/.test(url.hostname)||
+     !/^[a-z0-9-]+\.clerk\.accounts\.dev$/.test(url.hostname)||
      url.search||url.hash)denied("UNAPPROVED_FAPI_HOST");
   origin=url.origin;
  }catch{denied("UNAPPROVED_FAPI_HOST");}
