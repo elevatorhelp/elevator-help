@@ -4,13 +4,11 @@
  * Never prints or persists token, source body, Clerk claims or secrets.
  */
 import {readFileSync,writeFileSync,chmodSync} from "node:fs";
-import {randomBytes} from "node:crypto";
 
 const denied=code=>{throw Error("QA105_POSITIVE_"+code);};
 const mode=process.argv[2];
 const expectedOrigin="http://127.0.0.1:8797";
 const secret=process.env.QA105_CLERK_TEST_SECRET_KEY;
-const token=process.env.QA105_CLERK_TEST_SESSION_JWT;
 const identity=process.env.QA105_CLERK_TEST_USER_ID;
 function guard(){
  const event=process.env.GITHUB_EVENT_NAME;
@@ -25,6 +23,7 @@ function guard(){
     process.env.GEMINI_API_KEY!==undefined||
     process.env.GEMINI_BENCHMARK_API_KEY!==undefined||
     process.env.CLERK_SECRET_KEY!==undefined||
+    process.env.QA105_CLERK_TEST_SESSION_JWT!==undefined||
     !["preflight","prepare-vars","probe"].includes(mode)||
     !/^[1-9][0-9]{5,19}$/.test(process.env.GITHUB_RUN_ID||""))
    denied("CONTEXT_DENIED");
@@ -39,8 +38,6 @@ function guard(){
     config.vars?.QA106_ISOLATED_BINDINGS!=="qa106-pr100-v2-only")
    denied("NON_QA_BINDINGS");
  if(typeof secret!=="string"||!/^sk_test_[A-Za-z0-9]{12,}$/.test(secret)||
-    typeof token!=="string"||token.split(".").length!==3||
-    token.length<90||token.length>10000||
     !/^user_[A-Za-z0-9]{8,100}$/.test(identity||""))
    denied("REVIEWED_CLERK_TEST_SECRETS_MISSING");
  // Only a TEST Clerk secret and explicitly matching account; do not
@@ -49,6 +46,42 @@ function guard(){
  const path=process.env.QA105_PRIVATE_DEV_VARS||"";
  if(!dirname||!path.startsWith(dirname+"/")||!path.endsWith("/.dev.vars"))
    denied("PRIVATE_PATH_DENIED");
+}
+// Clerk's officially documented TEST-only Backend API path. A JWT is
+// minted immediately before each HTTP probe, never stored as a GitHub secret.
+const base="https://api.clerk.com/v1";
+async function bapi(path,body={}){
+ let response;
+ try{response=await fetch(base+path,{
+  method:"POST",
+  headers:{Authorization:"Bearer "+secret,
+   "Content-Type":"application/json",Accept:"application/json"},
+  body:JSON.stringify(body),
+  signal:AbortSignal.timeout(20000),
+ });}catch{denied("CLERK_TEST_TRANSPORT_FAILED");}
+ if(!response.ok)denied("CLERK_TEST_API_REJECTED");
+ const data=await response.json().catch(()=>null);
+ if(!data||typeof data!=="object")denied("CLERK_TEST_BAD_RESPONSE");
+ return data;
+}
+async function startTestSession(){
+ const session=await bapi("/sessions",{user_id:identity});
+ if(!/^sess_[A-Za-z0-9]{8,}$/.test(session.id||"")||
+    session.user_id!==identity||session.status!=="active")
+  denied("CLERK_TEST_SESSION_NOT_ACTIVE");
+ return session.id;
+}
+async function freshToken(sessionId){
+ const result=await bapi("/sessions/"+sessionId+"/tokens",{});
+ const jwt=result.jwt;
+ if(typeof jwt!=="string"||jwt.split(".").length!==3||
+    jwt.length<90||jwt.length>10000)
+  denied("CLERK_TEST_SESSION_JWT_INVALID");
+ return jwt;
+}
+async function revokeSession(sessionId){
+ try{await bapi("/sessions/"+sessionId+"/revoke");}
+ catch{console.error("::warning::QA105_TEST_SESSION_REVOKE_UNCONFIRMED");}
 }
 async function probe(){
  const endpoint=expectedOrigin+"/api/qa105-exact-citation-probe";
@@ -71,6 +104,8 @@ async function probe(){
   if(!body||typeof body!=="object")denied("QA_WORKER_BAD_RESPONSE");
   return {code:response.status,data:body};
  };
+ const sessionId=await startTestSession();
+ try{
  for(const [lang,code,section,page] of tests){
   const unsigned=await post(lang);
   const forged=await post(lang,"not.a.valid.clerk.signature");
@@ -78,7 +113,7 @@ async function probe(){
      unsigned.data.code!=="QA105_AUTH_DENIED"||
      forged.data.code!=="QA105_AUTH_DENIED")
    denied("AUTH_NEGATIVE_GATE_FAILED");
-  const valid=await post(lang,token);
+  const valid=await post(lang,await freshToken(sessionId));
   if(valid.code!==200||valid.data.ok!==true||
      valid.data.qaOnly!==true||valid.data.modelCalls!==0||
      valid.data.language!==lang||
@@ -88,6 +123,7 @@ async function probe(){
      valid.data.sourceAttested!==true)
    denied("REAL_CLERK_OR_QA_EVIDENCE_NOT_ATTESTED");
  }
+ }finally{await revokeSession(sessionId);}
  console.log("PASS:QA105_REAL_TEST_CLERK_AUTH_AND_QA_DUAL_INDEX_CITATIONS");
  console.log("PASS:QA105_DE_IT_EXACT_SECTION_PAGE_NO_MODEL_NO_SOURCE_TEXT");
 }
