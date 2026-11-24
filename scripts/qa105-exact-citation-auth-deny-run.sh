@@ -77,6 +77,23 @@ for(const language of ["de","it"]){
 console.log("PASS:QA105_REAL_QA_HTTP_UNSIGNED_AND_FORGED_DENIED");
 console.log("PASS:QA105_QA_WORKER_DEFAULT_OFF_NO_MODEL_NO_SOURCE_LEAK");
 NODE
+# Positive isolation check: /api/ask on QA MUST NEVER silently proxy
+# to elevator.help Production when there is no Gemini key in QA.
+node --input-type=module <<'NODE'
+for(const question of [
+  "Was bedeutet QA-4711 im Abschnitt QA-1.2.3?",
+  "Cosa indica MOCK-DOOR-12 nella sezione QA-2.4.6?",
+]){
+ const res=await fetch("http://127.0.0.1:8795/api/ask",{
+  method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({question}),signal:AbortSignal.timeout(20000)});
+ const data=await res.json().catch(()=>null);
+ if(res.status!==503||data?.diagnosticCode!=="QA106_ISOLATED_NO_MODEL"||
+  typeof data?.answer==="string"||data?.sources!==undefined)
+  throw Error("QA105_QA_ASK_FORWARDED_OR_NOT_DENIED");
+}
+console.log("PASS:QA106_REAL_QA_ASK_NO_MODEL_NEVER_PROXIES_PRODUCTION");
+NODE
 
 # SECOND isolated QA worker: opt-in gate ON, strict Clerk ON, but only a
 # deliberately INVALID, non-secret Clerk key. No genuine tokens or user data.
