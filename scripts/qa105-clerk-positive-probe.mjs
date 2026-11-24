@@ -242,7 +242,15 @@ async function probe(){
   const valid=await post(lang,frontend.jwt);
   // Never output HTTP body, token, user ID or the Evidence text.
   // Only known aggregate enums are permitted in CI diagnostic logs.
-  if(valid.code===401)denied("SIGNED_TEST_TOKEN_REJECTED_401");
+  if(valid.code===401){
+   if(valid.data?.code==="QA105_WORKER_ORIGIN_NOT_EXPECTED")
+     denied("CLOUDFLARE_WORKER_REQUEST_ORIGIN_DIFFERS");
+   if(valid.data?.code==="QA105_WORKER_ORIGIN_CLAIM_MISMATCH")
+     denied("CLOUDFLARE_WORKER_STRICT_ORIGIN_MISMATCH");
+   if(valid.data?.code==="QA105_WORKER_SIGNATURE_OR_SECRET_MISMATCH")
+     denied("CLOUDFLARE_WORKER_SIGNATURE_OR_SECRET_MISMATCH");
+   denied("SIGNED_TEST_TOKEN_REJECTED_401");
+  }
   if(valid.code===403)denied("DEDICATED_TEST_USER_REJECTED_403");
   if(valid.code===409)denied("QA_EXACT_CITATION_NOT_ATTESTED_409");
   if(valid.code===503)denied("QA_PROBE_BINDINGS_UNAVAILABLE_503");
@@ -275,6 +283,7 @@ async function main(){
    CLERK_SECRET_KEY:secret,
    AUTH_REQUIRED:"true",
    QA105_AUTH_CITATION_PROBE_ENABLED:"true",
+   QA105_AUTH_ORIGIN_DIAG:"true",
    QA105_EXPECTED_CLERK_TEST_USER_ID:identity,
    QA106_ISOLATED_BINDINGS:"qa106-pr100-v2-only",
    INGESTION_PUBLISHED_READS_ENABLED:"true",
