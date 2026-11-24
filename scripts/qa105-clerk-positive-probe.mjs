@@ -114,6 +114,12 @@ async function probe(){
      forged.data.code!=="QA105_AUTH_DENIED")
    denied("AUTH_NEGATIVE_GATE_FAILED");
   const valid=await post(lang,await freshToken(sessionId));
+  // Never output HTTP body, token, user ID or the Evidence text.
+  // Only known aggregate enums are permitted in CI diagnostic logs.
+  if(valid.code===401)denied("SIGNED_TEST_TOKEN_REJECTED_401");
+  if(valid.code===403)denied("DEDICATED_TEST_USER_REJECTED_403");
+  if(valid.code===409)denied("QA_EXACT_CITATION_NOT_ATTESTED_409");
+  if(valid.code===503)denied("QA_PROBE_BINDINGS_UNAVAILABLE_503");
   if(valid.code!==200||valid.data.ok!==true||
      valid.data.qaOnly!==true||valid.data.modelCalls!==0||
      valid.data.language!==lang||
