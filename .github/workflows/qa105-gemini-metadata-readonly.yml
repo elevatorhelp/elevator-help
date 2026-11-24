@@ -45,8 +45,11 @@ jobs:
           JSON
           node --input-type=module - "$ROOT/.dev.vars" <<'JS'
           import {writeFileSync} from "node:fs";
-          const key=process.env.QA105_METADATA_KEY;
-          if(!key||!/^[A-Za-z0-9_-]+$/.test(key))throw Error("QA105_METADATA_KEY_INVALID");
+          const original=process.env.QA105_METADATA_KEY||"";
+          const key=original.trim();
+          const valid=/^[A-Za-z0-9_-]+$/.test(key);
+          console.log("::notice title=Key format diagnostic::OUTER_WHITESPACE="+(original!==key)+" VALID_AFTER_TRIM="+valid+" QUOTED="+(/^["']|["']$/.test(key))+" INTERNAL_WHITESPACE="+(/\s/.test(key)));
+          if(!valid)throw Error("QA105_METADATA_KEY_INVALID_AFTER_TRIM");
           writeFileSync(process.argv[2],"QA105_METADATA_KEY="+JSON.stringify(key)+"\n",{mode:0o600});
           JS
           cat > "$ROOT/worker.mjs" <<'JS'
@@ -84,7 +87,7 @@ jobs:
           const root=process.argv[2];
           const {probe}=await import(pathToFileURL(root+"/worker.mjs").href);
           const {report}=await import(pathToFileURL(root+"/report.mjs").href);
-          report("Runner metadata",await probe(process.env.QA105_METADATA_KEY));
+          report("Runner metadata",await probe(process.env.QA105_METADATA_KEY.trim()));
           JS
           unset QA105_METADATA_KEY
           pid="$(qa106_spawn_worker_group "$ROOT/worker.log" npx wrangler dev --remote --config "$ROOT/wrangler.json" --ip 127.0.0.1 --port 8797)"
