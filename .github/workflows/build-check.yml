@@ -136,6 +136,9 @@ jobs:
           node --check scripts/qa105-clerk-positive-probe.mjs
           node scripts/test-qa105-clerk-positive-gate.mjs
 
+      - name: Verify isolated QA no-model ask never proxies Production (static guard)
+        run: node scripts/test-qa106-no-production-proxy.mjs
+
       - name: Build
         run: npm run build
 
