@@ -1,6 +1,6 @@
 /**
- * One-time, QA-only canonical term backfill for the previously published
- * original two-page A test PDF. No model calls, no source/evidence mutations.
+ * One-time, strictly READ-ONLY canonical term check for the previously published
+ * original two-page A test PDF. No model calls, NO D1 writes or source changes.
  * Source text and D1 publication jointly authenticate all four terms.
  */
 import {readFileSync} from "node:fs";
@@ -109,34 +109,13 @@ if(before){
  console.log("QA105_A_PREFLIGHT_SOURCE_HASH_FORMAT="+(
   /^[a-f0-9]{64}$/.test(String(before.a_source||""))));
 }
-verify(before,[0,4]);
-if(Number(before.a_total_terms)!==Number(before.expected_terms))
- deny("UNEXPECTED_OLD_TERMS");
-if(Number(before.expected_terms)===0){
- const terms=data.map(x=>`SELECT ${x.page} AS page,
-  ${quote(x.kind)} AS kind,${quote(x.term)} AS term_key,${quote(x.label)} AS label`).join(" UNION ALL ");
- const inserts=wrangler(`INSERT OR IGNORE INTO ingestion_v2_evidence_terms
-  (document_id,generation,logical_id,source_fingerprint,kind,term_key,label,created_at_ms)
-  SELECT e.document_id,e.generation,e.logical_id,e.source_fingerprint,
-   k.kind,k.term_key,k.label,
-   CAST(strftime('%s','now') AS INTEGER)*1000
-  FROM ingestion_v2_staged_evidence e
-  JOIN ingestion_v2_publications p ON p.document_id=e.document_id
-    AND p.job_key=${quote(job)}
-    AND p.active_generation=e.generation
-    AND p.source_fingerprint=e.source_fingerprint
-    AND p.evidence_count=2
-  JOIN (${terms}) k ON k.page=e.page
-  WHERE e.document_id=${quote(a)}
-    AND NOT EXISTS(SELECT 1 FROM ingestion_global_leases l
-      WHERE l.job_key=${quote(job)}
-       AND l.lease_until_ms>CAST(strftime('%s','now') AS INTEGER)*1000)
-    AND ((e.page=1 AND INSTR(UPPER(e.text),'QA-4711')>0
-           AND INSTR(UPPER(e.text),'QA-1.2.3')>0)
-     OR (e.page=2 AND INSTR(UPPER(e.text),'MOCK-DOOR-12')>0
-           AND INSTR(UPPER(e.text),'QA-2.4.6')>0));`);
- if(inserts.length)deny("D1_INSERT_UNEXPECTED_ROWS");
-}
+verify(before,[4]);
+// Existing QA A terms were already published (19 indexed entries, four
+// exact canonical terms). Never write to D1 as a workaround for a wrongly
+// targeted or wrongly normalized QA lookup.
+if(Number(before.expected_terms)!==4||
+   Number(before.a_total_terms)<4)
+ deny("PUBLISHED_TERMS_MISSING_NO_D1_WRITES");
 const after=counts();
 verify(after,[4]);
 if(after.a_manifest!==before.a_manifest||
@@ -144,7 +123,7 @@ if(after.a_manifest!==before.a_manifest||
    after.a_rows!==before.a_rows||
    after.b_active!==before.b_active||
    after.b_legacy_pub!==before.b_legacy_pub||
-   after.a_total_terms!==4)deny("PUBLICATION_OR_TERM_MISMATCH");
+   after.a_total_terms!==before.a_total_terms)deny("PUBLICATION_OR_TERM_MISMATCH");
 console.log("PASS:QA105_A_PUBLISHED_SOURCE_MATCHED_EXACT_PAGES_ONE_TWO");
-console.log("PASS:QA105_A_CANONICAL_REFERENCE_AND_CLAUSE_TERMS_ATTACHED");
+console.log("PASS:QA105_A_CANONICAL_REFERENCE_AND_CLAUSE_TERMS_ALREADY_PRESENT");
 console.log("PASS:QA105_A_AND_B_PUBLICATIONS_UNCHANGED_NO_MODEL");
