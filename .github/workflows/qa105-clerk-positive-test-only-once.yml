@@ -60,3 +60,5 @@ jobs:
         run: bash scripts/qa105-clerk-positive-run.sh
 
 # Owner-confirmed TEST-only auth probe after two QA environment secrets were configured.
+
+# Single diagnostic QA rerun: classify 401/403/409/503 without token or content output.
