@@ -43,7 +43,23 @@ export async function POST(request:NextRequest){
     typeof a?.getByIds!=="function"||
     typeof b?.getByIds!=="function")
    return denial("QA105_PROBE_BINDINGS_DENIED",503);
- const auth=await authorizeChatRequest(request);
+ // Wrangler remote preview rewrites request.url to its internal host.
+ // Only the explicitly enabled isolated TEST probe may use the fixed
+ // external loopback party. Never derive this from forwarded headers.
+ const testOriginMode=env.QA105_AUTH_ORIGIN_DIAG==="true";
+ if(testOriginMode&&!/^sk_test_/.test(process.env.CLERK_SECRET_KEY||""))
+   return denial("QA105_TEST_KEY_REQUIRED",503);
+ const auth=await authorizeChatRequest(request,testOriginMode?
+   async(token,options)=>{
+     const verified=await verifyToken(token,{
+       ...options,authorizedParties:["http://127.0.0.1:8797"],
+     });
+     const raw=verified as unknown as Record<string,unknown>;
+     const claims=("data" in raw?raw.data:raw) as Record<string,unknown>|null;
+     if(!claims||claims.azp!=="http://127.0.0.1:8797")
+       throw Error("QA105_TEST_ORIGIN_CLAIM_REQUIRED");
+     return verified;
+   }:verifyToken);
  if(!auth.ok){
    // Diagnostics are restricted to the dedicated TEST-only positive
    // workflow. Return only fixed enums (never a URL, key, JWT or claims).
