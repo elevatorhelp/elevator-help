@@ -62,3 +62,17 @@ const run=(env,mode="preflight")=>{
  assert.doesNotMatch(shell,/--var "CLERK_SECRET_KEY:/);
 }
 console.log("PASS:QA105_TEST_ONLY_CLERK_POSITIVE_WORKFLOW_DEFAULT_OFF_NO_NETWORK");
+
+{
+ const route=readFileSync("app/api/qa105-exact-citation-probe/route.ts","utf8");
+ assert.ok(route.includes('env.QA106_ISOLATED_BINDINGS!=="qa106-pr100-v2-only"'));
+ assert.ok(route.includes('env.QA105_AUTH_ORIGIN_DIAG==="true"'));
+ assert.ok(route.includes('testOriginMode&&!/^sk_test_/'));
+ assert.ok(route.includes('authorizedParties:["http://127.0.0.1:8797"]'));
+ assert.ok(route.includes('claims.azp!=="http://127.0.0.1:8797"'));
+ assert.ok(route.includes('if(auth.userId!==authorizedQAUser)'));
+ const shared=readFileSync("app/lib/request-auth.ts","utf8");
+ assert.ok(shared.includes("authorizedParties: [origin]"));
+ assert.ok(shared.includes("new URL(request.url).origin"));
+ assert.ok(!shared.includes("127.0.0.1:8797"));
+}
