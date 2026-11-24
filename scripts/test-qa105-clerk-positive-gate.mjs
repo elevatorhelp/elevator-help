@@ -23,7 +23,6 @@ const run=(env,mode="preflight")=>{
 {
  const r=run({GITHUB_EVENT_NAME:"push",
   QA105_CLERK_TEST_SECRET_KEY:"sk_test_validshapeonly123456789",
-  QA105_CLERK_TEST_SESSION_JWT:"part."+"x".repeat(95)+".signature",
   QA105_CLERK_TEST_USER_ID:"user_QA105ONLY00001"});
  assert.notEqual(r.status,0);
  assert.match(r.stderr,/QA105_POSITIVE_CONTEXT_DENIED/);
@@ -31,7 +30,6 @@ const run=(env,mode="preflight")=>{
 {
  const r=run({GEMINI_API_KEY:"never_send_to_ai",
   QA105_CLERK_TEST_SECRET_KEY:"sk_test_validshapeonly123456789",
-  QA105_CLERK_TEST_SESSION_JWT:"part."+"x".repeat(95)+".signature",
   QA105_CLERK_TEST_USER_ID:"user_QA105ONLY00001"});
  assert.notEqual(r.status,0);
  assert.match(r.stderr,/QA105_POSITIVE_CONTEXT_DENIED/);
@@ -41,12 +39,18 @@ const run=(env,mode="preflight")=>{
   ".github/workflows/qa105-clerk-positive-test-only-once.yml","utf8");
  assert.match(workflow,/environment: qa-clerk-positive/);
  assert.match(workflow,/QA105_CLERK_TEST_SECRET_KEY: \$\{\{ secrets\.QA105_CLERK_TEST_SECRET_KEY \}\}/);
- assert.match(workflow,/QA105_CLERK_TEST_SESSION_JWT: \$\{\{ secrets\.QA105_CLERK_TEST_SESSION_JWT \}\}/);
+ assert.doesNotMatch(workflow,/secrets\.QA105_CLERK_TEST_SESSION_JWT/);
  assert.match(workflow,/QA105_CLERK_TEST_USER_ID: \$\{\{ secrets\.QA105_CLERK_TEST_USER_ID \}\}/);
  assert.match(workflow,/github\.event\.head_commit\.message == 'qa105\(test\): authorized real Clerk TEST positive probe zero models'/);
  assert.doesNotMatch(workflow,/secrets\.CLERK_SECRET_KEY/);
  assert.doesNotMatch(workflow,/secrets\.GEMINI_API_KEY/);
  assert.doesNotMatch(workflow,/secrets\.GEMINI_BENCHMARK_API_KEY/);
+ const source=readFileSync("scripts/qa105-clerk-positive-probe.mjs","utf8");
+ assert.match(source,/https:\/\/api\.clerk\.com\/v1/);
+ assert.match(source,/\/sessions\/\\"/); 
+ assert.match(source,/freshToken\(sessionId\)/);
+ assert.doesNotMatch(source,/process\.env\.QA105_CLERK_TEST_SESSION_JWT\s*;/);
+
  const shell=readFileSync("scripts/qa105-clerk-positive-run.sh","utf8");
  assert.match(shell,/test -s \.open-next\/worker\.js/);
  assert.match(shell,/ln -s "\$QA105_PRIVATE_DEV_VARS" \.dev\.vars/);
