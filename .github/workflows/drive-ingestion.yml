@@ -128,14 +128,15 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           ELEVATOR_INGESTION_TOKEN: ${{ secrets.ELEVATOR_INGESTION_TOKEN }}
           DRIVE_FOLDER_ID: ${{ inputs.folder_id || '1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5' }}
-          # Conservative one-document step-up: 2 -> 3 files/run, not parallel workers.
+          # Scheduled dual workers: one document per shard; manual serial fallback remains.
           # Fail closed for invalid manual limits; Gemini stays hard-capped at 60.
-          MAX_FILES: ${{ inputs.max_files || '3' }}
+          MAX_FILES: ${{ github.event_name == 'schedule' && '2' || inputs.max_files || '3' }}
           # Existing Gemini ceiling stays 60; scripts/drive-ingest.mjs rejects higher values.
           # Per-document raw/map checkpoints are preserved. Rollback throughput: MAX_FILES back to 2.
           MAX_GEMINI_CALLS: "60"
-          DUAL_CANARY_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.dual_canary == true }}
-          DUAL_CANARY_CONFIRMATION: ${{ inputs.dual_canary_confirmation || '' }}
+          DUAL_SCHEDULE_ENABLED: ${{ github.event_name == 'schedule' }}
+          DUAL_CANARY_ENABLED: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.dual_canary == true) }}
+          DUAL_CANARY_CONFIRMATION: ${{ github.event_name == 'schedule' && 'APPROVE_2_DOCUMENTS_SHARED_60_CALLS' || inputs.dual_canary_confirmation || '' }}
           DUAL_CANARY_RUN_ID: ${{ github.run_id }}
           INGEST_ENDPOINT: https://elevator.help/api/drive-ingest-batch
           DOCUMENT_MAP_ENDPOINT: https://elevator.help/api/document-map-ingest
