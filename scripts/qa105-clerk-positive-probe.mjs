@@ -149,8 +149,10 @@ async function frontlineTicketSession(backendSessionId){
   }catch{denied("FAPI_TEST_TRANSPORT_FAILED");}
   const result=await res.json().catch(()=>null);
   if(!res.ok||!result||typeof result!=="object")
-    denied("FAPI_TEST_"+path.includes("/sign_ins")?
-      "FAPI_TICKET_SIGNIN_REJECTED":"FAPI_CLIENT_UNAVAILABLE");
+    denied(path.includes("/sign_ins")?
+      "FAPI_TICKET_SIGNIN_REJECTED":
+      path.includes("/tokens")?
+        "FAPI_SESSION_TOKEN_REJECTED":"FAPI_CLIENT_UNAVAILABLE");
   const setCookies=res.headers.getSetCookie?.()||[];
   const names=setCookies.map(c=>c.split(";")[0]).filter(c=>
     /^[A-Za-z0-9_]+=[^;]{1,4096}$/.test(c));
