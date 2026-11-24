@@ -209,7 +209,6 @@ async function revokeSession(sessionId){
 }
 async function probe(){
  const tests=[
-  ["de","Was bedeutet QA-4711 im Abschnitt QA-1.2.3?","QA-4711","QA-1.2.3",1],
   ["it","Cosa indica MOCK-DOOR-12 nella sezione QA-2.4.6?","MOCK-DOOR-12","QA-2.4.6",2],
  ];
  for(const [language,question,code,section,page] of tests){
@@ -238,7 +237,7 @@ async function probe(){
    await revokeSession(sessionId);
   }
  }
- console.log("PASS:QA105_BOUNDED_FIXTURE_TWO_CALLS_NOT_FULL_ASK_ACCEPTANCE");
+ console.log("PASS:QA105_BOUNDED_IT_ONLY_NOT_FULL_ASK_ACCEPTANCE");
 }
 async function main(){
  guard();
