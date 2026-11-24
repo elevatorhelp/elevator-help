@@ -48,12 +48,12 @@ const run=(env,mode="preflight")=>{
  const source=readFileSync("scripts/qa105-clerk-positive-probe.mjs","utf8");
  assert.match(source,/https:\/\/api\.clerk\.com\/v1/);
  assert.match(source,/bapi\("\/sessions"/);
- assert.match(source,/frontlineTicketSession\\(sessionId\\)/);
- assert.match(source,/freshToken\\(backendSessionId\\)/);
- assert.match(source,/sign_in_tokens/);
- assert.match(source,/client\\/sign_ins/);
- assert.match(source,/authorizedParties:\\[expectedOrigin\\]/);
- assert.match(source,/TEST_FRONTEND_SESSION_STRICT_ORIGIN|FRONTEND_TEST_SESSION_STRICT_ORIGIN/);
+ assert.ok(source.includes("frontlineTicketSession(sessionId)"));
+ assert.ok(source.includes("freshToken(backendSessionId)"));
+ assert.ok(source.includes("/sign_in_tokens"));
+ assert.ok(source.includes("/v1/client/sign_ins"));
+ assert.ok(source.includes("authorizedParties:[expectedOrigin]"));
+ assert.ok(source.includes("QA105_FRONTEND_TEST_SESSION_STRICT_ORIGIN_VERIFIED"));
  assert.doesNotMatch(source,/process\.env\.QA105_CLERK_TEST_SESSION_JWT\s*;/);
 
  const shell=readFileSync("scripts/qa105-clerk-positive-run.sh","utf8");
