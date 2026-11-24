@@ -48,7 +48,8 @@ async function runProcess(shard) {
   if(failure){
     // Emit fixed enums only: child stderr/error messages may contain source content.
     const known=["INGESTION_GEMINI_BUDGET_EXCEEDED","INGESTION_DOCUMENT_FAILURES","INGESTION_STATE_WRITE_FAILED","INGESTION_STATE_MISSING","INGESTION_STATE_CORRUPT","INGESTION_ENDPOINT_TRANSPORT_FAILURE","D1_COORDINATOR_UNAPPROVED_RUNNER_MODE","PARALLEL_SHARD_MARKER_MISMATCH","CROSS_SHARD_STATE_RECORD","CROSS_SHARD_FAILURE_RECORD","ARCHIVE_EVIDENCE_VERSION_MISMATCH"];
-    const category=known.find(code=>stderr.includes(code))??(failure.code==="ERR_CHILD_PROCESS_STDIO_MAXBUFFER"?"OUTPUT_LIMIT":failure.killed?"PROCESS_TERMINATED":"UNCLASSIFIED_CHILD_FAILURE");
+    const httpCategory=/category: (DUAL_ARCHIVE_(?:MAP|INGEST)_HTTP_[0-9]{1,3})(?:\r?\n|$)/.exec(stderr)?.[1];
+    const category=httpCategory??known.find(code=>stderr.includes(code))??(failure.code==="ERR_CHILD_PROCESS_STDIO_MAXBUFFER"?"OUTPUT_LIMIT":failure.killed?"PROCESS_TERMINATED":"UNCLASSIFIED_CHILD_FAILURE");
     const exit=Number.isInteger(failure.code)?String(failure.code):"unavailable";
     console.error(`shard_${shard}_failure=${category}; exit=${exit}; summary_available=${!!summary}`);
     throw Error("DUAL_CANARY_CHILD_FAILED");
