@@ -4,7 +4,7 @@
  * The caller must establish isolated QA bindings and authenticated test
  * identity BEFORE calling this function. Never use this table in production.
  */
-export const QA105_PAID_APPROVAL = "qa105-20261124-two-calls-v1";
+export const QA105_PAID_APPROVAL = "qa105-20261124-two-calls-v2";
 export const QA105_PAID_SCHEMA = `CREATE TABLE IF NOT EXISTS qa105_paid_answer_reservations (
  approval TEXT NOT NULL,
  language TEXT NOT NULL CHECK(language IN ('de','it')),
@@ -29,6 +29,6 @@ export function qa105OneCallFetch(fetchImpl:typeof fetch, reserve:()=>Promise<bo
      init?.method!=="POST"||attempted)throw Error("QA105_PROVIDER_CALL_DENIED");
   attempted=true;
   if(!(await reserve()))throw Error("QA105_PROVIDER_RESERVATION_DENIED");
-  return fetchImpl(input,{...init,redirect:"error"});
+  return fetchImpl(input,{...init,redirect:"manual"});
  };
 }
