@@ -33,11 +33,26 @@ async function runProcess(shard) {
   const env={...process.env,ARCHIVE_SHARD_INDEX:String(shard),ARCHIVE_SHARD_COUNT:"2",
     STATE_PATH:paths[shard],MAX_FILES:String(maxFiles[shard]),MAX_GEMINI_CALLS:String(calls[shard]),
     ALLOW_EMPTY_INGESTION_STATE:"false",FORCE_REINGEST:"false"};
-  const {stdout}=await execFileAsync(process.execPath,["scripts/drive-ingest.mjs"],{
-    env,timeout:14*60*1000,maxBuffer:2_000_000,windowsHide:true,
-  });
+  let stdout="",stderr="",failure=null;
+  try {
+    ({stdout,stderr}=await execFileAsync(process.execPath,["scripts/drive-ingest.mjs"],{
+      env,timeout:14*60*1000,maxBuffer:2_000_000,windowsHide:true,
+    }));
+  } catch (error) {
+    failure=error;
+    stdout=typeof error?.stdout==="string"?error.stdout:"";
+    stderr=typeof error?.stderr==="string"?error.stderr:"";
+  }
   const summary=/Done\. Attempted (\d+) file\(s\); (\d+) failed;[^\r\n]*Gemini calls reserved: (\d+)\/(\d+)\./.exec(stdout);
   console.log(`shard_${shard}_finished=${!!summary}; shard_${shard}_attempted=${summary?.[1]??"unavailable"}; shard_${shard}_failed=${summary?.[2]??"unavailable"}; shard_${shard}_gemini_calls=${summary?.[3]??"unavailable"}/${calls[shard]}`);
+  if(failure){
+    // Emit fixed enums only: child stderr/error messages may contain source content.
+    const known=["INGESTION_GEMINI_BUDGET_EXCEEDED","INGESTION_DOCUMENT_FAILURES","INGESTION_STATE_WRITE_FAILED","INGESTION_STATE_MISSING","INGESTION_STATE_CORRUPT","INGESTION_ENDPOINT_TRANSPORT_FAILURE","D1_COORDINATOR_UNAPPROVED_RUNNER_MODE","PARALLEL_SHARD_MARKER_MISMATCH","CROSS_SHARD_STATE_RECORD","CROSS_SHARD_FAILURE_RECORD","ARCHIVE_EVIDENCE_VERSION_MISMATCH"];
+    const category=known.find(code=>stderr.includes(code))??(failure.code==="ERR_CHILD_PROCESS_STDIO_MAXBUFFER"?"OUTPUT_LIMIT":failure.killed?"PROCESS_TERMINATED":"UNCLASSIFIED_CHILD_FAILURE");
+    const exit=Number.isInteger(failure.code)?String(failure.code):"unavailable";
+    console.error(`shard_${shard}_failure=${category}; exit=${exit}; summary_available=${!!summary}`);
+    throw Error("DUAL_CANARY_CHILD_FAILED");
+  }
   if(!summary)throw Error("DUAL_CANARY_SUMMARY_MISSING");
   return {attempted:Number(summary[1]),failed:Number(summary[2]),calls:Number(summary[3])};
 }
