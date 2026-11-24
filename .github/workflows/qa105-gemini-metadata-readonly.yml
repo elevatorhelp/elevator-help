@@ -57,15 +57,26 @@ jobs:
           cat > "$ROOT/worker.mjs" <<'JS'
           export async function probe(key){
             if(!key||key.length>4096||!/^[\x21-\x7e]+$/.test(key))return {kind:"KEY_MISSING"};
+            let stage="HEADERS";
             try{
+              const headers=new Headers({"x-goog-api-key":key});
+              stage="FETCH";
               const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash",{
-                method:"GET",headers:{"x-goog-api-key":key},redirect:"error",signal:AbortSignal.timeout(15000)
+                method:"GET",headers,redirect:"manual",signal:AbortSignal.timeout(15000)
               });
               const status=r.status;
-              if(!r.ok){await r.body?.cancel();return {kind:"HTTP",status};}
+              if(status>=300&&status<400){
+                let destination="UNKNOWN";
+                try{const u=new URL(r.headers.get("location")||"","https://generativelanguage.googleapis.com");
+                  destination=u.origin==="https://generativelanguage.googleapis.com"?"SAME_ORIGIN":"OTHER_ORIGIN";
+                }catch{}
+                return {kind:"HTTP",status,destination};
+              }
+              if(!r.ok)return {kind:"HTTP",status};
+              stage="RESPONSE_JSON";
               const m=await r.json();
               return {kind:"HTTP",status,exactModel:m.name==="models/gemini-3.6-flash",supportsGeneration:Array.isArray(m.supportedGenerationMethods)&&m.supportedGenerationMethods.includes("generateContent")};
-            }catch(e){return {kind:"EXCEPTION",type:["TypeError","AbortError","TimeoutError","Error","SyntaxError"].includes(e?.name)?e.name:"OTHER"};}
+            }catch(e){return {kind:"EXCEPTION",stage,type:["TypeError","AbortError","TimeoutError","Error","SyntaxError"].includes(e?.name)?e.name:"OTHER"};}
           }
           export default {async fetch(request,env){
             if(request.method!=="GET"||new URL(request.url).pathname!=="/probe")return new Response(null,{status:404});
@@ -77,11 +88,12 @@ jobs:
             let summary;
             if(v.kind==="HTTP"&&Number.isInteger(v.status)&&v.status>=100&&v.status<=599){
               summary="HTTP_"+v.status;
+              if(v.status>=300&&v.status<400)summary+="_REDIRECT_"+(["SAME_ORIGIN","OTHER_ORIGIN"].includes(v.destination)?v.destination:"UNKNOWN");
               if(v.status===200)summary+="_EXACT_"+(v.exactModel===true)+"_GENERATION_"+(v.supportsGeneration===true);
             }else if(v.kind==="KEY_MISSING")summary="KEY_MISSING";
-            else if(v.kind==="EXCEPTION"&&["TypeError","AbortError","TimeoutError","Error","SyntaxError","OTHER"].includes(v.type))summary="EXCEPTION_"+v.type;
+            else if(v.kind==="EXCEPTION"&&["TypeError","AbortError","TimeoutError","Error","SyntaxError","OTHER"].includes(v.type))summary="EXCEPTION_"+v.type+"_"+(["HEADERS","FETCH","RESPONSE_JSON"].includes(v.stage)?v.stage:"UNKNOWN");
             else throw Error("QA105_METADATA_INVALID_DIAGNOSTIC");
-            console.log("::notice title="+label+"::"+summary);
+            console.log("::notice title="+label+"::"+label.replaceAll(" ","_").toUpperCase()+"="+summary);
           }
           JS
           node --input-type=module - "$ROOT" <<'JS'
