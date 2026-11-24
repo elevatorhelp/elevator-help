@@ -79,3 +79,5 @@ jobs:
 # Verify isolated external origin pin with strict signed azp; zero-model QA only.
 
 # Isolated QA citation diagnostic: bounded failure enums only, no model calls.
+
+# Verify exact source/page attestation with multiple search hits and offline regressions.
