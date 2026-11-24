@@ -48,6 +48,7 @@ jobs:
           set -euo pipefail
           bash -n scripts/qa105-clerk-positive-run.sh
           node --check scripts/qa105-clerk-positive-probe.mjs
+          node scripts/test-qa105-clerk-positive-gate.mjs
           test -z "${GEMINI_API_KEY:-}"
           test -z "${GEMINI_BENCHMARK_API_KEY:-}"
           test -z "${CLERK_SECRET_KEY:-}"
@@ -74,3 +75,5 @@ jobs:
 # Owner-authorized zero-model QA run of the current frontend-origin probe (2026-11-24).
 
 # QA-only verification of corrected negative authentication response contract.
+
+# Verify isolated external origin pin with strict signed azp; zero-model QA only.
