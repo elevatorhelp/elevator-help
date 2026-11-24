@@ -1,0 +1,29 @@
+import assert from "node:assert/strict";
+import {DatabaseSync} from "node:sqlite";
+import {mkdtempSync,rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {QA105_PAID_APPROVAL,QA105_PAID_SCHEMA,reserveQA105ModelCall,qa105OneCallFetch} from "../app/lib/qa105-paid-budget.ts";
+const dir=mkdtempSync(join(tmpdir(),"qa105-budget-"));
+let a,b;
+try{
+ a=new DatabaseSync(join(dir,"budget.db"));b=new DatabaseSync(join(dir,"budget.db"));
+ a.exec(QA105_PAID_SCHEMA);
+ const wrap=db=>({prepare:sql=>({bind:(...args)=>({first:async()=>db.prepare(sql).get(...args)??null})})});
+ let calls=0;
+ const provider=async()=>{calls++;throw Error("uncertain outcome");};
+ const url="https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
+ const init={method:"POST"};
+ const reserve=(db,lang)=>()=>reserveQA105ModelCall(wrap(db),QA105_PAID_APPROVAL,lang);
+ const first=qa105OneCallFetch(provider,reserve(a,"de"));
+ await assert.rejects(first(url,init),/uncertain outcome/);
+ await assert.rejects(first(url,init),/QA105_PROVIDER_CALL_DENIED/);
+ await assert.rejects(qa105OneCallFetch(provider,reserve(b,"de"))(url,init),/QA105_PROVIDER_RESERVATION_DENIED/);
+ await assert.rejects(qa105OneCallFetch(provider,reserve(b,"it"))(url,init),/uncertain outcome/);
+ await assert.rejects(qa105OneCallFetch(provider,reserve(a,"it"))(url,init),/QA105_PROVIDER_RESERVATION_DENIED/);
+ assert.equal(await reserveQA105ModelCall(wrap(a),"wrong","de"),false);
+ assert.equal(await reserveQA105ModelCall(wrap(a),QA105_PAID_APPROVAL,"en"),false);
+ assert.equal(calls,2);
+ assert.equal(a.prepare("SELECT COUNT(*) AS n FROM qa105_paid_answer_reservations").get().n,2);
+ console.log("PASS:QA105_TWO_DURABLE_RESERVATIONS_ZERO_NETWORK_NO_RETRY");
+}finally{a?.close();b?.close();rmSync(dir,{recursive:true,force:true})}
