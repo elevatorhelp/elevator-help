@@ -1,0 +1,48 @@
+name: QA105 bounded real DE IT answer fixture (max two Gemini calls)
+on:
+  push:
+    branches: [feat/issue106-shadow-map-revision-20261122]
+    paths: [".github/workflows/qa105-paid-answer-once.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: issue106-one-time-two-worker-qa
+  cancel-in-progress: false
+jobs:
+  bounded-paid-answer:
+    if: >-
+      github.repository == 'elevatorhelp/elevator-help' &&
+      github.actor == 'elevatorhelp' &&
+      github.ref == 'refs/heads/feat/issue106-shadow-map-revision-20261122' &&
+      github.event.head_commit.message == 'qa105(approved paid): exact DE IT fixture max two Gemini calls' &&
+      github.run_attempt == 1
+    environment: qa-clerk-positive
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      QA105_CLERK_TEST_SECRET_KEY: ${{ secrets.QA105_CLERK_TEST_SECRET_KEY }}
+      QA105_CLERK_TEST_USER_ID: ${{ secrets.QA105_CLERK_TEST_USER_ID }}
+      QA105_POSITIVE_CONFIRMATION: qa105-20261124-two-calls-v1
+      QA105_POSITIVE_EVENT_TRIGGER: ${{ github.event.head_commit.message }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Offline hard-budget and authentication regressions
+        run: |
+          set -euo pipefail
+          bash -n scripts/qa105-paid-answer-run.sh
+          node --check scripts/qa105-paid-answer-probe.mjs
+          node --experimental-sqlite --experimental-strip-types scripts/test-qa105-paid-budget.mjs
+          node scripts/test-qa105-clerk-positive-gate.mjs
+      - name: Compile isolated QA Worker without model key or deployment
+        run: npm run cf:build
+      - name: One bounded DE IT fixture execution, no automatic retry
+        env:
+          QA105_PAID_GEMINI_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
+        run: bash scripts/qa105-paid-answer-run.sh
