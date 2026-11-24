@@ -64,3 +64,5 @@ jobs:
 # Single diagnostic QA rerun: classify 401/403/409/503 without token or content output.
 
 # QA TEST-only JWT diagnostic: strictly local signature versus authorized party, no sensitive logs.
+
+# One-time QA FAPI DevBrowser origin-bound sign-in ticket probe; no model requests.
