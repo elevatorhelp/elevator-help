@@ -58,3 +58,5 @@ jobs:
         run: npm run cf:build
       - name: One positive TEST Clerk JWT and exact B Evidence page/section HTTP proof
         run: bash scripts/qa105-clerk-positive-run.sh
+
+# Owner-confirmed TEST-only auth probe after two QA environment secrets were configured.
