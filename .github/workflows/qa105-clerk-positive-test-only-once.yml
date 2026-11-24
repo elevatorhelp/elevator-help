@@ -77,3 +77,5 @@ jobs:
 # QA-only verification of corrected negative authentication response contract.
 
 # Verify isolated external origin pin with strict signed azp; zero-model QA only.
+
+# Isolated QA citation diagnostic: bounded failure enums only, no model calls.
