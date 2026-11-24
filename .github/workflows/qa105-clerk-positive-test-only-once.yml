@@ -70,3 +70,5 @@ jobs:
 # QA-origin FAPI allowlist typo corrected; final bounded no-Gemini Clerk TEST ticket attempt.
 
 # Redacted runtime JWT diagnosis on remote QA Worker only: origin versus signature.
+
+# Owner-authorized zero-model QA run of the current frontend-origin probe (2026-11-24).
