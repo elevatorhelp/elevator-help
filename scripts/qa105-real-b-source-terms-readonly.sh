@@ -38,6 +38,13 @@ SQL="SELECT
  (SELECT COUNT(*) FROM ingestion_v2_evidence_terms WHERE document_id='$B' AND kind='reference' AND term_key='MOCK-DOOR-12') AS it_ref,
  (SELECT COUNT(*) FROM ingestion_v2_evidence_terms WHERE document_id='$B' AND kind='clause' AND term_key='QA-2.4.6') AS it_clause,
  (SELECT COUNT(*) FROM ingestion_v2_staged_evidence WHERE document_id='$B') AS b_evidence_rows,
+ (SELECT COUNT(*) FROM ingestion_v2_staged_evidence WHERE document_id='$A' AND page=1 AND INSTR(UPPER(text),'QA-4711')>0 AND INSTR(UPPER(text),'QA-1.2.3')>0) AS a_de_source,
+ (SELECT COUNT(*) FROM ingestion_v2_staged_evidence WHERE document_id='$A' AND page=2 AND INSTR(UPPER(text),'MOCK-DOOR-12')>0 AND INSTR(UPPER(text),'QA-2.4.6')>0) AS a_it_source,
+ (SELECT COUNT(*) FROM ingestion_v2_evidence_terms WHERE document_id='$A' AND kind='reference' AND term_key='QA-4711') AS a_de_ref,
+ (SELECT COUNT(*) FROM ingestion_v2_evidence_terms WHERE document_id='$A' AND kind='clause' AND term_key='QA-1.2.3') AS a_de_clause,
+ (SELECT COUNT(*) FROM ingestion_v2_evidence_terms WHERE document_id='$A' AND kind='reference' AND term_key='MOCK-DOOR-12') AS a_it_ref,
+ (SELECT COUNT(*) FROM ingestion_v2_evidence_terms WHERE document_id='$A' AND kind='clause' AND term_key='QA-2.4.6') AS a_it_clause,
+ (SELECT COUNT(*) FROM ingestion_v2_staged_evidence WHERE document_id='$A') AS a_evidence_rows,
  (SELECT COUNT(*) FROM ingestion_v2_publications WHERE document_id='$A') AS a_legacy_published,
  (SELECT COUNT(*) FROM ingestion_v2_publications WHERE document_id='$B') AS b_legacy_published;"
 npx wrangler d1 execute elevator-help-lease-test-01 --remote --config wrangler.qa-pr100-v2.json --json --command "$SQL" > "$TMP/rows.json" 2>"$TMP/wrangler.err"
@@ -48,7 +55,7 @@ const batch=Array.isArray(obj)?obj:[obj];
 const records=batch.flatMap(x=>x.results||[]);
 if(records.length!==1)throw Error("QA105_SOURCE_BAD_ROW_COUNT");
 const r=records[0];
-const keys=["active_revision","embedded_candidate","de_source_text","it_source_text","de_ref","de_clause","it_ref","it_clause","b_evidence_rows","a_legacy_published","b_legacy_published"];
+const keys=["active_revision","embedded_candidate","de_source_text","it_source_text","de_ref","de_clause","it_ref","it_clause","b_evidence_rows","a_de_source","a_it_source","a_de_ref","a_de_clause","a_it_ref","a_it_clause","a_evidence_rows","a_legacy_published","b_legacy_published"];
 if(Object.keys(r).length!==keys.length||
  keys.some(k=>!Number.isSafeInteger(Number(r[k]))||Number(r[k])<0||Number(r[k])>4096))
  throw Error("QA105_SOURCE_BAD_COUNTS");
