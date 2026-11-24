@@ -11,7 +11,7 @@ try{
  a.exec(QA105_PAID_SCHEMA);
  const wrap=db=>({prepare:sql=>({bind:(...args)=>({first:async()=>db.prepare(sql).get(...args)??null})})});
  let calls=0;
- const provider=async()=>{calls++;throw Error("uncertain outcome");};
+ const provider=async(_url,opts)=>{assert.equal(opts.redirect,"manual");calls++;throw Error("uncertain outcome");};
  const url="https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
  const init={method:"POST"};
  const reserve=(db,lang)=>()=>reserveQA105ModelCall(wrap(db),QA105_PAID_APPROVAL,lang);
@@ -22,6 +22,7 @@ try{
  await assert.rejects(qa105OneCallFetch(provider,reserve(b,"it"))(url,init),/uncertain outcome/);
  await assert.rejects(qa105OneCallFetch(provider,reserve(a,"it"))(url,init),/QA105_PROVIDER_RESERVATION_DENIED/);
  assert.equal(await reserveQA105ModelCall(wrap(a),"wrong","de"),false);
+ assert.equal(await reserveQA105ModelCall(wrap(a),"qa105-20261124-two-calls-v1","de"),false);
  assert.equal(await reserveQA105ModelCall(wrap(a),QA105_PAID_APPROVAL,"en"),false);
  assert.equal(calls,2);
  assert.equal(a.prepare("SELECT COUNT(*) AS n FROM qa105_paid_answer_reservations").get().n,2);
