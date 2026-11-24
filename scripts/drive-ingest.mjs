@@ -546,6 +546,11 @@ async function callJsonEndpoint(endpoint, payload, token, label) {
         throw Error(code);
       throw Error("V2_QA_ENDPOINT_REJECTED");
     }
+    if(shardEnabled){
+      const phase=label==="Document-map endpoint"?"MAP":"INGEST";
+      const status=Number.isInteger(response.status)&&response.status>=100&&response.status<=599?response.status:0;
+      throw Error(`DUAL_ARCHIVE_${phase}_HTTP_${status}`);
+    }
     throw new Error(`${label} error ${response.status}: ${JSON.stringify(data)}`);
   }
 
@@ -1396,6 +1401,7 @@ async function main() {
       // Do not emit raw endpoint error bodies: they can contain private source metadata.
       const failureKind = String(error?.message || "").includes("INGESTION_GEMINI_BUDGET_EXCEEDED")
         ? "INGESTION_GEMINI_BUDGET_EXCEEDED"
+        : shardEnabled && /^DUAL_ARCHIVE_(?:MAP|INGEST)_HTTP_[0-9]{1,3}$/.test(String(error?.message||"")) ? error.message
         : error instanceof Error ? error.name : "UnknownError";
       console.error("Archive document processing failed (source redacted); category:", failureKind);
       fileErrors.push(error);
