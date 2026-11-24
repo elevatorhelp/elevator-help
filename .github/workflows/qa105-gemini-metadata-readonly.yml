@@ -108,3 +108,5 @@ jobs:
           JS
 
 # Owner updated benchmark secret; repeat metadata GET only, no generation.
+
+# Verify newly configured environment-scoped benchmark secret; metadata only.
