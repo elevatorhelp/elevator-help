@@ -7,8 +7,10 @@
 import {NextRequest,NextResponse} from "next/server";
 import {getCloudflareContext} from "@opennextjs/cloudflare";
 import {authorizeChatRequest} from "../../lib/request-auth";
-import {searchPublishedRevisionEvidence} from "../../lib/ingestion-map-revision-evidence";
-import {QA106_B_PDF_ID} from "../../lib/qa106-b-exact-map-repair";
+import {searchPublishedImmutableEvidence} from "../../lib/ingestion-v2-evidence-references";
+import {referenceIdentifierKey} from "../../lib/reference-identifiers";
+import {extractClauseNumbers} from "../../lib/standard-identifiers";
+import {QA106_A_PDF_ID} from "../../lib/qa106-b-exact-map-repair";
 
 const authorizedQAUser=process.env.QA105_EXPECTED_CLERK_TEST_USER_ID;
 const denial=(code:string,status:number)=>NextResponse.json(
@@ -50,12 +52,17 @@ export async function POST(request:NextRequest){
    return denial("QA105_BAD_REQUEST",400);
  const language=(body as any).language as string;
  const expected=cases[language];
- // Fixed allowlist: no arbitrary document IDs, texts or term lookups.
+ // Fixed Issue #105 source is original published A, NOT the unrelated B
+ // Map revision fixture. No arbitrary document ID, text or term lookups.
+ // Use exact production identifier normalization (not the display labels).
+ const refKey=referenceIdentifierKey(expected.code);
+ const clause=extractClauseNumbers(expected.clause)[0];
+ if(!refKey||!clause)return denial("QA105_INVALID_NORMALIZATION",503);
  try{
-   const hits=await searchPublishedRevisionEvidence(
-     d1,[{key:expected.code,label:expected.code,structured:true}],
-     [expected.clause],[a,b],10);
-   if(hits.length!==1||hits[0]?.source_file_id!==QA106_B_PDF_ID||
+   const hits=await searchPublishedImmutableEvidence(
+     d1,[{key:refKey,label:expected.code,structured:true}],
+     [clause],10);
+   if(hits.length!==1||hits[0]?.source_file_id!==QA106_A_PDF_ID||
       hits[0]?.page!==expected.page||
       !String(hits[0]?.text||"").includes(expected.code)||
       !String(hits[0]?.text||"").includes(expected.clause))
