@@ -47,7 +47,7 @@ const run=(env,mode="preflight")=>{
  assert.doesNotMatch(workflow,/secrets\.GEMINI_BENCHMARK_API_KEY/);
  const source=readFileSync("scripts/qa105-clerk-positive-probe.mjs","utf8");
  assert.match(source,/https:\/\/api\.clerk\.com\/v1/);
- assert.match(source,/\/sessions\/\\"/); 
+ assert.match(source,/bapi\("\/sessions"/);
  assert.match(source,/freshToken\(sessionId\)/);
  assert.doesNotMatch(source,/process\.env\.QA105_CLERK_TEST_SESSION_JWT\s*;/);
 
