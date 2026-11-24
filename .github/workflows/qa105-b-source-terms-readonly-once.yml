@@ -39,3 +39,5 @@ jobs:
           test -z "${CLERK_SECRET_KEY:-}"
       - name: Query aggregate real QA B source citations read-only
         run: bash scripts/qa105-real-b-source-terms-readonly.sh
+
+# Recheck exact code/section presence in A as well as B; no cloud mutation.
