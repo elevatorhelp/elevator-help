@@ -7,6 +7,7 @@
 import {NextRequest,NextResponse} from "next/server";
 import {getCloudflareContext} from "@opennextjs/cloudflare";
 import {authorizeChatRequest} from "../../lib/request-auth";
+import {verifyToken} from "@clerk/backend";
 import {searchPublishedImmutableEvidence} from "../../lib/ingestion-v2-evidence-references";
 import {referenceIdentifierKey} from "../../lib/reference-identifiers";
 import {extractClauseNumbers} from "../../lib/standard-identifiers";
@@ -43,7 +44,33 @@ export async function POST(request:NextRequest){
     typeof b?.getByIds!=="function")
    return denial("QA105_PROBE_BINDINGS_DENIED",503);
  const auth=await authorizeChatRequest(request);
- if(!auth.ok)return denial("QA105_AUTH_DENIED",auth.status);
+ if(!auth.ok){
+   // Diagnostics are restricted to the dedicated TEST-only positive
+   // workflow. Return only fixed enums (never a URL, key, JWT or claims).
+   if(env.QA105_AUTH_ORIGIN_DIAG==="true"&&auth.status===401){
+     if(new URL(request.url).origin!=="http://127.0.0.1:8797")
+       return denial("QA105_WORKER_ORIGIN_NOT_EXPECTED",401);
+     const bearer=request.headers.get("authorization")||"";
+     const jwt=bearer.startsWith("Bearer ")?bearer.slice(7):"";
+     let signed=false;
+     if(jwt.length>90&&jwt.length<10000){
+       try{
+         const raw=await verifyToken(jwt,{secretKey:process.env.CLERK_SECRET_KEY});
+         if(raw&&typeof raw==="object"&&
+           (!("errors" in raw)||raw.errors==null)){
+           const claims="data" in raw?raw.data:raw;
+           signed=!!claims&&typeof claims==="object"&&
+             (claims as any).sub===authorizedQAUser&&
+             typeof (claims as any).sid==="string";
+         }
+       }catch{/* Return only a fixed failure enum. */}
+     }
+     return denial(signed?
+       "QA105_WORKER_ORIGIN_CLAIM_MISMATCH":
+       "QA105_WORKER_SIGNATURE_OR_SECRET_MISMATCH",401);
+   }
+   return denial("QA105_AUTH_DENIED",auth.status);
+ }
  if(auth.userId!==authorizedQAUser)return denial("QA105_WRONG_TEST_IDENTITY",403);
  let body:unknown;
  try{body=await request.json()}catch{return denial("QA105_BAD_REQUEST",400)}
