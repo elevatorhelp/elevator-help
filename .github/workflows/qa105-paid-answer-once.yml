@@ -24,7 +24,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       QA105_CLERK_TEST_SECRET_KEY: ${{ secrets.QA105_CLERK_TEST_SECRET_KEY }}
       QA105_CLERK_TEST_USER_ID: ${{ secrets.QA105_CLERK_TEST_USER_ID }}
-      QA105_POSITIVE_CONFIRMATION: qa105-20261124-two-calls-v1
+      QA105_POSITIVE_CONFIRMATION: qa105-20261124-two-calls-v2
       QA105_POSITIVE_EVENT_TRIGGER: ${{ github.event.head_commit.message }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -42,9 +42,9 @@ jobs:
           node scripts/test-qa105-clerk-positive-gate.mjs
       - name: Compile isolated QA Worker without model key or deployment
         run: npm run cf:build
-      - name: One remaining Italian fixture execution, never repeat German reservation
+      - name: Newly approved bounded German and Italian fixture execution
         env:
           QA105_PAID_GEMINI_KEY: ${{ secrets.GEMINI_BENCHMARK_API_KEY }}
         run: bash scripts/qa105-paid-answer-run.sh
 
-# Use remaining IT reservation only; original approval identifier and D1 guard unchanged.
+# Owner approved two new calls after successful authenticated metadata checks. Prior reservations retained.
