@@ -106,11 +106,13 @@ export async function POST(request:NextRequest){
    const hits=await searchPublishedImmutableEvidence(
      d1,[{key:refKey,label:expected.code,structured:true}],
      [clause],10);
-   if(hits.length!==1||hits[0]?.source_file_id!==QA106_A_PDF_ID||
-      hits[0]?.page!==expected.page||
-      !String(hits[0]?.text||"").includes(expected.code)||
-      !String(hits[0]?.text||"").includes(expected.clause))
-     return denial("QA105_EXACT_SOURCE_NOT_ATTESTED",409);
+   const reason=hits.length===0?"QA105_EVIDENCE_EMPTY":
+     hits.length!==1?"QA105_EVIDENCE_MULTIPLE":
+     hits[0]?.source_file_id!==QA106_A_PDF_ID?"QA105_EVIDENCE_WRONG_SOURCE":
+     hits[0]?.page!==expected.page?"QA105_EVIDENCE_WRONG_PAGE":
+     !String(hits[0]?.text||"").includes(expected.code)?"QA105_EVIDENCE_CODE_TEXT_MISMATCH":
+     !String(hits[0]?.text||"").includes(expected.clause)?"QA105_EVIDENCE_CLAUSE_TEXT_MISMATCH":null;
+   if(reason)return denial(testOriginMode?reason:"QA105_EXACT_SOURCE_NOT_ATTESTED",409);
    return NextResponse.json({
     ok:true,qaOnly:true,modelCalls:0,
     language,referenceCode:expected.code,
