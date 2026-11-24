@@ -76,3 +76,21 @@ console.log("PASS:QA105_TEST_ONLY_CLERK_POSITIVE_WORKFLOW_DEFAULT_OFF_NO_NETWORK
  assert.ok(shared.includes("new URL(request.url).origin"));
  assert.ok(!shared.includes("127.0.0.1:8797"));
 }
+
+{
+ const {qa105CitationFailure}=await import("../app/lib/qa105-citation-attestation.ts");
+ const expected={source_file_id:"fixture-A",page:1,text:"QA-4711 QA-1.2.3"};
+ const other={...expected,source_file_id:"fixture-B"};
+ const wrongPage={...expected,page:2};
+ const check=hits=>qa105CitationFailure(hits,"fixture-A",1,"QA-4711","QA-1.2.3");
+ assert.equal(check([other,wrongPage,expected,{...expected}]),null);
+ assert.equal(check([]),"QA105_EVIDENCE_EMPTY");
+ assert.equal(check([other]),"QA105_EVIDENCE_WRONG_SOURCE");
+ assert.equal(check([wrongPage]),"QA105_EVIDENCE_WRONG_PAGE");
+ assert.equal(check([{...expected,text:"QA-1.2.3"}]),"QA105_EVIDENCE_CODE_TEXT_MISMATCH");
+ assert.equal(check([{...expected,text:"QA-4711"},{...expected,text:"QA-1.2.3"}]),"QA105_EVIDENCE_CLAUSE_TEXT_MISMATCH");
+ assert.equal(check([other,{...expected,text:"QA-4711"}]),"QA105_EVIDENCE_CLAUSE_TEXT_MISMATCH");
+ const route=readFileSync("app/api/qa105-exact-citation-probe/route.ts","utf8");
+ assert.ok(route.includes("qa105CitationFailure(hits,QA106_A_PDF_ID,expected.page,expected.code,expected.clause)"));
+ console.log("PASS:QA105_EXACT_CITATION_MULTIPLE_HITS_REGRESSION");
+}
