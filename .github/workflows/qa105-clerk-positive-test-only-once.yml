@@ -62,3 +62,5 @@ jobs:
 # Owner-confirmed TEST-only auth probe after two QA environment secrets were configured.
 
 # Single diagnostic QA rerun: classify 401/403/409/503 without token or content output.
+
+# QA TEST-only JWT diagnostic: strictly local signature versus authorized party, no sensitive logs.
