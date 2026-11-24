@@ -37,7 +37,7 @@ function guard(){
     config.vars?.AUTH_REQUIRED!=="false"||
     config.vars?.QA106_ISOLATED_BINDINGS!=="qa106-pr100-v2-only")
    denied("NON_QA_BINDINGS");
- if(typeof secret!=="string"||!/^sk_test_[A-Za-z0-9]{12,}$/.test(secret)||
+ if(typeof secret!=="string"||!/^sk_test_[A-Za-z0-9_-]{12,}$/.test(secret)||
     !/^user_[A-Za-z0-9]{8,100}$/.test(identity||""))
    denied("REVIEWED_CLERK_TEST_SECRETS_MISSING");
  // Only a TEST Clerk secret and explicitly matching account; do not
