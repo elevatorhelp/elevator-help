@@ -13,7 +13,9 @@ const paths=[".ingestion-state/dual-shard-0.json",".ingestion-state/dual-shard-1
 const calls=[30,30],maxFiles=[1,1];
 
 function assertCanaryEnvironment(env=process.env) {
-  if(env.GITHUB_ACTIONS!=="true" || env.GITHUB_EVENT_NAME!=="workflow_dispatch" ||
+  const manual=env.GITHUB_EVENT_NAME==="workflow_dispatch";
+  const scheduled=env.GITHUB_EVENT_NAME==="schedule" && env.GITHUB_REF==="refs/heads/main" && env.GITHUB_RUN_ATTEMPT==="1" && env.DUAL_SCHEDULE_ENABLED==="true";
+  if(env.GITHUB_ACTIONS!=="true" || (!manual&&!scheduled) ||
      env.DUAL_CANARY_ENABLED!=="true" || !/^[1-9]\d{5,19}$/.test(env.GITHUB_RUN_ID||"") ||
      env.DUAL_CANARY_RUN_ID!==env.GITHUB_RUN_ID ||
      env.DUAL_CANARY_CONFIRMATION!=="APPROVE_2_DOCUMENTS_SHARED_60_CALLS") {
