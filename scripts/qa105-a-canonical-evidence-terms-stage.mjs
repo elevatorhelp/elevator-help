@@ -97,6 +97,18 @@ const verify=(r,stage)=>{
    deny("SOURCE_OR_PUBLICATION_DRIFT");
 };
 const before=counts();
+if(before){
+ for(const k of ["a_pub","a_rows","b_active","b_legacy_pub",
+   "a_total_terms","expected_terms","source_pages","live_a_leases"]){
+  const n=Number(before[k]);
+  if(Number.isSafeInteger(n)&&n>=0&&n<=4096)
+    console.log("QA105_A_PREFLIGHT_"+k.toUpperCase()+"="+n);
+ }
+ console.log("QA105_A_PREFLIGHT_PUBLICATION_HASH_FORMAT="+(
+  /^[a-f0-9]{64}$/.test(String(before.a_manifest||""))));
+ console.log("QA105_A_PREFLIGHT_SOURCE_HASH_FORMAT="+(
+  /^[a-f0-9]{64}$/.test(String(before.a_source||""))));
+}
 verify(before,[0,4]);
 if(Number(before.a_total_terms)!==Number(before.expected_terms))
  deny("UNEXPECTED_OLD_TERMS");
