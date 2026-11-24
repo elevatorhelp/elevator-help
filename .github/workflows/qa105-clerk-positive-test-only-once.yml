@@ -72,3 +72,5 @@ jobs:
 # Redacted runtime JWT diagnosis on remote QA Worker only: origin versus signature.
 
 # Owner-authorized zero-model QA run of the current frontend-origin probe (2026-11-24).
+
+# QA-only verification of corrected negative authentication response contract.
