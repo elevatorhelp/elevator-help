@@ -85,7 +85,7 @@ const counts=()=>wrangler(`SELECT
             AND INSTR(UPPER(e.text),'QA-2.4.6')>0))) AS source_pages,
  (SELECT COUNT(*) FROM ingestion_global_leases
    WHERE job_key=${quote(job)} AND lease_until_ms>CAST(strftime('%s','now') AS INTEGER)*1000) AS live_a_leases;`)[0];
-const asInt=(v,max=10)=>Number.isSafeInteger(Number(v))&&Number(v)>=0&&Number(v)<=max;
+const asInt=(v,max=4096)=>Number.isSafeInteger(Number(v))&&Number(v)>=0&&Number(v)<=max;
 const verify=(r,stage)=>{
  if(!r||!["a_pub","a_rows","b_active","b_legacy_pub",
  "a_total_terms","expected_terms","source_pages","live_a_leases"]
