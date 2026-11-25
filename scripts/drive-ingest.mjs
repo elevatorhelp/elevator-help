@@ -934,6 +934,35 @@ function nextPreferredIngestionPhase(lastSelectedPhase) {
   return order[(previous + 1) % order.length];
 }
 
+// Read-only inventory gate: reuse the actual production phase planner.
+export function summarizeArchiveInventory(files,records) {
+  const plan=createIngestionPlan(files,records,false);
+  const ids=new Set(files.map(f=>f.id));
+  const missing=Object.keys(records).filter(id=>!ids.has(id)).length;
+  const pending=files.filter(file=>createIngestionPlan([file],records,false).files.length>0).length;
+  return {total:files.length,complete:files.length-pending,pending,missing,
+    evidence:plan.pendingCounts.evidence,raw:plan.pendingCounts.raw,map:plan.pendingCounts.map,
+    workRequired:pending>0||missing>0};
+}
+
+export async function inspectArchiveInventory() {
+  if(process.env.GITHUB_ACTIONS!=="true"||process.env.GITHUB_EVENT_NAME!=="schedule"||
+     process.env.GITHUB_REF!=="refs/heads/main"||process.env.GITHUB_RUN_ATTEMPT!=="1"||
+     DRIVE_FOLDER_ID!=="1Lu7If9Nt4GUyakB6b6YriOGkvBPkx5i5"||
+     STATE_PATH!==".ingestion-state/drive.json"||shardEnabled||FORCE_REINGEST||TARGET_FILE_ID||V2_QA)
+    throw Error("ARCHIVE_SUPERVISOR_CONTEXT_DENIED");
+  const state=await readIngestionState(STATE_PATH,false);
+  const records=state.scopes?.[DRIVE_FOLDER_ID]?.files;
+  if(state.parallelShard||!records||typeof records!=="object"||Array.isArray(records)||Object.keys(records).length<100)
+    throw Error("ARCHIVE_SUPERVISOR_CHECKPOINT_DENIED");
+  const account=JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON||"");
+  const token=await getGoogleAccessToken(account);
+  const files=await listFolder(DRIVE_FOLDER_ID,token);
+  if(!files.length||new Set(files.map(f=>f.id)).size!==files.length)
+    throw Error("ARCHIVE_SUPERVISOR_INVENTORY_DENIED");
+  return summarizeArchiveInventory(files,records);
+}
+
 async function main() {
   if(V2_QA)assertManualQaV2Environment(process.env);
   const qaParallel=V2_QA?assertQa106ParallelContext(process.env):null;
